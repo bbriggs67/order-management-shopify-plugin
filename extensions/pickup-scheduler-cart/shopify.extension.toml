@@ -1,0 +1,13 @@
+# Pickup Scheduler Cart - Theme App Extension
+# This extension adds a pickup date/time selector block to the cart page
+
+api_version = "2025-04"
+
+[[extensions]]
+uid = "00f46028-8bd7-2676-0892-e370f9dbc996ff82ec73"
+type = "theme"
+name = "Pickup Scheduler Cart"
+handle = "pickup-scheduler-cart"
+
+[extensions.capabilities]
+# No special capabilities needed for theme extensions
