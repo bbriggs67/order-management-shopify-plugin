@@ -18,3 +18,8 @@ scopes = "read_orders,write_orders,read_products,read_customers"
 
 [auth]
 redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
+
+[app_proxy]
+url = "https://shopify.dev/apps/default-app-home/api"
+subpath = "pickup-scheduler"
+prefix = "apps"
