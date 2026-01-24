@@ -67,15 +67,16 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     orderBy: { sortOrder: "asc" },
   });
 
-  // Get pickup day config
-  const pickupDayConfig = await prisma.pickupDayConfig.findUnique({
+  // Get pickup day configs (normalized - one row per day)
+  const pickupDayConfigs = await prisma.pickupDayConfig.findMany({
     where: { shop },
+    orderBy: { dayOfWeek: "asc" },
   });
 
   return json({
     subscription,
     timeSlots,
-    pickupDayConfig,
+    pickupDayConfigs,
   });
 };
 
@@ -264,7 +265,7 @@ function calculateNextPickupDateAfter(
 }
 
 export default function SubscriptionDetail() {
-  const { subscription, timeSlots, pickupDayConfig } =
+  const { subscription, timeSlots, pickupDayConfigs } =
     useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -359,8 +360,10 @@ export default function SubscriptionDetail() {
   };
 
   // Get available pickup days
+  const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const getAvailableDays = () => {
-    if (!pickupDayConfig) {
+    if (!pickupDayConfigs || pickupDayConfigs.length === 0) {
+      // Default days: Tue, Wed, Fri, Sat
       return [
         { label: "Tuesday", value: "2" },
         { label: "Wednesday", value: "3" },
@@ -369,17 +372,12 @@ export default function SubscriptionDetail() {
       ];
     }
 
-    const days = [];
-    if (pickupDayConfig.sunday) days.push({ label: "Sunday", value: "0" });
-    if (pickupDayConfig.monday) days.push({ label: "Monday", value: "1" });
-    if (pickupDayConfig.tuesday) days.push({ label: "Tuesday", value: "2" });
-    if (pickupDayConfig.wednesday)
-      days.push({ label: "Wednesday", value: "3" });
-    if (pickupDayConfig.thursday) days.push({ label: "Thursday", value: "4" });
-    if (pickupDayConfig.friday) days.push({ label: "Friday", value: "5" });
-    if (pickupDayConfig.saturday) days.push({ label: "Saturday", value: "6" });
-
-    return days;
+    return pickupDayConfigs
+      .filter((config) => config.isEnabled)
+      .map((config) => ({
+        label: DAY_LABELS[config.dayOfWeek],
+        value: config.dayOfWeek.toString(),
+      }));
   };
 
   const handlePause = useCallback(() => {

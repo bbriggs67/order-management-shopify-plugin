@@ -86,22 +86,32 @@ model PrepTimeConfig {
 }
 
 // ============================================
-// PICKUP DAYS CONFIGURATION
+// PICKUP AVAILABILITY CONFIGURATION
 // ============================================
 
-model PickupDayConfig {
-  id        String  @id @default(cuid())
-  shop      String  @unique
-  sunday    Boolean @default(false)
-  monday    Boolean @default(false)
-  tuesday   Boolean @default(true)
-  wednesday Boolean @default(true)
-  thursday  Boolean @default(false)
-  friday    Boolean @default(true)
-  saturday  Boolean @default(true)
+// Global pickup configuration
+model PickupConfig {
+  id               String @id @default(cuid())
+  shop             String @unique
+  availabilityMode String @default("customize_by_day") // "customize_by_day" | "same_for_all"
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Per-day pickup configuration (normalized - one row per day)
+model PickupDayConfig {
+  id        String  @id @default(cuid())
+  shop      String
+  dayOfWeek Int // 0=Sun, 1=Mon, ..., 6=Sat
+  isEnabled Boolean @default(false)
+  maxOrders Int? // Optional daily capacity limit
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, dayOfWeek])
+  @@index([shop])
 }
 
 // ============================================
@@ -115,6 +125,7 @@ model TimeSlot {
   startTime String // "12:00" (24hr format)
   endTime   String // "14:00" (24hr format)
   dayOfWeek Int? // null = all days, 0=Sun, 1=Mon, ..., 6=Sat
+  maxOrders Int? // Optional per-slot capacity limit
   isActive  Boolean @default(true)
   sortOrder Int     @default(0)
 
@@ -123,6 +134,7 @@ model TimeSlot {
 
   @@index([shop])
   @@index([shop, isActive])
+  @@index([shop, dayOfWeek])
 }
 
 // ============================================

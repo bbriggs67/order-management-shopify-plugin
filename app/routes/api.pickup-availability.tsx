@@ -71,12 +71,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   // Fetch all configuration data
-  const [prepConfig, pickupDaysConfig, timeSlots, locations, blackouts] = await Promise.all([
+  const [prepConfig, pickupDayConfigs, timeSlots, locations, blackouts] = await Promise.all([
     prisma.prepTimeConfig.findUnique({ where: { shop } }),
-    prisma.pickupDayConfig.findUnique({ where: { shop } }),
+    prisma.pickupDayConfig.findMany({ where: { shop } }),
     prisma.timeSlot.findMany({
       where: { shop, isActive: true },
-      orderBy: [{ sortOrder: "asc" }, { startTime: "asc" }],
+      orderBy: [{ startTime: "asc" }],
     }),
     prisma.pickupLocation.findMany({
       where: { shop, isActive: true },
@@ -97,15 +97,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     customByDay: false,
   };
 
-  const pickupDays = pickupDaysConfig || {
-    sunday: false,
-    monday: false,
-    tuesday: true,
-    wednesday: true,
-    thursday: false,
-    friday: true,
-    saturday: true,
-  };
+  // Build pickup days map from normalized PickupDayConfig rows
+  // Default days if no config exists: Tue, Wed, Fri, Sat
+  const defaultEnabledDays = new Set([2, 3, 5, 6]);
+  const pickupDaysMap: Record<number, boolean> = {};
+
+  if (pickupDayConfigs.length > 0) {
+    // Use configured values
+    for (let day = 0; day <= 6; day++) {
+      const config = pickupDayConfigs.find((c) => c.dayOfWeek === day);
+      pickupDaysMap[day] = config?.isEnabled ?? false;
+    }
+  } else {
+    // Use defaults
+    for (let day = 0; day <= 6; day++) {
+      pickupDaysMap[day] = defaultEnabledDays.has(day);
+    }
+  }
 
   // Calculate available dates using Pacific timezone
   const nowPacific = getNowInPacific();
@@ -137,16 +145,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     };
   };
 
-  // Build pickup days map
-  const pickupDaysMap: Record<number, boolean> = {
-    0: pickupDays.sunday,
-    1: pickupDays.monday,
-    2: pickupDays.tuesday,
-    3: pickupDays.wednesday,
-    4: pickupDays.thursday,
-    5: pickupDays.friday,
-    6: pickupDays.saturday,
-  };
 
   // Check if a date is blacked out
   const isDateBlackedOut = (date: Date, timeSlot?: TimeSlot): boolean => {

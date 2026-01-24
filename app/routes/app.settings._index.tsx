@@ -78,16 +78,9 @@ export default function SettingsIndex() {
             />
 
             <SettingsCard
-              title="Time Slots"
-              description="Set available pickup time windows for customers"
-              href="/app/settings/time-slots"
-              icon={CalendarIcon}
-            />
-
-            <SettingsCard
-              title="Pickup Days"
-              description="Configure which days of the week pickups are available"
-              href="/app/settings/pickup-days"
+              title="Pickup Availability"
+              description="Configure pickup days, time slots, and capacity limits"
+              href="/app/settings/pickup-availability"
               icon={CalendarIcon}
             />
 
