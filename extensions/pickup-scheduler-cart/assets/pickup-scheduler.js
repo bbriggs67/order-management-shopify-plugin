@@ -68,21 +68,12 @@
   function getSchedulerHTML(locationName, locationAddress) {
     return `
       <div class="pickup-scheduler">
-        <div class="pickup-scheduler__methods">
-          <button type="button" class="pickup-method" data-method="shipping">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-            </svg>
-            <span>Shipping</span>
-          </button>
-          <button type="button" class="pickup-method pickup-method--active" data-method="pickup">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-              <polyline points="9 22 9 12 15 12 15 22"/>
-            </svg>
-            <span>Store Pickup</span>
-          </button>
+        <div class="pickup-scheduler__header">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <polyline points="9 22 9 12 15 12 15 22"/>
+          </svg>
+          <span>Store Pickup</span>
         </div>
 
         <div class="pickup-scheduler__content" id="ps-pickup-content">
@@ -126,10 +117,6 @@
           <input type="hidden" name="attributes[Delivery Method]" id="ps-method-input" value="pickup">
         </div>
 
-        <div class="pickup-scheduler__shipping-content" id="ps-shipping-content" style="display: none;">
-          <p>Shipping options will be calculated at checkout.</p>
-        </div>
-
         <div class="pickup-scheduler__loading" id="ps-loading" style="display: none;">
           <div class="spinner"></div>
           <span>Loading pickup times...</span>
@@ -155,27 +142,11 @@
     const loadingEl = document.getElementById('ps-loading');
     const errorEl = document.getElementById('ps-error');
     const pickupContent = document.getElementById('ps-pickup-content');
-    const shippingContent = document.getElementById('ps-shipping-content');
-    const methodBtns = document.querySelectorAll('.pickup-method');
-
     // Input elements
     const dateInput = document.getElementById('ps-date-input');
     const timeInput = document.getElementById('ps-time-input');
     const locationInput = document.getElementById('ps-location-input');
     const methodInput = document.getElementById('ps-method-input');
-
-    // Setup method toggle
-    methodBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const method = btn.dataset.method;
-        methodBtns.forEach(b => {
-          b.classList.toggle('pickup-method--active', b.dataset.method === method);
-        });
-        pickupContent.style.display = method === 'pickup' ? 'block' : 'none';
-        shippingContent.style.display = method === 'shipping' ? 'block' : 'none';
-        methodInput.value = method;
-      });
-    });
 
     // Setup calendar navigation
     if (prevMonthBtn) {
@@ -207,15 +178,24 @@
       if (errorEl) errorEl.style.display = 'none';
 
       try {
-        // Try app proxy first, then direct URL
+        // Try app proxy first
         let apiUrl = `/apps/pickup-scheduler/api/pickup-availability?shop=${encodeURIComponent(shopDomain)}`;
         console.log('Pickup Scheduler: Fetching from', apiUrl);
 
         let response = await fetch(apiUrl);
 
-        // If proxy fails, the data might not be available
+        // If proxy fails, try the dev tunnel URL (for development)
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+          console.log('Pickup Scheduler: App proxy failed, trying dev URL');
+          // Check for dev tunnel URL in meta tag or fall back to known dev patterns
+          const devUrl = document.querySelector('meta[name="pickup-scheduler-dev-url"]')?.content;
+          if (devUrl) {
+            apiUrl = `${devUrl}/api/pickup-availability?shop=${encodeURIComponent(shopDomain)}`;
+            response = await fetch(apiUrl);
+          }
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
         }
 
         const data = await response.json();

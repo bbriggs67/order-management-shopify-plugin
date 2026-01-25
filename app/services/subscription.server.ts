@@ -12,6 +12,10 @@ import {
   SHOP_TIMEZONE,
 } from "../utils/timezone.server";
 import { createPickupEvent } from "./google-calendar.server";
+import {
+  calculateBillingDate,
+  extractTimeSlotStart,
+} from "./subscription-billing.server";
 
 /**
  * Process all active subscriptions that need pickup generation
@@ -77,9 +81,17 @@ export async function processSubscriptions(shop: string): Promise<{
         subscription.frequency
       );
 
-      // Calculate next billing date (4 days before pickup)
-      const nextBillingDate = new Date(nextPickupDate);
-      nextBillingDate.setDate(nextBillingDate.getDate() - 4);
+      // Get time slot start for billing calculation
+      const timeSlotStart =
+        subscription.preferredTimeSlotStart ||
+        extractTimeSlotStart(subscription.preferredTimeSlot);
+
+      // Calculate next billing date using subscription's custom lead hours
+      const nextBillingDate = calculateBillingDate(
+        nextPickupDate,
+        timeSlotStart,
+        subscription.billingLeadHours
+      );
 
       // Update subscription with next dates
       await prisma.subscriptionPickup.update({
@@ -87,6 +99,7 @@ export async function processSubscriptions(shop: string): Promise<{
         data: {
           nextPickupDate,
           nextBillingDate,
+          preferredTimeSlotStart: timeSlotStart, // Store for future use
         },
       });
 
@@ -166,14 +179,34 @@ export async function resumePausedSubscriptions(shop: string): Promise<number> {
   let resumed = 0;
 
   for (const subscription of pausedSubscriptions) {
+    // Skip subscriptions paused due to billing failures - they need manual retry
+    if (
+      subscription.billingFailureCount >= 3 &&
+      subscription.pauseReason?.includes("Billing failed")
+    ) {
+      console.log(
+        `Skipping auto-resume for subscription ${subscription.id} - paused due to billing failures`
+      );
+      continue;
+    }
+
     // Calculate next pickup date
     const nextPickupDate = calculateNextPickupDateFromToday(
       subscription.preferredDay,
       subscription.frequency
     );
 
-    const nextBillingDate = new Date(nextPickupDate);
-    nextBillingDate.setDate(nextBillingDate.getDate() - 4);
+    // Get time slot start for billing calculation
+    const timeSlotStart =
+      subscription.preferredTimeSlotStart ||
+      extractTimeSlotStart(subscription.preferredTimeSlot);
+
+    // Calculate next billing date using subscription's custom lead hours
+    const nextBillingDate = calculateBillingDate(
+      nextPickupDate,
+      timeSlotStart,
+      subscription.billingLeadHours
+    );
 
     await prisma.subscriptionPickup.update({
       where: { id: subscription.id },
@@ -183,6 +216,7 @@ export async function resumePausedSubscriptions(shop: string): Promise<number> {
         pauseReason: null,
         nextPickupDate,
         nextBillingDate,
+        preferredTimeSlotStart: timeSlotStart,
       },
     });
 
@@ -302,8 +336,12 @@ export async function createSubscriptionFromContract(
 ): Promise<string> {
   const discountPercent = frequency === "WEEKLY" ? 10 : 5;
   const nextPickupDate = calculateNextPickupDateFromToday(preferredDay, frequency);
-  const nextBillingDate = new Date(nextPickupDate);
-  nextBillingDate.setDate(nextBillingDate.getDate() - 4);
+
+  // Extract time slot start for billing calculation
+  const preferredTimeSlotStart = extractTimeSlotStart(preferredTimeSlot);
+
+  // Calculate billing date (uses default 84 hours for new subscriptions)
+  const nextBillingDate = calculateBillingDate(nextPickupDate, preferredTimeSlotStart);
 
   const subscription = await prisma.subscriptionPickup.create({
     data: {
@@ -314,6 +352,7 @@ export async function createSubscriptionFromContract(
       customerPhone,
       preferredDay,
       preferredTimeSlot,
+      preferredTimeSlotStart,
       frequency,
       discountPercent,
       nextPickupDate,

@@ -5,14 +5,17 @@ import {
   processSubscriptions,
   resumePausedSubscriptions,
 } from "../services/subscription.server";
+import { processDueBillings } from "../services/subscription-billing.server";
+import { unauthenticated } from "../shopify.server";
 
 /**
  * API endpoint for processing subscriptions
- * Should be called daily via a cron job
+ * Should be called frequently (hourly recommended) via a cron job
  *
  * This endpoint:
- * 1. Resumes paused subscriptions that have reached their pausedUntil date
- * 2. Creates pickup schedules for active subscriptions due for pickup
+ * 1. Processes billing for subscriptions due (84 hours before pickup)
+ * 2. Resumes paused subscriptions that have reached their pausedUntil date
+ * 3. Creates pickup schedules for active subscriptions due for pickup
  *
  * Security: Use a secret token to protect this endpoint
  * Example cron call:
@@ -47,6 +50,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const results: Record<
       string,
       {
+        billing: {
+          processed: number;
+          successful: number;
+          failed: number;
+          errors: string[];
+        };
         resumed: number;
         processed: number;
         created: number;
@@ -55,16 +64,45 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     > = {};
 
     for (const { shop } of shops) {
-      // First, resume any paused subscriptions that should be resumed
+      // Initialize result for this shop
+      let billingResult = {
+        processed: 0,
+        successful: 0,
+        failed: 0,
+        errors: [] as string[],
+      };
+
+      // Step 1: Process billing for subscriptions due (84 hours before pickup)
+      try {
+        // Get admin API access for this shop
+        const { admin } = await unauthenticated.admin(shop);
+
+        billingResult = await processDueBillings(shop, admin);
+
+        console.log(
+          `Shop ${shop} billing: processed=${billingResult.processed}, successful=${billingResult.successful}, failed=${billingResult.failed}`
+        );
+      } catch (error) {
+        console.error(`Failed to process billing for shop ${shop}:`, error);
+        billingResult.errors.push(`Billing processing error: ${error}`);
+      }
+
+      // Step 2: Resume any paused subscriptions that should be resumed
       const resumed = await resumePausedSubscriptions(shop);
 
-      // Then process active subscriptions
+      // Step 3: Process active subscriptions and create pickup schedules
       const { processed, created, errors } = await processSubscriptions(shop);
 
-      results[shop] = { resumed, processed, created, errors };
+      results[shop] = {
+        billing: billingResult,
+        resumed,
+        processed,
+        created,
+        errors,
+      };
 
       console.log(
-        `Shop ${shop}: resumed=${resumed}, processed=${processed}, created=${created}, errors=${errors.length}`
+        `Shop ${shop}: billing=${billingResult.successful}/${billingResult.processed}, resumed=${resumed}, processed=${processed}, created=${created}, errors=${errors.length}`
       );
     }
 
@@ -88,7 +126,8 @@ export const loader = async () => {
     endpoint: "/api/cron/process-subscriptions",
     method: "POST",
     description:
-      "Process subscriptions: resume paused ones and create pickup schedules",
+      "Process subscriptions: 1) Bill customers 84h before pickup, 2) Resume paused subscriptions, 3) Create pickup schedules",
     auth: "Bearer token required (CRON_SECRET env var)",
+    recommended: "Run hourly for accurate billing timing",
   });
 };

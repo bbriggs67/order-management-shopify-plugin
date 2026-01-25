@@ -17,6 +17,7 @@ import {
   LocationIcon,
   NotificationIcon,
   SettingsIcon,
+  RefreshIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -96,6 +97,13 @@ export default function SettingsIndex() {
               description="Block specific dates or time windows for holidays and closures"
               href="/app/settings/blackouts"
               icon={CalendarIcon}
+            />
+
+            <SettingsCard
+              title="Subscriptions"
+              description="Manage selling plans, billing, and subscription settings"
+              href="/app/settings/subscriptions"
+              icon={RefreshIcon}
             />
           </BlockStack>
         </Layout.Section>

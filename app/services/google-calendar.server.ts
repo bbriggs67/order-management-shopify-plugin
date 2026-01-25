@@ -375,6 +375,103 @@ Status: ${pickup.pickupStatus}`,
 }
 
 /**
+ * Update a calendar event when pickup is rescheduled (date/time changed)
+ * This updates the full event including start/end times
+ */
+export async function updatePickupEventDateTime(
+  shop: string,
+  pickupScheduleId: string
+): Promise<boolean> {
+  const pickup = await prisma.pickupSchedule.findUnique({
+    where: { id: pickupScheduleId },
+    include: { pickupLocation: true, orderItems: true },
+  });
+
+  if (!pickup || !pickup.googleEventId) {
+    return false;
+  }
+
+  const accessToken = await getValidAccessToken(shop);
+  if (!accessToken) {
+    return false;
+  }
+
+  const auth = await prisma.googleCalendarAuth.findUnique({
+    where: { shop },
+  });
+
+  if (!auth) {
+    return false;
+  }
+
+  // Parse time slot (e.g., "12:00 PM - 2:00 PM")
+  const { startTime, endTime } = parseTimeSlot(pickup.pickupTimeSlot);
+
+  // Create start and end times
+  const pickupDate = new Date(pickup.pickupDate);
+  const startDateTime = new Date(pickupDate);
+  startDateTime.setHours(startTime.hour, startTime.minute, 0, 0);
+
+  const endDateTime = new Date(pickupDate);
+  endDateTime.setHours(endTime.hour, endTime.minute, 0, 0);
+
+  // Build event description
+  const items = pickup.orderItems
+    .map((item) => `- ${item.productTitle} x${item.quantity}`)
+    .join("\n");
+
+  const updates = {
+    summary: `Pickup: ${pickup.shopifyOrderNumber} - ${pickup.customerName}`,
+    description: `Order: ${pickup.shopifyOrderNumber}
+Customer: ${pickup.customerName}
+${pickup.customerPhone ? `Phone: ${pickup.customerPhone}` : ""}
+${pickup.customerEmail ? `Email: ${pickup.customerEmail}` : ""}
+
+Items:
+${items}
+
+Status: ${pickup.pickupStatus}`,
+    start: {
+      dateTime: startDateTime.toISOString(),
+      timeZone: SHOP_TIMEZONE,
+    },
+    end: {
+      dateTime: endDateTime.toISOString(),
+      timeZone: SHOP_TIMEZONE,
+    },
+    location: pickup.pickupLocation
+      ? `${pickup.pickupLocation.name} - ${pickup.pickupLocation.address}`
+      : undefined,
+    colorId: getStatusColor(pickup.pickupStatus),
+  };
+
+  try {
+    const response = await fetch(
+      `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(auth.calendarId)}/events/${pickup.googleEventId}`,
+      {
+        method: "PUT", // Use PUT for full replacement including date/time
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(updates),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error("Failed to update calendar event date/time:", error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error updating calendar event date/time:", error);
+    return false;
+  }
+}
+
+/**
  * Delete a calendar event when pickup is cancelled
  */
 export async function deletePickupEvent(

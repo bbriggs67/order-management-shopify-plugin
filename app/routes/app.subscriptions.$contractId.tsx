@@ -19,6 +19,7 @@ import {
   DataTable,
   DescriptionList,
   DatePicker,
+  RangeSlider,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { useState, useCallback } from "react";
@@ -27,7 +28,14 @@ import prisma from "../db.server";
 import {
   getDatePacific,
   getDayOfWeekPacific,
+  formatDatePacific,
 } from "../utils/timezone.server";
+import {
+  calculateBillingDate,
+  extractTimeSlotStart,
+  getBillingLeadHoursConfig,
+  validateBillingLeadHours,
+} from "../services/subscription-billing.server";
 
 // Timezone constant for client-side formatting
 const SHOP_TIMEZONE = "America/Los_Angeles";
@@ -54,6 +62,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           pickupLocation: true,
         },
       },
+      billingAttemptLogs: {
+        orderBy: { attemptedAt: "desc" },
+        take: 10,
+      },
     },
   });
 
@@ -73,10 +85,28 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     orderBy: { dayOfWeek: "asc" },
   });
 
+  // Get billing lead hours config for UI constraints
+  const billingLeadHoursConfig = getBillingLeadHoursConfig();
+
+  // Format dates on server side for billing logs
+  const formattedBillingLogs = subscription.billingAttemptLogs.map((log) => ({
+    ...log,
+    attemptedAtFormatted: formatDatePacific(new Date(log.attemptedAt), {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }),
+  }));
+
   return json({
-    subscription,
+    subscription: {
+      ...subscription,
+      billingAttemptLogs: formattedBillingLogs,
+    },
     timeSlots,
     pickupDayConfigs,
+    billingLeadHoursConfig,
   });
 };
 
@@ -125,9 +155,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       subscription.frequency
     );
 
-    // Billing is 4 days before pickup
-    const nextBillingDate = new Date(nextPickupDate);
-    nextBillingDate.setDate(nextBillingDate.getDate() - 4);
+    // Calculate billing date using the subscription's custom lead hours
+    const timeSlotStart =
+      subscription.preferredTimeSlotStart ||
+      extractTimeSlotStart(subscription.preferredTimeSlot);
+    const nextBillingDate = calculateBillingDate(
+      nextPickupDate,
+      timeSlotStart,
+      subscription.billingLeadHours
+    );
 
     await prisma.subscriptionPickup.update({
       where: { id: subscription.id },
@@ -135,6 +171,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         status: "ACTIVE",
         pausedUntil: null,
         pauseReason: null,
+        billingFailureCount: 0, // Reset on resume
+        billingFailureReason: null,
         nextPickupDate,
         nextBillingDate,
       },
@@ -144,6 +182,36 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 
   if (action === "cancel") {
+    const { admin } = await authenticate.admin(request);
+
+    // Cancel the Shopify subscription contract
+    try {
+      const cancelResponse = await admin.graphql(`
+        mutation subscriptionContractCancel($contractId: ID!) {
+          subscriptionContractCancel(subscriptionContractId: $contractId) {
+            contract {
+              id
+              status
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `, {
+        variables: { contractId: subscription.shopifyContractId },
+      });
+
+      const cancelData = await cancelResponse.json();
+      if (cancelData.data?.subscriptionContractCancel?.userErrors?.length > 0) {
+        console.error("Shopify cancel errors:", cancelData.data.subscriptionContractCancel.userErrors);
+      }
+    } catch (error) {
+      console.error("Failed to cancel Shopify contract:", error);
+      // Continue with local cancellation even if Shopify fails
+    }
+
     await prisma.subscriptionPickup.update({
       where: { id: subscription.id },
       data: {
@@ -152,9 +220,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         nextBillingDate: null,
       },
     });
-
-    // Note: In production, you'd also cancel the Shopify subscription contract
-    // via the GraphQL API
 
     return json({ success: true, action: "cancelled" });
   }
@@ -171,8 +236,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       subscription.frequency
     );
 
-    const nextBillingDate = new Date(nextPickupDate);
-    nextBillingDate.setDate(nextBillingDate.getDate() - 4);
+    // Calculate billing date using custom lead hours
+    const timeSlotStart =
+      subscription.preferredTimeSlotStart ||
+      extractTimeSlotStart(subscription.preferredTimeSlot);
+    const nextBillingDate = calculateBillingDate(
+      nextPickupDate,
+      timeSlotStart,
+      subscription.billingLeadHours
+    );
 
     await prisma.subscriptionPickup.update({
       where: { id: subscription.id },
@@ -200,14 +272,21 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     // Recalculate next pickup date if frequency changed
     const nextPickupDate = calculateNextPickupDate(preferredDay, frequency);
-    const nextBillingDate = new Date(nextPickupDate);
-    nextBillingDate.setDate(nextBillingDate.getDate() - 4);
+
+    // Extract time slot start and calculate billing date
+    const timeSlotStart = extractTimeSlotStart(preferredTimeSlot);
+    const nextBillingDate = calculateBillingDate(
+      nextPickupDate,
+      timeSlotStart,
+      subscription.billingLeadHours
+    );
 
     await prisma.subscriptionPickup.update({
       where: { id: subscription.id },
       data: {
         preferredDay,
         preferredTimeSlot,
+        preferredTimeSlotStart: timeSlotStart,
         frequency,
         discountPercent,
         nextPickupDate,
@@ -216,6 +295,135 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     });
 
     return json({ success: true, action: "updated" });
+  }
+
+  if (action === "updateBillingLeadHours") {
+    const billingLeadHours = parseInt(formData.get("billingLeadHours") as string, 10);
+
+    if (isNaN(billingLeadHours)) {
+      return json({ error: "Invalid billing lead hours" }, { status: 400 });
+    }
+
+    // Validate and constrain to allowed range (1-168 hours)
+    const validLeadHours = validateBillingLeadHours(billingLeadHours);
+
+    // Recalculate next billing date if we have a next pickup date
+    let nextBillingDate = subscription.nextBillingDate;
+    if (subscription.nextPickupDate) {
+      const timeSlotStart =
+        subscription.preferredTimeSlotStart ||
+        extractTimeSlotStart(subscription.preferredTimeSlot);
+      nextBillingDate = calculateBillingDate(
+        subscription.nextPickupDate,
+        timeSlotStart,
+        validLeadHours
+      );
+    }
+
+    await prisma.subscriptionPickup.update({
+      where: { id: subscription.id },
+      data: {
+        billingLeadHours: validLeadHours,
+        nextBillingDate,
+      },
+    });
+
+    return json({ success: true, action: "billingLeadHoursUpdated" });
+  }
+
+  if (action === "updateAdminNotes") {
+    const adminNotes = formData.get("adminNotes") as string;
+
+    await prisma.subscriptionPickup.update({
+      where: { id: subscription.id },
+      data: {
+        adminNotes: adminNotes || null,
+      },
+    });
+
+    return json({ success: true, action: "adminNotesUpdated" });
+  }
+
+  if (action === "oneTimeReschedule") {
+    const newPickupDateStr = formData.get("newPickupDate") as string;
+    const newTimeSlot = formData.get("newTimeSlot") as string;
+    const reason = formData.get("reason") as string;
+
+    if (!newPickupDateStr || !newTimeSlot) {
+      return json({ error: "Date and time slot are required" }, { status: 400 });
+    }
+
+    const newPickupDate = new Date(newPickupDateStr);
+
+    // Extract time slot start for billing calculation
+    const timeSlotStart = extractTimeSlotStart(newTimeSlot);
+
+    // Calculate new billing date
+    const newBillingDate = calculateBillingDate(
+      newPickupDate,
+      timeSlotStart,
+      subscription.billingLeadHours
+    );
+
+    // Check if billing date is in the past
+    const now = new Date();
+    if (newBillingDate < now) {
+      return json({
+        error: `Cannot reschedule: billing would need to happen before now. Please choose a pickup date at least ${subscription.billingLeadHours} hours from now.`,
+      }, { status: 400 });
+    }
+
+    await prisma.subscriptionPickup.update({
+      where: { id: subscription.id },
+      data: {
+        oneTimeRescheduleDate: newPickupDate,
+        oneTimeRescheduleTimeSlot: newTimeSlot,
+        oneTimeRescheduleReason: reason || null,
+        oneTimeRescheduleBy: "ADMIN",
+        oneTimeRescheduleAt: new Date(),
+        nextPickupDate: newPickupDate,
+        nextBillingDate: newBillingDate,
+      },
+    });
+
+    return json({ success: true, action: "oneTimeRescheduled" });
+  }
+
+  if (action === "clearOneTimeReschedule") {
+    if (!subscription.oneTimeRescheduleDate) {
+      return json({ error: "No one-time reschedule to clear" }, { status: 400 });
+    }
+
+    // Recalculate next pickup based on regular schedule
+    const nextPickupDate = calculateNextPickupDate(
+      subscription.preferredDay,
+      subscription.frequency
+    );
+
+    const timeSlotStart =
+      subscription.preferredTimeSlotStart ||
+      extractTimeSlotStart(subscription.preferredTimeSlot);
+
+    const nextBillingDate = calculateBillingDate(
+      nextPickupDate,
+      timeSlotStart,
+      subscription.billingLeadHours
+    );
+
+    await prisma.subscriptionPickup.update({
+      where: { id: subscription.id },
+      data: {
+        nextPickupDate,
+        nextBillingDate,
+        oneTimeRescheduleDate: null,
+        oneTimeRescheduleTimeSlot: null,
+        oneTimeRescheduleReason: null,
+        oneTimeRescheduleBy: null,
+        oneTimeRescheduleAt: null,
+      },
+    });
+
+    return json({ success: true, action: "oneTimeRescheduleCleared" });
   }
 
   return json({ error: "Unknown action" }, { status: 400 });
@@ -265,7 +473,7 @@ function calculateNextPickupDateAfter(
 }
 
 export default function SubscriptionDetail() {
-  const { subscription, timeSlots, pickupDayConfigs } =
+  const { subscription, timeSlots, pickupDayConfigs, billingLeadHoursConfig } =
     useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -274,6 +482,8 @@ export default function SubscriptionDetail() {
   const [pauseModalOpen, setPauseModalOpen] = useState(false);
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [billingSettingsModalOpen, setBillingSettingsModalOpen] = useState(false);
+  const [adminNotesModalOpen, setAdminNotesModalOpen] = useState(false);
   const [pauseReason, setPauseReason] = useState("");
   const [pauseUntil, setPauseUntil] = useState<Date | null>(null);
   const [selectedMonth, setSelectedMonth] = useState({
@@ -289,6 +499,28 @@ export default function SubscriptionDetail() {
   const [editTimeSlot, setEditTimeSlot] = useState(
     subscription.preferredTimeSlot
   );
+
+  // Billing lead hours state
+  const [editBillingLeadHours, setEditBillingLeadHours] = useState(
+    subscription.billingLeadHours
+  );
+
+  // Admin notes state
+  const [editAdminNotes, setEditAdminNotes] = useState(
+    subscription.adminNotes || ""
+  );
+
+  // One-time reschedule state
+  const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState<Date | null>(null);
+  const [rescheduleTimeSlot, setRescheduleTimeSlot] = useState(
+    subscription.preferredTimeSlot
+  );
+  const [rescheduleReason, setRescheduleReason] = useState("");
+  const [rescheduleMonth, setRescheduleMonth] = useState({
+    month: new Date().getMonth(),
+    year: new Date().getFullYear(),
+  });
 
   const formatDate = (dateString: string | null) => {
     if (!dateString) return "—";
@@ -433,6 +665,67 @@ export default function SubscriptionDetail() {
     []
   );
 
+  const handleUpdateBillingLeadHours = useCallback(() => {
+    const formData = new FormData();
+    formData.append("_action", "updateBillingLeadHours");
+    formData.append("billingLeadHours", editBillingLeadHours.toString());
+    submit(formData, { method: "post" });
+    setBillingSettingsModalOpen(false);
+  }, [editBillingLeadHours, submit]);
+
+  const handleUpdateAdminNotes = useCallback(() => {
+    const formData = new FormData();
+    formData.append("_action", "updateAdminNotes");
+    formData.append("adminNotes", editAdminNotes);
+    submit(formData, { method: "post" });
+    setAdminNotesModalOpen(false);
+  }, [editAdminNotes, submit]);
+
+  const handleOneTimeReschedule = useCallback(() => {
+    if (!rescheduleDate) {
+      return;
+    }
+    const formData = new FormData();
+    formData.append("_action", "oneTimeReschedule");
+    formData.append("newPickupDate", rescheduleDate.toISOString());
+    formData.append("newTimeSlot", rescheduleTimeSlot);
+    formData.append("reason", rescheduleReason);
+    submit(formData, { method: "post" });
+    setRescheduleModalOpen(false);
+    setRescheduleDate(null);
+    setRescheduleReason("");
+  }, [rescheduleDate, rescheduleTimeSlot, rescheduleReason, submit]);
+
+  const handleClearOneTimeReschedule = useCallback(() => {
+    if (
+      confirm(
+        "Are you sure you want to clear this one-time reschedule and return to the regular schedule?"
+      )
+    ) {
+      const formData = new FormData();
+      formData.append("_action", "clearOneTimeReschedule");
+      submit(formData, { method: "post" });
+    }
+  }, [submit]);
+
+  const handleRescheduleMonthChange = useCallback(
+    (month: number, year: number) => setRescheduleMonth({ month, year }),
+    []
+  );
+
+  // Helper to format billing lead hours for display
+  const formatLeadHours = (hours: number) => {
+    if (hours < 24) {
+      return `${hours} hour${hours === 1 ? "" : "s"}`;
+    }
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    if (remainingHours === 0) {
+      return `${days} day${days === 1 ? "" : "s"}`;
+    }
+    return `${days} day${days === 1 ? "" : "s"} ${remainingHours} hour${remainingHours === 1 ? "" : "s"}`;
+  };
+
   // Pickup history table
   const historyRows = subscription.pickupSchedules.map((pickup) => [
     formatDate(pickup.pickupDate),
@@ -486,6 +779,37 @@ export default function SubscriptionDetail() {
               </Banner>
             )}
 
+            {/* One-time Reschedule Banner */}
+            {subscription.oneTimeRescheduleDate && (
+              <Banner
+                tone="info"
+                title="One-Time Reschedule Active"
+                action={{
+                  content: "Clear Reschedule",
+                  onAction: handleClearOneTimeReschedule,
+                }}
+              >
+                <p>
+                  Next pickup rescheduled to{" "}
+                  <strong>
+                    {formatDate(subscription.oneTimeRescheduleDate.toString())}
+                  </strong>{" "}
+                  at <strong>{subscription.oneTimeRescheduleTimeSlot}</strong>.
+                  {subscription.oneTimeRescheduleReason && (
+                    <> Reason: {subscription.oneTimeRescheduleReason}</>
+                  )}
+                  {subscription.oneTimeRescheduleBy && (
+                    <> (by {subscription.oneTimeRescheduleBy.toLowerCase()})</>
+                  )}
+                </p>
+                <p style={{ marginTop: "8px", fontSize: "12px" }}>
+                  After this pickup, the subscription will return to{" "}
+                  {getDayName(subscription.preferredDay)}s at{" "}
+                  {subscription.preferredTimeSlot}.
+                </p>
+              </Banner>
+            )}
+
             {/* Actions Card */}
             {!isCancelled && (
               <Card>
@@ -500,9 +824,16 @@ export default function SubscriptionDetail() {
                           Pause Subscription
                         </Button>
                         {subscription.nextPickupDate && (
-                          <Button onClick={handleSkipNext} loading={isLoading}>
-                            Skip Next Pickup
-                          </Button>
+                          <>
+                            <Button onClick={handleSkipNext} loading={isLoading}>
+                              Skip Next Pickup
+                            </Button>
+                            <Button
+                              onClick={() => setRescheduleModalOpen(true)}
+                            >
+                              Reschedule Next Pickup
+                            </Button>
+                          </>
                         )}
                       </>
                     )}
@@ -622,22 +953,92 @@ export default function SubscriptionDetail() {
             {/* Billing Info */}
             <Card>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Billing
-                </Text>
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Billing
+                  </Text>
+                  <Button
+                    size="slim"
+                    onClick={() => setBillingSettingsModalOpen(true)}
+                  >
+                    Edit
+                  </Button>
+                </InlineStack>
                 <BlockStack gap="200">
                   <InlineStack align="space-between">
                     <Text as="span" variant="bodySm">
                       Discount
                     </Text>
                     <Badge tone="success">
-                      {subscription.discountPercent}% off
+                      {`${subscription.discountPercent}% off`}
                     </Badge>
                   </InlineStack>
+                  <InlineStack align="space-between">
+                    <Text as="span" variant="bodySm">
+                      Billing Lead Time
+                    </Text>
+                    <Text as="span" variant="bodySm" fontWeight="semibold">
+                      {formatLeadHours(subscription.billingLeadHours)}
+                    </Text>
+                  </InlineStack>
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Customer is billed 4 days before each pickup.
+                    Customer is billed {formatLeadHours(subscription.billingLeadHours)} before each pickup.
                   </Text>
+                  {subscription.lastBillingStatus && (
+                    <InlineStack align="space-between">
+                      <Text as="span" variant="bodySm">
+                        Last Billing
+                      </Text>
+                      <Badge
+                        tone={
+                          subscription.lastBillingStatus === "SUCCESS"
+                            ? "success"
+                            : subscription.lastBillingStatus === "FAILED"
+                              ? "critical"
+                              : "attention"
+                        }
+                      >
+                        {subscription.lastBillingStatus}
+                      </Badge>
+                    </InlineStack>
+                  )}
+                  {subscription.billingFailureCount > 0 && (
+                    <Banner tone="warning">
+                      {subscription.billingFailureCount} billing failure{subscription.billingFailureCount > 1 ? "s" : ""}
+                      {subscription.billingFailureReason && (
+                        <Text as="p" variant="bodySm">
+                          {subscription.billingFailureReason}
+                        </Text>
+                      )}
+                    </Banner>
+                  )}
                 </BlockStack>
+              </BlockStack>
+            </Card>
+
+            {/* Admin Notes */}
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Admin Notes
+                  </Text>
+                  <Button
+                    size="slim"
+                    onClick={() => setAdminNotesModalOpen(true)}
+                  >
+                    {subscription.adminNotes ? "Edit" : "Add"}
+                  </Button>
+                </InlineStack>
+                {subscription.adminNotes ? (
+                  <Text as="p" variant="bodySm">
+                    {subscription.adminNotes}
+                  </Text>
+                ) : (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    No admin notes.
+                  </Text>
+                )}
               </BlockStack>
             </Card>
 
@@ -812,6 +1213,178 @@ export default function SubscriptionDetail() {
             <Banner tone="info">
               Changing these preferences will recalculate the next pickup date.
             </Banner>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Billing Settings Modal */}
+      <Modal
+        open={billingSettingsModalOpen}
+        onClose={() => {
+          setBillingSettingsModalOpen(false);
+          setEditBillingLeadHours(subscription.billingLeadHours);
+        }}
+        title="Billing Settings"
+        primaryAction={{
+          content: "Save Changes",
+          onAction: handleUpdateBillingLeadHours,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => {
+              setBillingSettingsModalOpen(false);
+              setEditBillingLeadHours(subscription.billingLeadHours);
+            },
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Text as="p">
+              Set how many hours before the scheduled pickup time the customer should be billed.
+            </Text>
+            <RangeSlider
+              label={`Billing Lead Time: ${formatLeadHours(editBillingLeadHours)}`}
+              value={editBillingLeadHours}
+              min={billingLeadHoursConfig.min}
+              max={billingLeadHoursConfig.max}
+              step={1}
+              onChange={(value) => setEditBillingLeadHours(value as number)}
+              output
+              suffix={
+                <Text as="span" variant="bodySm">
+                  {formatLeadHours(editBillingLeadHours)} before pickup
+                </Text>
+              }
+            />
+            <BlockStack gap="200">
+              <Text as="p" variant="bodySm" tone="subdued">
+                • Minimum: {formatLeadHours(billingLeadHoursConfig.min)} before pickup
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                • Maximum: {formatLeadHours(billingLeadHoursConfig.max)} before pickup
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                • Default: {formatLeadHours(billingLeadHoursConfig.default)} before pickup
+              </Text>
+            </BlockStack>
+            <Banner tone="info">
+              Changing the billing lead time will recalculate the next billing date.
+            </Banner>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Admin Notes Modal */}
+      <Modal
+        open={adminNotesModalOpen}
+        onClose={() => {
+          setAdminNotesModalOpen(false);
+          setEditAdminNotes(subscription.adminNotes || "");
+        }}
+        title="Admin Notes"
+        primaryAction={{
+          content: "Save Notes",
+          onAction: handleUpdateAdminNotes,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => {
+              setAdminNotesModalOpen(false);
+              setEditAdminNotes(subscription.adminNotes || "");
+            },
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <TextField
+              label="Notes"
+              value={editAdminNotes}
+              onChange={setEditAdminNotes}
+              multiline={4}
+              autoComplete="off"
+              placeholder="Add internal notes about this subscription..."
+              helpText="These notes are only visible to admins and will not be shown to the customer."
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* One-Time Reschedule Modal */}
+      <Modal
+        open={rescheduleModalOpen}
+        onClose={() => {
+          setRescheduleModalOpen(false);
+          setRescheduleDate(null);
+          setRescheduleReason("");
+        }}
+        title="Reschedule Next Pickup"
+        primaryAction={{
+          content: "Reschedule",
+          onAction: handleOneTimeReschedule,
+          disabled: !rescheduleDate,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => {
+              setRescheduleModalOpen(false);
+              setRescheduleDate(null);
+              setRescheduleReason("");
+            },
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Banner tone="info">
+              This is a <strong>one-time reschedule</strong>. After this pickup,
+              the subscription will return to the regular schedule (
+              {getDayName(subscription.preferredDay)}s at{" "}
+              {subscription.preferredTimeSlot}).
+            </Banner>
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd" fontWeight="semibold">
+                Select New Pickup Date
+              </Text>
+              <DatePicker
+                month={rescheduleMonth.month}
+                year={rescheduleMonth.year}
+                onChange={(range) => setRescheduleDate(range.start)}
+                onMonthChange={handleRescheduleMonthChange}
+                selected={rescheduleDate || undefined}
+                disableDatesBefore={new Date()}
+              />
+              {rescheduleDate && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Selected: {formatDate(rescheduleDate.toISOString())}
+                </Text>
+              )}
+            </BlockStack>
+            <Select
+              label="Time Slot"
+              options={timeSlots.map((ts) => ({
+                label: ts.label,
+                value: ts.label,
+              }))}
+              value={rescheduleTimeSlot}
+              onChange={setRescheduleTimeSlot}
+            />
+            <TextField
+              label="Reason for reschedule (optional)"
+              value={rescheduleReason}
+              onChange={setRescheduleReason}
+              autoComplete="off"
+              placeholder="e.g., Customer requested different day"
+            />
+            <Text as="p" variant="bodySm" tone="subdued">
+              Note: The billing date will be recalculated based on the new
+              pickup date ({formatLeadHours(subscription.billingLeadHours)}{" "}
+              before pickup).
+            </Text>
           </BlockStack>
         </Modal.Section>
       </Modal>

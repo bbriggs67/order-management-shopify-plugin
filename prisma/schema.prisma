@@ -259,16 +259,41 @@ model SubscriptionPickup {
   customerPhone       String?
   preferredDay        Int // Day of week (0-6)
   preferredTimeSlot   String // e.g., "12:00 PM - 2:00 PM"
+  preferredTimeSlotStart String? // "12:00" - extracted start time for billing calc
   frequency           String // "WEEKLY", "BIWEEKLY"
   discountPercent     Int // 10 for weekly, 5 for biweekly
   nextPickupDate      DateTime?
-  nextBillingDate     DateTime? // 4 days before pickup
+  nextBillingDate     DateTime? // Calculated based on billingLeadHours
   status              SubStatus @default(ACTIVE)
   pausedUntil         DateTime?
   pauseReason         String?
   googleRecurEventId  String? // Recurring event ID if synced
 
-  pickupSchedules PickupSchedule[]
+  // Billing configuration (customizable per subscription)
+  billingLeadHours    Int       @default(84) // Hours before pickup to charge (1-168, default 84 = 3.5 days)
+
+  // Billing tracking
+  lastBillingAttemptId  String? // Shopify billing attempt GID
+  lastBillingAttemptAt  DateTime?
+  lastBillingStatus     String? // "SUCCESS", "FAILED", "PENDING"
+  billingFailureCount   Int       @default(0)
+  billingFailureReason  String?
+  billingCycleCount     Int       @default(0) // Number of successful billing cycles
+
+  // Admin notes
+  adminNotes          String? // Internal notes for admin use
+
+  // One-time reschedule for next pickup only
+  // When set, overrides preferredDay/preferredTimeSlot for the NEXT pickup only
+  // After that pickup is processed, these fields are cleared
+  oneTimeRescheduleDate     DateTime? // Override date for next pickup
+  oneTimeRescheduleTimeSlot String?   // Override time slot for next pickup
+  oneTimeRescheduleReason   String?   // Reason for the one-time change
+  oneTimeRescheduleBy       String?   // "ADMIN" or "CUSTOMER"
+  oneTimeRescheduleAt       DateTime? // When the reschedule was requested
+
+  pickupSchedules    PickupSchedule[]
+  billingAttemptLogs BillingAttemptLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -277,12 +302,37 @@ model SubscriptionPickup {
   @@index([shop])
   @@index([shop, status])
   @@index([shop, nextPickupDate])
+  @@index([shop, nextBillingDate])
 }
 
 enum SubStatus {
   ACTIVE
   PAUSED
   CANCELLED
+}
+
+// ============================================
+// BILLING ATTEMPT LOG
+// ============================================
+
+model BillingAttemptLog {
+  id                   String   @id @default(cuid())
+  shop                 String
+  subscriptionPickupId String
+  shopifyBillingId     String? // Shopify billing attempt GID
+  idempotencyKey       String   @unique
+  status               String // "PENDING", "SUCCESS", "FAILED"
+  errorCode            String?
+  errorMessage         String?
+  orderId              String? // Created order GID on success
+  billingCycle         Int // Which billing cycle this attempt is for
+  attemptedAt          DateTime @default(now())
+
+  subscriptionPickup SubscriptionPickup @relation(fields: [subscriptionPickupId], references: [id], onDelete: Cascade)
+
+  @@index([shop])
+  @@index([subscriptionPickupId])
+  @@index([status])
 }
 
 // ============================================
@@ -321,6 +371,23 @@ model WebhookEvent {
   @@unique([shop, topic, shopifyId])
   @@index([shop])
   @@index([processedAt])
+}
+
+// ============================================
+// SELLING PLAN CONFIGURATION
+// ============================================
+
+model SellingPlanConfig {
+  id                    String   @id @default(cuid())
+  shop                  String   @unique
+  sellingPlanGroupId    String // Shopify selling plan group GID
+  weeklySellingPlanId   String? // Shopify selling plan GID for weekly
+  biweeklySellingPlanId String? // Shopify selling plan GID for biweekly
+  weeklyDiscount        Int      @default(10)
+  biweeklyDiscount      Int      @default(5)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ============================================

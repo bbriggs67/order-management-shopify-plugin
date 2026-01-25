@@ -1,0 +1,52 @@
+{% comment %}
+  Subscribe and Save App Embed
+  Auto-injects subscription options on product pages
+{% endcomment %}
+
+{% if block.settings.enabled %}
+  <div
+    id="subscribe-save-embed"
+    data-enabled="true"
+    data-weekly-discount="{{ block.settings.weekly_discount }}"
+    data-biweekly-discount="{{ block.settings.biweekly_discount }}"
+    style="display: none;"
+  ></div>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Subscribe & Save",
+  "target": "body",
+  "javascript": "subscribe-save.js",
+  "stylesheet": "subscribe-save.css",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enabled",
+      "label": "Enable Subscribe & Save",
+      "default": true,
+      "info": "Shows subscription options on product pages"
+    },
+    {
+      "type": "range",
+      "id": "weekly_discount",
+      "min": 1,
+      "max": 50,
+      "step": 1,
+      "unit": "%",
+      "label": "Weekly Subscription Discount",
+      "default": 10
+    },
+    {
+      "type": "range",
+      "id": "biweekly_discount",
+      "min": 1,
+      "max": 50,
+      "step": 1,
+      "unit": "%",
+      "label": "Bi-Weekly Subscription Discount",
+      "default": 5
+    }
+  ]
+}
+{% endschema %}

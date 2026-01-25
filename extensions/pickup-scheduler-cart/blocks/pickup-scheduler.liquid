@@ -4,6 +4,9 @@
 {% endcomment %}
 
 {% if block.settings.enabled %}
+  {% if block.settings.dev_url != blank %}
+    <meta name="pickup-scheduler-dev-url" content="{{ block.settings.dev_url }}">
+  {% endif %}
   <div
     id="pickup-scheduler-embed"
     data-shop="{{ shop.permanent_domain }}"
@@ -39,6 +42,12 @@
       "id": "location_address",
       "label": "Default Location Address",
       "default": "123 Main Street"
+    },
+    {
+      "type": "text",
+      "id": "dev_url",
+      "label": "Development URL (optional)",
+      "info": "For testing only - enter your cloudflare tunnel URL"
     }
   ]
 }

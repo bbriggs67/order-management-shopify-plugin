@@ -12,14 +12,30 @@ include_config_on_deploy = true
 [webhooks]
 api_version = "2026-04"
 
+  [[webhooks.subscriptions]]
+  topics = ["orders/create", "orders/updated", "orders/cancelled"]
+  uri = "/webhooks"
+
+  [[webhooks.subscriptions]]
+  topics = ["subscription_contracts/create", "subscription_contracts/update"]
+  uri = "/webhooks"
+
+  [[webhooks.subscriptions]]
+  topics = ["subscription_billing_attempts/success", "subscription_billing_attempts/failure"]
+  uri = "/webhooks"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled", "app/scopes_update"]
+  uri = "/webhooks"
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_orders,write_orders,read_products,read_customers"
+scopes = "read_orders,write_orders,read_products,write_products,read_customers,read_own_subscription_contracts,write_own_subscription_contracts,read_customer_payment_methods"
 
 [auth]
 redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
 
 [app_proxy]
 url = "https://shopify.dev/apps/default-app-home/api"
-subpath = "pickup-scheduler"
+subpath = "my-subscription"
 prefix = "apps"
