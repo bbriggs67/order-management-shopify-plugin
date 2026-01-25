@@ -3,7 +3,7 @@
 
 client_id = "d900df051e5778bfa8696a1721c9e9b2"
 name = "Susie Sourdough"
-application_url = "https://susie-sourdough-prod.up.railway.app"
+application_url = "https://order-management-shopify-plugin-production.up.railway.app"
 embedded = true
 
 [build]
@@ -33,9 +33,9 @@ api_version = "2024-10"
 scopes = "read_orders,write_orders,read_products,write_products,read_customers,read_own_subscription_contracts,write_own_subscription_contracts,read_customer_payment_methods"
 
 [auth]
-redirect_urls = [ "https://susie-sourdough-prod.up.railway.app/auth/callback" ]
+redirect_urls = [ "https://order-management-shopify-plugin-production.up.railway.app/auth/callback" ]
 
 [app_proxy]
-url = "https://susie-sourdough-prod.up.railway.app/apps"
+url = "https://order-management-shopify-plugin-production.up.railway.app/apps"
 subpath = "my-subscription"
 prefix = "apps"
