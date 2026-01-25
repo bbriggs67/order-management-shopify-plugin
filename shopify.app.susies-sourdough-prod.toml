@@ -8,29 +8,22 @@ embedded = true
 
 [build]
 automatically_update_urls_on_dev = false
-include_config_on_deploy = true
 
 [webhooks]
 api_version = "2024-10"
 
-  [[webhooks.subscriptions]]
-  topics = ["orders/create", "orders/updated", "orders/cancelled"]
-  uri = "/webhooks"
-
-  [[webhooks.subscriptions]]
-  topics = ["subscription_contracts/create", "subscription_contracts/update"]
-  uri = "/webhooks"
-
-  [[webhooks.subscriptions]]
-  topics = ["subscription_billing_attempts/success", "subscription_billing_attempts/failure"]
-  uri = "/webhooks"
+# Note: Order and subscription webhooks will be registered dynamically after app installation
+# due to protected customer data requirements for static webhook registration.
+# The app code handles registering these webhooks when installed on a store.
 
   [[webhooks.subscriptions]]
   topics = ["app/uninstalled", "app/scopes_update"]
   uri = "/webhooks"
 
 [access_scopes]
-scopes = "read_orders,write_orders,read_products,write_products,read_customers,read_own_subscription_contracts,write_own_subscription_contracts,read_customer_payment_methods"
+# Note: Subscription scopes (read/write_own_subscription_contracts, read_customer_payment_methods)
+# require protected customer data approval and will be added after distribution setup
+scopes = "read_orders,write_orders,read_products,write_products,read_customers"
 
 [auth]
 redirect_urls = [ "https://order-management-shopify-plugin-production.up.railway.app/auth/callback" ]
