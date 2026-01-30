@@ -1,8 +1,8 @@
-# Susie Sourdough - PRODUCTION Configuration
+# Susies Sourdough Custom App - PRODUCTION Configuration
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "d900df051e5778bfa8696a1721c9e9b2"
-name = "Susie Sourdough"
+client_id = "91916d0dde38621b037bf02ed37f52f8"
+name = "Susies Sourdough Custom App"
 application_url = "https://order-management-shopify-plugin-production.up.railway.app"
 embedded = true
 
@@ -12,17 +12,11 @@ automatically_update_urls_on_dev = false
 [webhooks]
 api_version = "2024-10"
 
-# Note: Order and subscription webhooks will be registered dynamically after app installation
-# due to protected customer data requirements for static webhook registration.
-# The app code handles registering these webhooks when installed on a store.
-
   [[webhooks.subscriptions]]
   topics = ["app/uninstalled", "app/scopes_update"]
   uri = "/webhooks"
 
 [access_scopes]
-# Note: Subscription scopes (read/write_own_subscription_contracts, read_customer_payment_methods)
-# require protected customer data approval and will be added after distribution setup
 scopes = "read_orders,write_orders,read_products,write_products,read_customers"
 
 [auth]
@@ -32,3 +26,14 @@ redirect_urls = [ "https://order-management-shopify-plugin-production.up.railway
 url = "https://order-management-shopify-plugin-production.up.railway.app/apps"
 subpath = "my-subscription"
 prefix = "apps"
+
+[pos]
+embedded = false
+
+[[extensions.admin_link]]
+label = "Susies Sourdough Custom App"
+destination = "/"
+
+[[extensions.admin_link]]
+label = "Subscription Settings"
+destination = "/app/settings/subscriptions"
