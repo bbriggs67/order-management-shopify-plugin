@@ -1,8 +1,8 @@
-# Susies Sourdough Custom App - PRODUCTION Configuration
+# Susies Sourdough Manager - PRODUCTION Configuration
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "91916d0dde38621b037bf02ed37f52f8"
-name = "Susies Sourdough Custom App"
+client_id = "cb5582248cfb2bce91bc6d860154b57c"
+name = "Susies Sourdough Manager"
 application_url = "https://order-management-shopify-plugin-production.up.railway.app"
 embedded = true
 
@@ -17,7 +17,8 @@ api_version = "2024-10"
   uri = "/webhooks"
 
 [access_scopes]
-scopes = "read_orders,write_orders,read_products,write_products,read_customers"
+# Subscription scopes included from the start
+scopes = "read_orders,write_orders,read_products,write_products,read_customers,read_own_subscription_contracts,write_own_subscription_contracts"
 
 [auth]
 redirect_urls = [ "https://order-management-shopify-plugin-production.up.railway.app/auth/callback" ]
@@ -31,7 +32,7 @@ prefix = "apps"
 embedded = false
 
 [[extensions.admin_link]]
-label = "Susies Sourdough Custom App"
+label = "Susies Sourdough Manager"
 destination = "/"
 
 [[extensions.admin_link]]

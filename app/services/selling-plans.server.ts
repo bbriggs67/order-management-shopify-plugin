@@ -214,7 +214,8 @@ async function findExistingSellingPlanGroup(
   admin: AdminClient
 ): Promise<SellingPlanInfo | null> {
   const response = await admin.graphql(SELLING_PLAN_GROUPS_QUERY);
-  const data: SellingPlanGroupQueryResponse = await response.json().then((r: { data: SellingPlanGroupQueryResponse }) => r.data);
+  const jsonResponse = await response.json();
+  const data: SellingPlanGroupQueryResponse = jsonResponse.data;
 
   const groups = data.sellingPlanGroups.edges;
   const subscribeGroup = groups.find(
@@ -329,7 +330,8 @@ async function createSellingPlanGroup(
     variables: { input },
   });
 
-  const data: SellingPlanGroupCreateResponse = await response.json().then((r: { data: SellingPlanGroupCreateResponse }) => r.data);
+  const jsonResponse = await response.json();
+  const data: SellingPlanGroupCreateResponse = jsonResponse.data;
 
   if (data.sellingPlanGroupCreate.userErrors.length > 0) {
     const errors = data.sellingPlanGroupCreate.userErrors
