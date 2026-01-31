@@ -178,19 +178,20 @@
       if (errorEl) errorEl.style.display = 'none';
 
       try {
-        // Try app proxy first
-        let apiUrl = `/apps/pickup-scheduler/api/pickup-availability?shop=${encodeURIComponent(shopDomain)}`;
+        // Use the app proxy URL - the app proxy is at /apps/my-subscription
+        let apiUrl = `/apps/my-subscription/pickup-availability?shop=${encodeURIComponent(shopDomain)}`;
         console.log('Pickup Scheduler: Fetching from', apiUrl);
 
         let response = await fetch(apiUrl);
 
         // If proxy fails, try the dev tunnel URL (for development)
         if (!response.ok) {
-          console.log('Pickup Scheduler: App proxy failed, trying dev URL');
+          console.log('Pickup Scheduler: App proxy failed, status:', response.status);
           // Check for dev tunnel URL in meta tag or fall back to known dev patterns
           const devUrl = document.querySelector('meta[name="pickup-scheduler-dev-url"]')?.content;
           if (devUrl) {
             apiUrl = `${devUrl}/api/pickup-availability?shop=${encodeURIComponent(shopDomain)}`;
+            console.log('Pickup Scheduler: Trying dev URL', apiUrl);
             response = await fetch(apiUrl);
           }
           if (!response.ok) {
