@@ -79,6 +79,23 @@ export interface SellingPlanInfo {
   biweeklyDiscount: number;
 }
 
+export interface SellingPlanDetail {
+  id: string;
+  name: string;
+  interval: string;
+  intervalCount: number;
+  discount: number;
+  discountType: string;
+  productCount: number;
+}
+
+export interface SellingPlanGroupDetail {
+  id: string;
+  name: string;
+  productCount: number;
+  plans: SellingPlanDetail[];
+}
+
 // ============================================
 // GraphQL Queries & Mutations
 // ============================================
@@ -105,6 +122,82 @@ const SELLING_PLAN_GROUPS_QUERY = `
             }
           }
         }
+      }
+    }
+  }
+`;
+
+const ALL_SELLING_PLAN_GROUPS_QUERY = `
+  query getAllSellingPlanGroups {
+    sellingPlanGroups(first: 20) {
+      edges {
+        node {
+          id
+          name
+          productCount
+          sellingPlans(first: 20) {
+            edges {
+              node {
+                id
+                name
+                billingPolicy {
+                  ... on SellingPlanRecurringBillingPolicy {
+                    interval
+                    intervalCount
+                  }
+                }
+                pricingPolicies {
+                  ... on SellingPlanFixedPricingPolicy {
+                    adjustmentType
+                    adjustmentValue {
+                      ... on SellingPlanPricingPolicyPercentageValue {
+                        percentage
+                      }
+                      ... on MoneyV2 {
+                        amount
+                        currencyCode
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const ADD_SELLING_PLAN_MUTATION = `
+  mutation addSellingPlanToGroup($id: ID!, $sellingPlansToCreate: [SellingPlanInput!]!) {
+    sellingPlanGroupUpdate(id: $id, input: { sellingPlansToCreate: $sellingPlansToCreate }) {
+      sellingPlanGroup {
+        id
+        sellingPlans(first: 20) {
+          edges {
+            node {
+              id
+              name
+            }
+          }
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const DELETE_SELLING_PLAN_MUTATION = `
+  mutation deleteSellingPlan($id: ID!, $sellingPlanIdsToDelete: [ID!]!) {
+    sellingPlanGroupUpdate(id: $id, input: { sellingPlansToDelete: $sellingPlanIdsToDelete }) {
+      deletedSellingPlanIds
+      userErrors {
+        field
+        message
       }
     }
   }
@@ -487,4 +580,191 @@ export async function updateSellingPlanDiscounts(
   // Note: This only updates our local config.
   // To update the actual Shopify selling plans, you would need to use
   // sellingPlanGroupUpdate mutation. For now, we store the intent.
+}
+
+/**
+ * Get all selling plan groups with full details from Shopify
+ */
+export async function getAllSellingPlanGroups(
+  admin: AdminClient
+): Promise<SellingPlanGroupDetail[]> {
+  const response = await admin.graphql(ALL_SELLING_PLAN_GROUPS_QUERY);
+  const jsonResponse = await response.json();
+  const data = jsonResponse.data;
+
+  if (!data?.sellingPlanGroups?.edges) {
+    return [];
+  }
+
+  return data.sellingPlanGroups.edges.map((groupEdge: any) => {
+    const group = groupEdge.node;
+    const plans: SellingPlanDetail[] = group.sellingPlans.edges.map((planEdge: any) => {
+      const plan = planEdge.node;
+      const billingPolicy = plan.billingPolicy || {};
+      const pricingPolicy = plan.pricingPolicies?.[0] || {};
+
+      let discount = 0;
+      let discountType = "PERCENTAGE";
+
+      if (pricingPolicy.adjustmentValue) {
+        if (pricingPolicy.adjustmentValue.percentage !== undefined) {
+          discount = pricingPolicy.adjustmentValue.percentage;
+          discountType = "PERCENTAGE";
+        } else if (pricingPolicy.adjustmentValue.amount !== undefined) {
+          discount = parseFloat(pricingPolicy.adjustmentValue.amount);
+          discountType = "FIXED_AMOUNT";
+        }
+      }
+
+      return {
+        id: plan.id,
+        name: plan.name,
+        interval: billingPolicy.interval || "WEEK",
+        intervalCount: billingPolicy.intervalCount || 1,
+        discount,
+        discountType,
+        productCount: 0, // Not available at plan level
+      };
+    });
+
+    return {
+      id: group.id,
+      name: group.name,
+      productCount: group.productCount || 0,
+      plans,
+    };
+  });
+}
+
+/**
+ * Add a new selling plan to an existing group
+ */
+export async function addSellingPlanToGroup(
+  admin: AdminClient,
+  groupId: string,
+  planName: string,
+  intervalCount: number,
+  discountPercent: number,
+  interval: string = "WEEK"
+): Promise<{ success: boolean; error?: string; planId?: string }> {
+  const sellingPlanInput = {
+    name: planName,
+    options: [getFrequencyLabel(interval, intervalCount)],
+    category: "SUBSCRIPTION",
+    billingPolicy: {
+      recurring: {
+        interval,
+        intervalCount,
+        anchors: [],
+      },
+    },
+    deliveryPolicy: {
+      recurring: {
+        interval,
+        intervalCount,
+        anchors: [],
+      },
+    },
+    pricingPolicies: [
+      {
+        fixed: {
+          adjustmentType: "PERCENTAGE",
+          adjustmentValue: {
+            percentage: discountPercent,
+          },
+        },
+      },
+    ],
+  };
+
+  try {
+    const response = await admin.graphql(ADD_SELLING_PLAN_MUTATION, {
+      variables: {
+        id: groupId,
+        sellingPlansToCreate: [sellingPlanInput],
+      },
+    });
+
+    const jsonResponse = await response.json();
+    const data = jsonResponse.data;
+
+    if (data?.sellingPlanGroupUpdate?.userErrors?.length > 0) {
+      const errors = data.sellingPlanGroupUpdate.userErrors
+        .map((e: any) => e.message)
+        .join(", ");
+      return { success: false, error: errors };
+    }
+
+    // Find the newly created plan
+    const plans = data?.sellingPlanGroupUpdate?.sellingPlanGroup?.sellingPlans?.edges || [];
+    const newPlan = plans.find((p: any) => p.node.name === planName);
+
+    return {
+      success: true,
+      planId: newPlan?.node?.id,
+    };
+  } catch (error) {
+    console.error("Error adding selling plan:", error);
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Delete a selling plan from a group
+ */
+export async function deleteSellingPlan(
+  admin: AdminClient,
+  groupId: string,
+  planId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const response = await admin.graphql(DELETE_SELLING_PLAN_MUTATION, {
+      variables: {
+        id: groupId,
+        sellingPlanIdsToDelete: [planId],
+      },
+    });
+
+    const jsonResponse = await response.json();
+    const data = jsonResponse.data;
+
+    if (data?.sellingPlanGroupUpdate?.userErrors?.length > 0) {
+      const errors = data.sellingPlanGroupUpdate.userErrors
+        .map((e: any) => e.message)
+        .join(", ");
+      return { success: false, error: errors };
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error deleting selling plan:", error);
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Helper to generate frequency label
+ */
+function getFrequencyLabel(interval: string, intervalCount: number): string {
+  if (interval === "WEEK") {
+    if (intervalCount === 1) return "Weekly";
+    if (intervalCount === 2) return "Every 2 weeks";
+    return `Every ${intervalCount} weeks`;
+  }
+  if (interval === "MONTH") {
+    if (intervalCount === 1) return "Monthly";
+    return `Every ${intervalCount} months`;
+  }
+  if (interval === "DAY") {
+    if (intervalCount === 1) return "Daily";
+    return `Every ${intervalCount} days`;
+  }
+  return `Every ${intervalCount} ${interval.toLowerCase()}s`;
+}
+
+/**
+ * Get human-readable frequency label
+ */
+export function formatFrequency(interval: string, intervalCount: number): string {
+  return getFrequencyLabel(interval, intervalCount);
 }

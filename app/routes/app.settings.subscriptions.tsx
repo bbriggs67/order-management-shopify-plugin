@@ -12,11 +12,12 @@ import {
   Banner,
   Badge,
   DataTable,
-  Spinner,
   Box,
   Divider,
   TextField,
   FormLayout,
+  Modal,
+  Select,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { useState, useCallback } from "react";
@@ -25,6 +26,11 @@ import {
   ensureSellingPlanGroup,
   getSellingPlanConfig,
   addProductsToSellingPlanGroup,
+  getAllSellingPlanGroups,
+  addSellingPlanToGroup,
+  deleteSellingPlan,
+  formatFrequency,
+  type SellingPlanGroupDetail,
 } from "../services/selling-plans.server";
 import {
   getFailedBillings,
@@ -37,8 +43,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
 
-  // Get selling plan configuration
+  // Get selling plan configuration from our database
   const sellingPlanConfig = await getSellingPlanConfig(shop);
+
+  // Get ALL selling plan groups from Shopify (includes plans created outside our app)
+  const sellingPlanGroups = await getAllSellingPlanGroups(admin);
 
   // Get failed billings
   const failedBillingsRaw = await getFailedBillings(shop);
@@ -80,6 +89,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
     shop,
     sellingPlanConfig,
+    sellingPlanGroups,
     failedBillings,
     upcomingBillings,
     customerPortalUrl,
@@ -129,6 +139,56 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
       }
 
+      case "add_selling_plan": {
+        const groupId = formData.get("groupId") as string;
+        const planName = formData.get("planName") as string;
+        const intervalCount = parseInt(formData.get("intervalCount") as string, 10);
+        const discountPercent = parseFloat(formData.get("discountPercent") as string);
+        const interval = (formData.get("interval") as string) || "WEEK";
+
+        if (!groupId || !planName || isNaN(intervalCount) || isNaN(discountPercent)) {
+          return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const result = await addSellingPlanToGroup(
+          admin,
+          groupId,
+          planName,
+          intervalCount,
+          discountPercent,
+          interval
+        );
+
+        if (!result.success) {
+          return json({ error: result.error }, { status: 400 });
+        }
+
+        return json({
+          success: true,
+          message: `Created new plan: ${planName}`,
+        });
+      }
+
+      case "delete_selling_plan": {
+        const groupId = formData.get("groupId") as string;
+        const planId = formData.get("planId") as string;
+
+        if (!groupId || !planId) {
+          return json({ error: "Missing group or plan ID" }, { status: 400 });
+        }
+
+        const result = await deleteSellingPlan(admin, groupId, planId);
+
+        if (!result.success) {
+          return json({ error: result.error }, { status: 400 });
+        }
+
+        return json({
+          success: true,
+          message: "Selling plan deleted",
+        });
+      }
+
       default:
         return json({ error: "Unknown action" }, { status: 400 });
     }
@@ -139,7 +199,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SubscriptionsSettings() {
-  const { sellingPlanConfig, failedBillings, upcomingBillings, customerPortalUrl } = useLoaderData<typeof loader>();
+  const { sellingPlanConfig, sellingPlanGroups, failedBillings, upcomingBillings, customerPortalUrl } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -147,6 +207,18 @@ export default function SubscriptionsSettings() {
 
   const [productIds, setProductIds] = useState("");
   const [copied, setCopied] = useState(false);
+
+  // Add Plan Modal State
+  const [addPlanModalOpen, setAddPlanModalOpen] = useState(false);
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [newPlanName, setNewPlanName] = useState("");
+  const [newPlanInterval, setNewPlanInterval] = useState("WEEK");
+  const [newPlanIntervalCount, setNewPlanIntervalCount] = useState("1");
+  const [newPlanDiscount, setNewPlanDiscount] = useState("5");
+
+  // Delete confirmation state
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [planToDelete, setPlanToDelete] = useState<{ groupId: string; planId: string; name: string } | null>(null);
 
   const handleCopyUrl = useCallback(async () => {
     try {
@@ -170,6 +242,52 @@ export default function SubscriptionsSettings() {
 
   const handleRetryBilling = (subscriptionId: string) => {
     submit({ intent: "retry_billing", subscriptionId }, { method: "post" });
+  };
+
+  const handleOpenAddPlanModal = (groupId: string) => {
+    setSelectedGroupId(groupId);
+    setNewPlanName("");
+    setNewPlanInterval("WEEK");
+    setNewPlanIntervalCount("1");
+    setNewPlanDiscount("5");
+    setAddPlanModalOpen(true);
+  };
+
+  const handleAddPlan = () => {
+    const intervalCount = parseInt(newPlanIntervalCount, 10);
+    const discount = parseFloat(newPlanDiscount);
+
+    // Generate plan name if not provided
+    const planName = newPlanName ||
+      `Deliver ${formatFrequency(newPlanInterval, intervalCount)} (${discount}% off)`;
+
+    submit({
+      intent: "add_selling_plan",
+      groupId: selectedGroupId,
+      planName,
+      interval: newPlanInterval,
+      intervalCount: newPlanIntervalCount,
+      discountPercent: newPlanDiscount,
+    }, { method: "post" });
+
+    setAddPlanModalOpen(false);
+  };
+
+  const handleDeletePlan = (groupId: string, planId: string, name: string) => {
+    setPlanToDelete({ groupId, planId, name });
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDeletePlan = () => {
+    if (planToDelete) {
+      submit({
+        intent: "delete_selling_plan",
+        groupId: planToDelete.groupId,
+        planId: planToDelete.planId,
+      }, { method: "post" });
+    }
+    setDeleteConfirmOpen(false);
+    setPlanToDelete(null);
   };
 
   // Format failed billings for data table
@@ -221,48 +339,97 @@ export default function SubscriptionsSettings() {
           </Layout.Section>
         )}
 
-        {/* Selling Plan Configuration */}
+        {/* Subscription Plans from Shopify */}
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">
-                  Selling Plans
+                  Subscription Plans
                 </Text>
-                {sellingPlanConfig ? (
-                  <Badge tone="success">Configured</Badge>
+                {sellingPlanGroups.length > 0 ? (
+                  <Badge tone="success">{sellingPlanGroups.length} group(s)</Badge>
                 ) : (
                   <Badge tone="attention">Not Configured</Badge>
                 )}
               </InlineStack>
 
               <Text as="p" tone="subdued">
-                Selling plans enable subscription purchases on your products. Once
-                created, you can add products to the Subscribe & Save plan group.
+                Manage your subscription plans. These plans are synced from Shopify and
+                determine the frequency and discount options available to customers.
               </Text>
 
-              {sellingPlanConfig ? (
-                <BlockStack gap="200">
-                  <Text as="p">
-                    <strong>Group ID:</strong> {sellingPlanConfig.groupId}
-                  </Text>
-                  <InlineStack gap="400">
-                    <Text as="p">
-                      Weekly: <Badge>{`${sellingPlanConfig.weeklyDiscount}% off`}</Badge>
-                    </Text>
-                    <Text as="p">
-                      Bi-weekly: <Badge>{`${sellingPlanConfig.biweeklyDiscount}% off`}</Badge>
-                    </Text>
-                  </InlineStack>
+              {sellingPlanGroups.length === 0 ? (
+                <BlockStack gap="300">
+                  <Banner tone="warning">
+                    No selling plan groups found. Create one to enable subscriptions.
+                  </Banner>
+                  <Button
+                    variant="primary"
+                    onClick={handleCreateSellingPlans}
+                    loading={isLoading}
+                  >
+                    Create Subscribe & Save Plans
+                  </Button>
                 </BlockStack>
               ) : (
-                <Button
-                  variant="primary"
-                  onClick={handleCreateSellingPlans}
-                  loading={isLoading}
-                >
-                  Create Selling Plans
-                </Button>
+                <BlockStack gap="400">
+                  {sellingPlanGroups.map((group: SellingPlanGroupDetail) => (
+                    <Box
+                      key={group.id}
+                      padding="400"
+                      background="bg-surface-secondary"
+                      borderRadius="200"
+                    >
+                      <BlockStack gap="300">
+                        <InlineStack align="space-between" blockAlign="center">
+                          <BlockStack gap="100">
+                            <Text as="h3" variant="headingSm">
+                              {group.name}
+                            </Text>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {group.productCount} product(s)
+                            </Text>
+                          </BlockStack>
+                          <Button
+                            size="slim"
+                            onClick={() => handleOpenAddPlanModal(group.id)}
+                          >
+                            Add Plan
+                          </Button>
+                        </InlineStack>
+
+                        <Divider />
+
+                        {group.plans.length === 0 ? (
+                          <Text as="p" tone="subdued">
+                            No plans in this group.
+                          </Text>
+                        ) : (
+                          <DataTable
+                            columnContentTypes={["text", "text", "numeric", "text"]}
+                            headings={["Plan Name", "Frequency", "Discount", "Actions"]}
+                            rows={group.plans.map((plan) => [
+                              plan.name,
+                              formatFrequency(plan.interval, plan.intervalCount),
+                              plan.discountType === "PERCENTAGE"
+                                ? `${plan.discount}% off`
+                                : `$${plan.discount} off`,
+                              <Button
+                                key={plan.id}
+                                size="slim"
+                                tone="critical"
+                                onClick={() => handleDeletePlan(group.id, plan.id, plan.name)}
+                              >
+                                Delete
+                              </Button>,
+                            ])}
+                          />
+                        )}
+                      </BlockStack>
+                    </Box>
+                  ))}
+                </BlockStack>
               )}
             </BlockStack>
           </Card>
@@ -471,6 +638,100 @@ export default function SubscriptionsSettings() {
           </Card>
         </Layout.Section>
       </Layout>
+
+      {/* Add Plan Modal */}
+      <Modal
+        open={addPlanModalOpen}
+        onClose={() => setAddPlanModalOpen(false)}
+        title="Add New Subscription Plan"
+        primaryAction={{
+          content: "Create Plan",
+          onAction: handleAddPlan,
+          loading: isLoading,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => setAddPlanModalOpen(false),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <TextField
+              label="Plan Name (optional)"
+              value={newPlanName}
+              onChange={setNewPlanName}
+              placeholder="e.g., Deliver every 3 weeks (2.5% off)"
+              autoComplete="off"
+              helpText="Leave blank to auto-generate based on frequency and discount"
+            />
+            <Select
+              label="Billing Interval"
+              options={[
+                { label: "Week(s)", value: "WEEK" },
+                { label: "Month(s)", value: "MONTH" },
+              ]}
+              value={newPlanInterval}
+              onChange={setNewPlanInterval}
+            />
+            <TextField
+              label="Interval Count"
+              type="number"
+              value={newPlanIntervalCount}
+              onChange={setNewPlanIntervalCount}
+              min={1}
+              max={52}
+              autoComplete="off"
+              helpText={`Customer will be billed every ${newPlanIntervalCount} ${newPlanInterval.toLowerCase()}(s)`}
+            />
+            <TextField
+              label="Discount Percentage"
+              type="number"
+              value={newPlanDiscount}
+              onChange={setNewPlanDiscount}
+              min={0}
+              max={100}
+              suffix="%"
+              autoComplete="off"
+              helpText="Percentage discount applied to subscription orders"
+            />
+            <Banner tone="info">
+              Preview: {newPlanName || `Deliver ${formatFrequency(newPlanInterval, parseInt(newPlanIntervalCount, 10) || 1)} (${newPlanDiscount}% off)`}
+            </Banner>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        open={deleteConfirmOpen}
+        onClose={() => setDeleteConfirmOpen(false)}
+        title="Delete Subscription Plan"
+        primaryAction={{
+          content: "Delete Plan",
+          destructive: true,
+          onAction: confirmDeletePlan,
+          loading: isLoading,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => setDeleteConfirmOpen(false),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p">
+              Are you sure you want to delete the plan <strong>"{planToDelete?.name}"</strong>?
+            </Text>
+            <Banner tone="warning">
+              Existing subscribers on this plan may be affected. Make sure to migrate them to a different plan first.
+            </Banner>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
