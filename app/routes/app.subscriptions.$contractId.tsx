@@ -38,13 +38,13 @@ import {
   validateBillingLeadHours,
   retryBilling,
 } from "../services/subscription-billing.server";
-import {
-  getContractDetails,
-  formatCurrency,
-  type ContractLineItem,
-  type ContractPaymentMethod,
-  type ContractPricingSummary,
-} from "../services/subscription-contracts.server";
+import { getContractDetails } from "../services/subscription-contracts.server";
+import type {
+  ContractLineItem,
+  ContractPaymentMethod,
+  ContractPricingSummary,
+} from "../types/subscription-contracts";
+import { formatCurrency } from "../utils/formatting";
 
 // Timezone constant for client-side formatting
 const SHOP_TIMEZONE = "America/Los_Angeles";
@@ -198,6 +198,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const { admin } = await authenticate.admin(request);
 
     // Cancel the Shopify subscription contract
+    let shopifyCancelError: string | null = null;
     try {
       const cancelResponse = await admin.graphql(`
         mutation subscriptionContractCancel($contractId: ID!) {
@@ -218,21 +219,39 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
       const cancelData = await cancelResponse.json();
       if (cancelData.data?.subscriptionContractCancel?.userErrors?.length > 0) {
-        console.error("Shopify cancel errors:", cancelData.data.subscriptionContractCancel.userErrors);
+        const errors = cancelData.data.subscriptionContractCancel.userErrors;
+        shopifyCancelError = errors.map((e: { message: string }) => e.message).join(", ");
+        console.error("Shopify cancel errors:", errors);
       }
     } catch (error) {
       console.error("Failed to cancel Shopify contract:", error);
-      // Continue with local cancellation even if Shopify fails
+      shopifyCancelError = String(error);
     }
 
+    // Update local database regardless of Shopify result
     await prisma.subscriptionPickup.update({
       where: { id: subscription.id },
       data: {
         status: "CANCELLED",
         nextPickupDate: null,
         nextBillingDate: null,
+        // Log Shopify cancellation error in admin notes if any
+        ...(shopifyCancelError && {
+          adminNotes: subscription.adminNotes
+            ? `${subscription.adminNotes}\n[${new Date().toISOString()}] Shopify cancellation error: ${shopifyCancelError}`
+            : `[${new Date().toISOString()}] Shopify cancellation error: ${shopifyCancelError}`,
+        }),
       },
     });
+
+    // Return with warning if Shopify cancellation failed
+    if (shopifyCancelError) {
+      return json({
+        success: true,
+        action: "cancelled",
+        warning: `Local subscription cancelled, but Shopify contract cancellation failed: ${shopifyCancelError}. Please verify in Shopify admin.`,
+      });
+    }
 
     return json({ success: true, action: "cancelled" });
   }
@@ -275,9 +294,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const preferredTimeSlot = formData.get("preferredTimeSlot") as string;
     const frequency = formData.get("frequency") as string;
 
-    // Validate
+    // Validate preferred day (0-6)
     if (isNaN(preferredDay) || preferredDay < 0 || preferredDay > 6) {
       return json({ error: "Invalid preferred day" }, { status: 400 });
+    }
+
+    // Validate frequency
+    if (frequency !== "WEEKLY" && frequency !== "BIWEEKLY") {
+      return json({ error: "Invalid frequency. Must be WEEKLY or BIWEEKLY." }, { status: 400 });
     }
 
     // Calculate new discount based on frequency

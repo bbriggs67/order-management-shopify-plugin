@@ -70,6 +70,19 @@ interface ProductAddToSellingPlanGroupResponse {
   };
 }
 
+// Re-export types from shared types file
+export type {
+  SellingPlanDetail,
+  SellingPlanGroupDetail,
+  SellingPlanConfig,
+} from "../types/selling-plans";
+
+// Import types for internal use
+import type {
+  SellingPlanDetail,
+  SellingPlanGroupDetail,
+} from "../types/selling-plans";
+
 export interface SellingPlanInfo {
   groupId: string;
   groupName: string;
@@ -77,23 +90,6 @@ export interface SellingPlanInfo {
   biweeklyPlanId: string | null;
   weeklyDiscount: number;
   biweeklyDiscount: number;
-}
-
-export interface SellingPlanDetail {
-  id: string;
-  name: string;
-  interval: string;
-  intervalCount: number;
-  discount: number;
-  discountType: string;
-  productCount: number;
-}
-
-export interface SellingPlanGroupDetail {
-  id: string;
-  name: string;
-  productCount: number;
-  plans: SellingPlanDetail[];
 }
 
 // ============================================
@@ -742,29 +738,15 @@ export async function deleteSellingPlan(
   }
 }
 
-/**
- * Helper to generate frequency label
- */
-function getFrequencyLabel(interval: string, intervalCount: number): string {
-  if (interval === "WEEK") {
-    if (intervalCount === 1) return "Weekly";
-    if (intervalCount === 2) return "Every 2 weeks";
-    return `Every ${intervalCount} weeks`;
-  }
-  if (interval === "MONTH") {
-    if (intervalCount === 1) return "Monthly";
-    return `Every ${intervalCount} months`;
-  }
-  if (interval === "DAY") {
-    if (intervalCount === 1) return "Daily";
-    return `Every ${intervalCount} days`;
-  }
-  return `Every ${intervalCount} ${interval.toLowerCase()}s`;
-}
+// Import formatFrequency from shared utilities for internal use
+import { formatFrequency as _formatFrequency } from "../utils/formatting";
 
 /**
- * Get human-readable frequency label
+ * Helper to generate frequency label (uses shared formatting)
  */
-export function formatFrequency(interval: string, intervalCount: number): string {
-  return getFrequencyLabel(interval, intervalCount);
+function getFrequencyLabel(interval: string, intervalCount: number): string {
+  return _formatFrequency(interval, intervalCount);
 }
+
+// Re-export formatFrequency from shared utilities for backward compatibility
+export { formatFrequency } from "../utils/formatting";

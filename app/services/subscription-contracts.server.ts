@@ -3,84 +3,29 @@
  * Fetches detailed subscription contract information from Shopify
  */
 
+// Re-export types from shared types file for consumers
+export type {
+  ContractLineItem,
+  ContractPaymentMethod,
+  ContractPricingSummary,
+  ContractDeliveryPolicy,
+  ShopifyContractDetails,
+  ContractWithPricing,
+} from "../types/subscription-contracts";
+
+// Import types for internal use
+import type {
+  ContractLineItem,
+  ContractPaymentMethod,
+  ContractPricingSummary,
+  ContractDeliveryPolicy,
+  ShopifyContractDetails,
+  ContractWithPricing,
+} from "../types/subscription-contracts";
+
 // Type for the admin GraphQL client returned by authenticate.admin()
 interface AdminClient {
   graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
-}
-
-// ============================================
-// Types
-// ============================================
-
-export interface ContractLineItem {
-  id: string;
-  title: string;
-  variantTitle: string | null;
-  quantity: number;
-  currentPrice: {
-    amount: string;
-    currencyCode: string;
-  };
-  productId: string | null;
-  variantId: string | null;
-  variantImage: {
-    url: string;
-    altText: string | null;
-  } | null;
-}
-
-export interface ContractPaymentMethod {
-  id: string;
-  instrument: {
-    brand: string | null;
-    lastDigits: string | null;
-    expiryMonth: number | null;
-    expiryYear: number | null;
-    name: string | null;
-    // For Shop Pay or other digital wallets
-    walletType: string | null;
-  } | null;
-}
-
-export interface ContractPricingSummary {
-  subtotalPrice: {
-    amount: string;
-    currencyCode: string;
-  };
-  totalTax: {
-    amount: string;
-    currencyCode: string;
-  };
-  totalPrice: {
-    amount: string;
-    currencyCode: string;
-  };
-}
-
-export interface ContractDeliveryPolicy {
-  interval: string;
-  intervalCount: number;
-}
-
-export interface ShopifyContractDetails {
-  id: string;
-  status: string;
-  createdAt: string;
-  nextBillingDate: string | null;
-  customer: {
-    id: string;
-    email: string;
-    displayName: string;
-  } | null;
-  customerPaymentMethod: ContractPaymentMethod | null;
-  lines: ContractLineItem[];
-  deliveryPolicy: ContractDeliveryPolicy | null;
-  // Note: Shopify doesn't provide a built-in pricing summary on contracts
-  // We'll calculate from line items
-}
-
-export interface ContractWithPricing extends ShopifyContractDetails {
-  pricingSummary: ContractPricingSummary;
 }
 
 // ============================================
@@ -189,6 +134,70 @@ const SUBSCRIPTION_CONTRACTS_LIST_QUERY = `
   }
 `;
 
+// Batch query for multiple contracts - avoids N+1 problem
+const SUBSCRIPTION_CONTRACTS_BATCH_QUERY = `
+  query getSubscriptionContractsBatch($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on SubscriptionContract {
+        id
+        status
+        createdAt
+        nextBillingDate
+        customer {
+          id
+          email
+          displayName
+        }
+        customerPaymentMethod {
+          id
+          instrument {
+            ... on CustomerCreditCard {
+              brand
+              lastDigits
+              expiryMonth
+              expiryYear
+              name
+            }
+            ... on CustomerShopPayAgreement {
+              lastDigits
+              expiryMonth
+              expiryYear
+              name
+            }
+            ... on CustomerPaypalBillingAgreement {
+              paypalAccountEmail
+            }
+          }
+        }
+        lines(first: 10) {
+          edges {
+            node {
+              id
+              title
+              variantTitle
+              quantity
+              currentPrice {
+                amount
+                currencyCode
+              }
+              productId
+              variantId
+              variantImage {
+                url
+                altText
+              }
+            }
+          }
+        }
+        deliveryPolicy {
+          interval
+          intervalCount
+        }
+      }
+    }
+  }
+`;
+
 // ============================================
 // Service Functions
 // ============================================
@@ -266,6 +275,7 @@ export async function getContractDetails(
 
 /**
  * Get multiple subscription contracts with basic details
+ * @deprecated Use getContractDetailsBatch instead for better performance
  */
 export async function getContractsWithDetails(
   admin: AdminClient,
@@ -294,17 +304,96 @@ export async function getContractsWithDetails(
 }
 
 /**
- * Get line items summary for display in list view
+ * Batch fetch multiple contract details in a single GraphQL query
+ * Solves N+1 query problem - use this for list views
+ *
+ * @param admin - Shopify admin client
+ * @param contractIds - Array of Shopify contract GIDs
+ * @returns Map of contract ID to contract details with pricing
  */
-export function getLineItemsSummary(lines: ContractLineItem[]): string {
-  if (lines.length === 0) return "No products";
-  if (lines.length === 1) {
-    const line = lines[0];
-    return line.quantity > 1
-      ? `${line.title} (x${line.quantity})`
-      : line.title;
+export async function getContractDetailsBatch(
+  admin: AdminClient,
+  contractIds: string[]
+): Promise<Map<string, ContractWithPricing>> {
+  const results = new Map<string, ContractWithPricing>();
+
+  if (contractIds.length === 0) {
+    return results;
   }
-  return `${lines.length} products`;
+
+  // Shopify nodes query supports up to 250 IDs, but we'll batch at 50 for safety
+  const BATCH_SIZE = 50;
+  const batches: string[][] = [];
+
+  for (let i = 0; i < contractIds.length; i += BATCH_SIZE) {
+    batches.push(contractIds.slice(i, i + BATCH_SIZE));
+  }
+
+  for (const batchIds of batches) {
+    try {
+      const response = await admin.graphql(SUBSCRIPTION_CONTRACTS_BATCH_QUERY, {
+        variables: { ids: batchIds },
+      });
+
+      const jsonResponse = await response.json();
+      const nodes = jsonResponse.data?.nodes || [];
+
+      for (const contract of nodes) {
+        if (!contract || !contract.id) continue;
+
+        // Parse line items
+        const lines: ContractLineItem[] = (contract.lines?.edges || []).map((edge: any) => ({
+          id: edge.node.id,
+          title: edge.node.title,
+          variantTitle: edge.node.variantTitle,
+          quantity: edge.node.quantity,
+          currentPrice: edge.node.currentPrice,
+          productId: edge.node.productId,
+          variantId: edge.node.variantId,
+          variantImage: edge.node.variantImage,
+        }));
+
+        // Parse payment method
+        let customerPaymentMethod: ContractPaymentMethod | null = null;
+        if (contract.customerPaymentMethod) {
+          const instrument = contract.customerPaymentMethod.instrument;
+          customerPaymentMethod = {
+            id: contract.customerPaymentMethod.id,
+            instrument: instrument
+              ? {
+                  brand: instrument.brand || null,
+                  lastDigits: instrument.lastDigits || null,
+                  expiryMonth: instrument.expiryMonth || null,
+                  expiryYear: instrument.expiryYear || null,
+                  name: instrument.name || null,
+                  walletType: instrument.paypalAccountEmail ? "PAYPAL" : null,
+                }
+              : null,
+          };
+        }
+
+        // Calculate pricing summary
+        const pricingSummary = calculatePricingSummary(lines);
+
+        results.set(contract.id, {
+          id: contract.id,
+          status: contract.status,
+          createdAt: contract.createdAt,
+          nextBillingDate: contract.nextBillingDate,
+          customer: contract.customer,
+          customerPaymentMethod,
+          lines,
+          deliveryPolicy: contract.deliveryPolicy,
+          pricingSummary,
+        });
+      }
+    } catch (error) {
+      console.error(`Error fetching batch of contracts:`, error);
+      // Continue with other batches even if one fails
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -341,80 +430,11 @@ export function calculatePricingSummary(lines: ContractLineItem[]): ContractPric
   };
 }
 
-/**
- * Format payment method for display
- */
-export function formatPaymentMethod(paymentMethod: ContractPaymentMethod | null): string {
-  if (!paymentMethod || !paymentMethod.instrument) {
-    return "No payment method";
-  }
-
-  const instrument = paymentMethod.instrument;
-
-  if (instrument.walletType === 'PAYPAL') {
-    return "PayPal";
-  }
-
-  if (instrument.brand && instrument.lastDigits) {
-    const brand = instrument.brand.charAt(0).toUpperCase() + instrument.brand.slice(1).toLowerCase();
-    return `${brand} •••• ${instrument.lastDigits}`;
-  }
-
-  if (instrument.lastDigits) {
-    return `•••• ${instrument.lastDigits}`;
-  }
-
-  return "Payment method on file";
-}
-
-/**
- * Format payment method expiry for display
- */
-export function formatPaymentExpiry(paymentMethod: ContractPaymentMethod | null): string | null {
-  if (!paymentMethod?.instrument?.expiryMonth || !paymentMethod?.instrument?.expiryYear) {
-    return null;
-  }
-
-  const month = paymentMethod.instrument.expiryMonth.toString().padStart(2, '0');
-  const year = paymentMethod.instrument.expiryYear.toString().slice(-2);
-  return `${month}/${year}`;
-}
-
-/**
- * Format currency amount for display
- */
-export function formatCurrency(amount: string, currencyCode: string = "USD"): string {
-  const numAmount = parseFloat(amount);
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currencyCode,
-  }).format(numAmount);
-}
-
-/**
- * Get delivery frequency label
- */
-export function getDeliveryFrequencyLabel(deliveryPolicy: ContractDeliveryPolicy | null): string {
-  if (!deliveryPolicy) return "Unknown";
-
-  const { interval, intervalCount } = deliveryPolicy;
-
-  if (interval === "WEEK") {
-    if (intervalCount === 1) return "Every week";
-    if (intervalCount === 2) return "Every 2 weeks";
-    if (intervalCount === 3) return "Every 3 weeks";
-    return `Every ${intervalCount} weeks`;
-  }
-
-  if (interval === "MONTH") {
-    if (intervalCount === 1) return "Every month";
-    return `Every ${intervalCount} months`;
-  }
-
-  if (interval === "DAY") {
-    if (intervalCount === 1) return "Every day";
-    return `Every ${intervalCount} days`;
-  }
-
-  return `Every ${intervalCount} ${interval.toLowerCase()}s`;
-}
+// Re-export formatting utilities from shared file for backward compatibility
+export {
+  formatCurrency,
+  getDeliveryFrequencyLabel,
+  formatPaymentMethod,
+  formatPaymentExpiry,
+  getLineItemsSummary,
+} from "../utils/formatting";

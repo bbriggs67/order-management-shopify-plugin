@@ -21,9 +21,16 @@ import {
   customerPermanentReschedule,
   getAvailablePickupDays,
   getAvailableTimeSlots,
-  getDayName,
 } from "../services/customer-subscription.server";
 import { formatDatePacific } from "../utils/timezone.server";
+import { getDayName, isValidFrequency, isValidDayOfWeek } from "../utils/constants.server";
+import { escapeHtml } from "../utils/html.server";
+import {
+  checkRateLimit,
+  getCustomerPortalRateLimitKey,
+  getFormSubmissionRateLimitKey,
+  RATE_LIMITS,
+} from "../utils/rate-limiter.server";
 
 // ============================================
 // App Proxy Signature Verification
@@ -438,16 +445,16 @@ function renderSubscriptionCard(
     .map((day) => `<option value="${day}">${getDayName(day)}</option>`)
     .join("");
 
-  // One-time reschedule info banner
+  // One-time reschedule info banner (escape user-controllable data)
   const rescheduleInfoHtml = subscription.oneTimeRescheduleDate ? `
     <div class="info-banner info-banner-blue">
       <strong>One-Time Reschedule Active:</strong> Next pickup changed to
-      ${formatDatePacific(subscription.oneTimeRescheduleDate)} at ${subscription.oneTimeRescheduleTimeSlot || subscription.preferredTimeSlot}.
-      ${subscription.oneTimeRescheduleReason ? `<br><em>Reason: ${subscription.oneTimeRescheduleReason}</em>` : ""}
-      <br><small>After this pickup, your subscription will return to ${dayName}s at ${subscription.preferredTimeSlot}.</small>
-      <form method="POST" action="${baseUrl}" style="margin-top: 8px;">
+      ${escapeHtml(formatDatePacific(subscription.oneTimeRescheduleDate))} at ${escapeHtml(subscription.oneTimeRescheduleTimeSlot || subscription.preferredTimeSlot)}.
+      ${subscription.oneTimeRescheduleReason ? `<br><em>Reason: ${escapeHtml(subscription.oneTimeRescheduleReason)}</em>` : ""}
+      <br><small>After this pickup, your subscription will return to ${escapeHtml(dayName)}s at ${escapeHtml(subscription.preferredTimeSlot)}.</small>
+      <form method="POST" action="${escapeHtml(baseUrl)}" style="margin-top: 8px;">
         <input type="hidden" name="action" value="clearReschedule">
-        <input type="hidden" name="subscriptionId" value="${subscription.id}">
+        <input type="hidden" name="subscriptionId" value="${escapeHtml(subscription.id)}">
         <button type="submit" class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 12px;">
           Revert to Regular Schedule
         </button>
@@ -455,32 +462,39 @@ function renderSubscriptionCard(
     </div>
   ` : "";
 
+  // Escape IDs and URLs for use in HTML attributes
+  const safeSubId = escapeHtml(subscription.id);
+  const safeBaseUrl = escapeHtml(baseUrl);
+  const safeDayName = escapeHtml(dayName);
+  const safeDayNameLower = escapeHtml(dayName.toLowerCase());
+  const safeTimeSlot = escapeHtml(subscription.preferredTimeSlot);
+
   if (subscription.status === "ACTIVE") {
     actionsHtml = `
       ${rescheduleInfoHtml}
       <div class="actions">
-        <button class="btn btn-primary" onclick="showModal('reschedule-modal-${subscription.id}')">
+        <button class="btn btn-primary" onclick="showModal('reschedule-modal-${safeSubId}')">
           Reschedule Next Pickup
         </button>
-        <button class="btn btn-secondary" onclick="showModal('change-schedule-modal-${subscription.id}')">
+        <button class="btn btn-secondary" onclick="showModal('change-schedule-modal-${safeSubId}')">
           Change Regular Schedule
         </button>
-        <button class="btn btn-warning" onclick="showModal('pause-modal-${subscription.id}')">
+        <button class="btn btn-warning" onclick="showModal('pause-modal-${safeSubId}')">
           Pause Subscription
         </button>
-        <button class="btn btn-danger" onclick="showModal('cancel-modal-${subscription.id}')">
+        <button class="btn btn-danger" onclick="showModal('cancel-modal-${safeSubId}')">
           Cancel Subscription
         </button>
       </div>
 
       <!-- One-Time Reschedule Modal -->
-      <div class="modal-overlay" id="reschedule-modal-${subscription.id}">
+      <div class="modal-overlay" id="reschedule-modal-${safeSubId}">
         <div class="modal">
           <h2>Reschedule Next Pickup</h2>
-          <p>This is a one-time change. After this pickup, your subscription will return to its regular schedule (${dayName}s at ${subscription.preferredTimeSlot}).</p>
-          <form method="POST" action="${baseUrl}">
+          <p>This is a one-time change. After this pickup, your subscription will return to its regular schedule (${safeDayName}s at ${safeTimeSlot}).</p>
+          <form method="POST" action="${safeBaseUrl}">
             <input type="hidden" name="action" value="oneTimeReschedule">
-            <input type="hidden" name="subscriptionId" value="${subscription.id}">
+            <input type="hidden" name="subscriptionId" value="${safeSubId}">
             <div class="form-group">
               <label class="form-label">New Pickup Date</label>
               <input type="date" name="newPickupDate" class="form-input" required min="${new Date().toISOString().split('T')[0]}">
@@ -496,7 +510,7 @@ function renderSubscriptionCard(
               <textarea name="reason" class="form-textarea" placeholder="e.g., Out of town that day"></textarea>
             </div>
             <div class="modal-actions">
-              <button type="button" class="btn btn-secondary" onclick="hideModal('reschedule-modal-${subscription.id}')">Cancel</button>
+              <button type="button" class="btn btn-secondary" onclick="hideModal('reschedule-modal-${safeSubId}')">Cancel</button>
               <button type="submit" class="btn btn-primary">Reschedule</button>
             </div>
           </form>
@@ -504,13 +518,13 @@ function renderSubscriptionCard(
       </div>
 
       <!-- Permanent Schedule Change Modal -->
-      <div class="modal-overlay" id="change-schedule-modal-${subscription.id}">
+      <div class="modal-overlay" id="change-schedule-modal-${safeSubId}">
         <div class="modal">
           <h2>Change Regular Schedule</h2>
           <p>This will permanently change your pickup day and time slot for all future pickups.</p>
-          <form method="POST" action="${baseUrl}">
+          <form method="POST" action="${safeBaseUrl}">
             <input type="hidden" name="action" value="permanentReschedule">
-            <input type="hidden" name="subscriptionId" value="${subscription.id}">
+            <input type="hidden" name="subscriptionId" value="${safeSubId}">
             <div class="form-group">
               <label class="form-label">Pickup Day</label>
               <select name="newPreferredDay" class="form-select" required>
@@ -528,7 +542,7 @@ function renderSubscriptionCard(
               <textarea name="reason" class="form-textarea" placeholder="e.g., New work schedule"></textarea>
             </div>
             <div class="modal-actions">
-              <button type="button" class="btn btn-secondary" onclick="hideModal('change-schedule-modal-${subscription.id}')">Cancel</button>
+              <button type="button" class="btn btn-secondary" onclick="hideModal('change-schedule-modal-${safeSubId}')">Cancel</button>
               <button type="submit" class="btn btn-primary">Update Schedule</button>
             </div>
           </form>
@@ -536,19 +550,19 @@ function renderSubscriptionCard(
       </div>
 
       <!-- Pause Modal -->
-      <div class="modal-overlay" id="pause-modal-${subscription.id}">
+      <div class="modal-overlay" id="pause-modal-${safeSubId}">
         <div class="modal">
-          <h2>Pause ${dayName} Pickup</h2>
-          <p>You can resume your ${dayName.toLowerCase()} subscription anytime.</p>
-          <form method="POST" action="${baseUrl}">
+          <h2>Pause ${safeDayName} Pickup</h2>
+          <p>You can resume your ${safeDayNameLower} subscription anytime.</p>
+          <form method="POST" action="${safeBaseUrl}">
             <input type="hidden" name="action" value="pause">
-            <input type="hidden" name="subscriptionId" value="${subscription.id}">
+            <input type="hidden" name="subscriptionId" value="${safeSubId}">
             <div class="form-group">
               <label class="form-label">Leave a comment (optional)</label>
               <textarea name="comment" class="form-textarea" placeholder="Let us know why you're pausing..."></textarea>
             </div>
             <div class="modal-actions">
-              <button type="button" class="btn btn-secondary" onclick="hideModal('pause-modal-${subscription.id}')">Cancel</button>
+              <button type="button" class="btn btn-secondary" onclick="hideModal('pause-modal-${safeSubId}')">Cancel</button>
               <button type="submit" class="btn btn-warning">Pause</button>
             </div>
           </form>
@@ -556,19 +570,19 @@ function renderSubscriptionCard(
       </div>
 
       <!-- Cancel Modal -->
-      <div class="modal-overlay" id="cancel-modal-${subscription.id}">
+      <div class="modal-overlay" id="cancel-modal-${safeSubId}">
         <div class="modal">
-          <h2>Cancel ${dayName} Pickup</h2>
-          <p>Are you sure you want to cancel your ${dayName.toLowerCase()} subscription? This cannot be undone from this portal.</p>
-          <form method="POST" action="${baseUrl}">
+          <h2>Cancel ${safeDayName} Pickup</h2>
+          <p>Are you sure you want to cancel your ${safeDayNameLower} subscription? This cannot be undone from this portal.</p>
+          <form method="POST" action="${safeBaseUrl}">
             <input type="hidden" name="action" value="cancel">
-            <input type="hidden" name="subscriptionId" value="${subscription.id}">
+            <input type="hidden" name="subscriptionId" value="${safeSubId}">
             <div class="form-group">
               <label class="form-label">Please let us know why (optional)</label>
               <textarea name="comment" class="form-textarea" placeholder="Your feedback helps us improve..."></textarea>
             </div>
             <div class="modal-actions">
-              <button type="button" class="btn btn-secondary" onclick="hideModal('cancel-modal-${subscription.id}')">Keep Subscription</button>
+              <button type="button" class="btn btn-secondary" onclick="hideModal('cancel-modal-${safeSubId}')">Keep Subscription</button>
               <button type="submit" class="btn btn-danger">Cancel Subscription</button>
             </div>
           </form>
@@ -578,28 +592,28 @@ function renderSubscriptionCard(
   } else if (subscription.status === "PAUSED") {
     actionsHtml = `
       <div class="actions">
-        <button class="btn btn-primary" onclick="showModal('resume-modal-${subscription.id}')">
+        <button class="btn btn-primary" onclick="showModal('resume-modal-${safeSubId}')">
           Resume This Subscription
         </button>
-        <button class="btn btn-danger" onclick="showModal('cancel-modal-${subscription.id}')">
+        <button class="btn btn-danger" onclick="showModal('cancel-modal-${safeSubId}')">
           Cancel This Subscription
         </button>
       </div>
 
       <!-- Resume Modal -->
-      <div class="modal-overlay" id="resume-modal-${subscription.id}">
+      <div class="modal-overlay" id="resume-modal-${safeSubId}">
         <div class="modal">
-          <h2>Resume ${dayName} Pickup</h2>
-          <p>Your next ${dayName.toLowerCase()} pickup will be scheduled based on your preferences.</p>
-          <form method="POST" action="${baseUrl}">
+          <h2>Resume ${safeDayName} Pickup</h2>
+          <p>Your next ${safeDayNameLower} pickup will be scheduled based on your preferences.</p>
+          <form method="POST" action="${safeBaseUrl}">
             <input type="hidden" name="action" value="resume">
-            <input type="hidden" name="subscriptionId" value="${subscription.id}">
+            <input type="hidden" name="subscriptionId" value="${safeSubId}">
             <div class="form-group">
               <label class="form-label">Any comments? (optional)</label>
               <textarea name="comment" class="form-textarea" placeholder="Excited to have you back!"></textarea>
             </div>
             <div class="modal-actions">
-              <button type="button" class="btn btn-secondary" onclick="hideModal('resume-modal-${subscription.id}')">Cancel</button>
+              <button type="button" class="btn btn-secondary" onclick="hideModal('resume-modal-${safeSubId}')">Cancel</button>
               <button type="submit" class="btn btn-primary">Resume</button>
             </div>
           </form>
@@ -607,19 +621,19 @@ function renderSubscriptionCard(
       </div>
 
       <!-- Cancel Modal -->
-      <div class="modal-overlay" id="cancel-modal-${subscription.id}">
+      <div class="modal-overlay" id="cancel-modal-${safeSubId}">
         <div class="modal">
-          <h2>Cancel ${dayName} Pickup</h2>
-          <p>Are you sure you want to cancel your ${dayName.toLowerCase()} subscription? This cannot be undone from this portal.</p>
-          <form method="POST" action="${baseUrl}">
+          <h2>Cancel ${safeDayName} Pickup</h2>
+          <p>Are you sure you want to cancel your ${safeDayNameLower} subscription? This cannot be undone from this portal.</p>
+          <form method="POST" action="${safeBaseUrl}">
             <input type="hidden" name="action" value="cancel">
-            <input type="hidden" name="subscriptionId" value="${subscription.id}">
+            <input type="hidden" name="subscriptionId" value="${safeSubId}">
             <div class="form-group">
               <label class="form-label">Please let us know why (optional)</label>
               <textarea name="comment" class="form-textarea" placeholder="Your feedback helps us improve..."></textarea>
             </div>
             <div class="modal-actions">
-              <button type="button" class="btn btn-secondary" onclick="hideModal('cancel-modal-${subscription.id}')">Keep Subscription</button>
+              <button type="button" class="btn btn-secondary" onclick="hideModal('cancel-modal-${safeSubId}')">Keep Subscription</button>
               <button type="submit" class="btn btn-danger">Cancel Subscription</button>
             </div>
           </form>
@@ -631,41 +645,41 @@ function renderSubscriptionCard(
   return `
     <div class="card">
       <div class="card-header">
-        <span class="card-title">${cardTitle}</span>
-        <span class="status-badge status-${statusClass}">${subscription.status}</span>
+        <span class="card-title">${escapeHtml(cardTitle)}</span>
+        <span class="status-badge status-${escapeHtml(statusClass)}">${escapeHtml(subscription.status)}</span>
       </div>
 
       <div class="info-row">
         <span class="info-label">Pickup Day</span>
-        <span class="info-value">${dayName}s</span>
+        <span class="info-value">${escapeHtml(dayName)}s</span>
       </div>
 
       <div class="info-row">
         <span class="info-label">Time Slot</span>
-        <span class="info-value">${subscription.preferredTimeSlot}</span>
+        <span class="info-value">${escapeHtml(subscription.preferredTimeSlot)}</span>
       </div>
 
       <div class="info-row">
         <span class="info-label">Frequency</span>
-        <span class="info-value">${frequencyLabel}</span>
+        <span class="info-value">${escapeHtml(frequencyLabel)}</span>
       </div>
 
       <div class="info-row">
         <span class="info-label">Discount</span>
-        <span class="info-value">${subscription.discountPercent}% off</span>
+        <span class="info-value">${escapeHtml(String(subscription.discountPercent))}% off</span>
       </div>
 
       ${subscription.status === "ACTIVE" ? `
         <div class="info-row">
           <span class="info-label">Next Pickup</span>
-          <span class="info-value">${nextPickup}</span>
+          <span class="info-value">${escapeHtml(nextPickup)}</span>
         </div>
       ` : ""}
 
       ${pausedUntilDate ? `
         <div class="info-row">
           <span class="info-label">Paused Until</span>
-          <span class="info-value">${pausedUntilDate}</span>
+          <span class="info-value">${escapeHtml(pausedUntilDate)}</span>
         </div>
       ` : ""}
 
@@ -740,7 +754,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   let messageHtml = "";
   if (message) {
     const msgClass = messageType === "error" ? "message-error" : "message-success";
-    messageHtml = `<div class="message ${msgClass}">${message}</div>`;
+    messageHtml = `<div class="message ${msgClass}">${escapeHtml(message)}</div>`;
   }
 
   if (subscriptions.length === 0) {
@@ -837,6 +851,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
 
+  // Rate limiting - check for form submission abuse
+  const rateLimitKey = getFormSubmissionRateLimitKey(shop, customerEmail, action);
+  const rateLimitResult = checkRateLimit(rateLimitKey, RATE_LIMITS.FORM_SUBMISSION);
+
+  if (!rateLimitResult.allowed) {
+    console.warn(`Rate limit exceeded for ${customerEmail} on action ${action}`);
+    return new Response(
+      renderPage(`
+        <h1>My Subscription</h1>
+        <div class="message message-error">
+          Too many requests. Please wait ${rateLimitResult.retryAfter} seconds before trying again.
+        </div>
+      `),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "text/html",
+          "Retry-After": rateLimitResult.retryAfter.toString(),
+        },
+      }
+    );
+  }
+
   let result;
 
   switch (action) {
@@ -914,6 +951,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       const newPreferredDay = parseInt(newPreferredDayStr, 10);
+
+      // Validate day of week (0-6)
+      if (!isValidDayOfWeek(newPreferredDay)) {
+        result = {
+          success: false,
+          message: "Invalid pickup day selected. Please choose a valid day.",
+        };
+        break;
+      }
+
       result = await customerPermanentReschedule(
         shop,
         subscriptionId,

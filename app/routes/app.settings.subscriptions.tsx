@@ -29,9 +29,9 @@ import {
   getAllSellingPlanGroups,
   addSellingPlanToGroup,
   deleteSellingPlan,
-  formatFrequency,
-  type SellingPlanGroupDetail,
 } from "../services/selling-plans.server";
+import type { SellingPlanGroupDetail } from "../types/selling-plans";
+import { formatFrequency } from "../utils/formatting";
 import {
   getFailedBillings,
   getUpcomingBillings,

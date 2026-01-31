@@ -20,13 +20,13 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import {
-  getContractDetails,
-  formatCurrency,
-  getDeliveryFrequencyLabel,
-  type ContractLineItem,
-  type ContractDeliveryPolicy,
-} from "../services/subscription-contracts.server";
+import { getContractDetailsBatch } from "../services/subscription-contracts.server";
+import type {
+  ContractLineItem,
+  ContractDeliveryPolicy,
+} from "../types/subscription-contracts";
+import { formatCurrency, getDeliveryFrequencyLabel } from "../utils/formatting";
+import { getDayName } from "../utils/constants.server";
 
 interface SubscriptionWithShopifyData {
   id: string;
@@ -54,13 +54,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     orderBy: { nextPickupDate: "asc" },
   });
 
-  // Fetch Shopify contract details for each subscription
-  const subscriptionsWithDetails: SubscriptionWithShopifyData[] = [];
+  // Batch fetch all Shopify contract details in a single query (fixes N+1 problem)
+  const contractIds = subscriptions.map((sub) => sub.shopifyContractId);
+  const contractDetailsMap = await getContractDetailsBatch(admin, contractIds);
 
-  for (const sub of subscriptions) {
-    const contractDetails = await getContractDetails(admin, sub.shopifyContractId);
+  // Map subscription data with Shopify contract details
+  const subscriptionsWithDetails: SubscriptionWithShopifyData[] = subscriptions.map((sub) => {
+    const contractDetails = contractDetailsMap.get(sub.shopifyContractId);
 
-    subscriptionsWithDetails.push({
+    return {
       id: sub.id,
       shopifyContractId: sub.shopifyContractId,
       customerName: sub.customerName,
@@ -75,8 +77,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       deliveryPolicy: contractDetails?.deliveryPolicy || null,
       totalPrice: contractDetails?.pricingSummary?.totalPrice?.amount || "0.00",
       currencyCode: contractDetails?.pricingSummary?.totalPrice?.currencyCode || "USD",
-    });
-  }
+    };
+  });
 
   const activeCount = subscriptions.filter((s) => s.status === "ACTIVE").length;
   const pausedCount = subscriptions.filter((s) => s.status === "PAUSED").length;
@@ -149,18 +151,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return json({ error: "Unknown action" }, { status: 400 });
 };
 
-function getDayName(dayNum: number) {
-  const days = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-  ];
-  return days[dayNum] || "Unknown";
-}
+// getDayName is imported from constants.server.ts
 
 export default function SubscriptionsIndex() {
   const { subscriptions, activeCount, pausedCount, cancelledCount, shop } =
