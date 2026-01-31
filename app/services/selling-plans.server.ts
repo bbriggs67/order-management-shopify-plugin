@@ -586,6 +586,7 @@ export async function getAllSellingPlanGroups(
   admin: AdminClient
 ): Promise<SellingPlanGroupDetail[]> {
   try {
+    console.log("Fetching all selling plan groups from Shopify...");
     const response = await admin.graphql(ALL_SELLING_PLAN_GROUPS_QUERY);
     const jsonResponse = await response.json();
 
@@ -596,10 +597,14 @@ export async function getAllSellingPlanGroups(
     }
 
     const data = jsonResponse.data;
+    console.log("Selling plan groups response:", JSON.stringify(data, null, 2));
 
     if (!data?.sellingPlanGroups?.edges) {
+      console.log("No selling plan groups edges found in response");
       return [];
     }
+
+    console.log(`Found ${data.sellingPlanGroups.edges.length} selling plan groups`);
 
   return data.sellingPlanGroups.edges.map((groupEdge: any) => {
     const group = groupEdge.node;
