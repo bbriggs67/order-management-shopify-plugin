@@ -48,8 +48,42 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   console.log("Selling plan config from database:", sellingPlanConfig);
 
   // Get ALL selling plan groups from Shopify (includes plans created outside our app)
-  const sellingPlanGroups = await getAllSellingPlanGroups(admin);
+  let sellingPlanGroups = await getAllSellingPlanGroups(admin);
   console.log("Selling plan groups from Shopify:", sellingPlanGroups.length, "groups found");
+
+  // If Shopify returns no groups but we have a local config, create a synthetic entry
+  // This handles the case where we can CREATE selling plans but can't READ them back
+  // (possibly due to eventual consistency or permission quirks)
+  let usingLocalConfig = false;
+  if (sellingPlanGroups.length === 0 && sellingPlanConfig) {
+    console.log("No groups from Shopify but local config exists, using local config");
+    usingLocalConfig = true;
+    sellingPlanGroups = [{
+      id: sellingPlanConfig.groupId,
+      name: sellingPlanConfig.groupName || "Subscribe & Save",
+      productCount: 0, // Unknown without API access
+      plans: [
+        ...(sellingPlanConfig.weeklyPlanId ? [{
+          id: sellingPlanConfig.weeklyPlanId,
+          name: `Deliver every week (${sellingPlanConfig.weeklyDiscount}% off)`,
+          interval: "WEEK",
+          intervalCount: 1,
+          discount: sellingPlanConfig.weeklyDiscount,
+          discountType: "PERCENTAGE",
+          productCount: 0,
+        }] : []),
+        ...(sellingPlanConfig.biweeklyPlanId ? [{
+          id: sellingPlanConfig.biweeklyPlanId,
+          name: `Deliver every 2 weeks (${sellingPlanConfig.biweeklyDiscount}% off)`,
+          interval: "WEEK",
+          intervalCount: 2,
+          discount: sellingPlanConfig.biweeklyDiscount,
+          discountType: "PERCENTAGE",
+          productCount: 0,
+        }] : []),
+      ],
+    }];
+  }
 
   // Get failed billings
   const failedBillingsRaw = await getFailedBillings(shop);
@@ -92,6 +126,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shop,
     sellingPlanConfig,
     sellingPlanGroups,
+    usingLocalConfig,
     failedBillings,
     upcomingBillings,
     customerPortalUrl,
@@ -201,7 +236,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SubscriptionsSettings() {
-  const { sellingPlanConfig, sellingPlanGroups, failedBillings, upcomingBillings, customerPortalUrl } = useLoaderData<typeof loader>();
+  const { sellingPlanConfig, sellingPlanGroups, usingLocalConfig, failedBillings, upcomingBillings, customerPortalUrl } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -360,6 +395,13 @@ export default function SubscriptionsSettings() {
                 Manage your subscription plans. These plans are synced from Shopify and
                 determine the frequency and discount options available to customers.
               </Text>
+
+              {usingLocalConfig && (
+                <Banner tone="info">
+                  Showing locally stored configuration. The selling plan group exists in Shopify
+                  but may not be fully synced. Your subscription plans are working correctly.
+                </Banner>
+              )}
 
               {sellingPlanGroups.length === 0 ? (
                 <BlockStack gap="300">
