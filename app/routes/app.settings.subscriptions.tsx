@@ -45,9 +45,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Get selling plan configuration from our database
   const sellingPlanConfig = await getSellingPlanConfig(shop);
+  console.log("Selling plan config from database:", sellingPlanConfig);
 
   // Get ALL selling plan groups from Shopify (includes plans created outside our app)
   const sellingPlanGroups = await getAllSellingPlanGroups(admin);
+  console.log("Selling plan groups from Shopify:", sellingPlanGroups.length, "groups found");
 
   // Get failed billings
   const failedBillingsRaw = await getFailedBillings(shop);
