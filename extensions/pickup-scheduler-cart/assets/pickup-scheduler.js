@@ -50,15 +50,65 @@
     schedulerContainer.id = 'pickup-scheduler-container';
     schedulerContainer.innerHTML = getSchedulerHTML(defaultLocationName, defaultLocationAddress);
 
-    // Insert before the checkout button or at end of form
-    const checkoutButton = cartForm.querySelector('[type="submit"]') ||
-                           cartForm.querySelector('button[name="checkout"]') ||
-                           document.querySelector('[name="checkout"]');
+    // Find the best insertion point - try multiple strategies
+    let insertionPoint = null;
+    let insertAfter = false;
 
-    if (checkoutButton && checkoutButton.parentElement) {
-      checkoutButton.parentElement.insertBefore(schedulerContainer, checkoutButton);
+    // Strategy 1: Look for cart totals/summary section (insert before it)
+    const cartTotals = document.querySelector('.cart__totals') ||
+                       document.querySelector('[data-cart-totals]') ||
+                       document.querySelector('.cart-totals') ||
+                       document.querySelector('.totals');
+
+    // Strategy 2: Look for cart items/products section (insert after it)
+    const cartItems = document.querySelector('.cart__items') ||
+                      document.querySelector('[data-cart-items]') ||
+                      document.querySelector('.cart-items') ||
+                      document.querySelector('cart-items');
+
+    // Strategy 3: Look for "Order special instructions" or notes section (insert after it)
+    const cartNotes = document.querySelector('.cart__note') ||
+                      document.querySelector('[data-cart-note]') ||
+                      document.querySelector('textarea[name="note"]')?.closest('div');
+
+    // Strategy 4: Find checkout button within the form
+    const checkoutButton = cartForm.querySelector('[type="submit"]') ||
+                           cartForm.querySelector('button[name="checkout"]');
+
+    // Determine best insertion point
+    if (cartNotes) {
+      // Insert after the notes section
+      insertionPoint = cartNotes;
+      insertAfter = true;
+      console.log('Pickup Scheduler: Inserting after cart notes');
+    } else if (cartTotals && cartTotals.closest('form')) {
+      // Insert before totals if it's in the form
+      insertionPoint = cartTotals;
+      insertAfter = false;
+      console.log('Pickup Scheduler: Inserting before cart totals');
+    } else if (cartItems) {
+      // Insert after cart items
+      insertionPoint = cartItems;
+      insertAfter = true;
+      console.log('Pickup Scheduler: Inserting after cart items');
+    } else if (checkoutButton && checkoutButton.parentElement) {
+      // Insert before checkout button
+      insertionPoint = checkoutButton;
+      insertAfter = false;
+      console.log('Pickup Scheduler: Inserting before checkout button');
+    }
+
+    // Insert the scheduler
+    if (insertionPoint) {
+      if (insertAfter) {
+        insertionPoint.parentElement.insertBefore(schedulerContainer, insertionPoint.nextSibling);
+      } else {
+        insertionPoint.parentElement.insertBefore(schedulerContainer, insertionPoint);
+      }
     } else {
+      // Fallback: append to form
       cartForm.appendChild(schedulerContainer);
+      console.log('Pickup Scheduler: Appending to cart form (fallback)');
     }
 
     // Initialize the scheduler functionality
