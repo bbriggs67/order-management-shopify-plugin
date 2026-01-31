@@ -685,9 +685,13 @@ export async function addSellingPlanToGroup(
   discountPercent: number,
   interval: string = "WEEK"
 ): Promise<{ success: boolean; error?: string; planId?: string }> {
+  // Create a unique option that includes discount to avoid "duplicate options" error
+  // Shopify requires each selling plan within a group to have unique options
+  const uniqueOption = `${getFrequencyLabel(interval, intervalCount)} (${discountPercent}% off)`;
+
   const sellingPlanInput = {
     name: planName,
-    options: [getFrequencyLabel(interval, intervalCount)],
+    options: [uniqueOption],
     category: "SUBSCRIPTION",
     billingPolicy: {
       recurring: {
