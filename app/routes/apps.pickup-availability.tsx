@@ -1,8 +1,12 @@
 /**
  * Pickup Availability API for storefront (via App Proxy)
- * This endpoint is accessible at /apps/my-subscription/pickup-availability
  *
- * It proxies to the main pickup availability logic.
+ * This endpoint is accessible via Shopify's app proxy at:
+ * https://yourstore.com/apps/my-subscription/pickup-availability
+ *
+ * Shopify's app proxy forwards the request to:
+ * https://yourapp.com/apps/pickup-availability
+ * (The "my-subscription" subpath is stripped by the proxy)
  */
 
 import type { LoaderFunctionArgs } from "@remix-run/node";
@@ -50,25 +54,11 @@ interface PickupLocation {
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-export const loader = async ({ request, params }: LoaderFunctionArgs) => {
+export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
-
-  // Get the splat path (everything after /apps/my-subscription/)
-  const splatPath = params["*"] || "";
-
-  // Only handle pickup-availability requests
-  if (splatPath !== "pickup-availability") {
-    return json({ error: "Not found" }, { status: 404, headers: corsHeaders });
-  }
 
   // Shop can come from query param or from Shopify's app proxy headers
   let shop = url.searchParams.get("shop");
-
-  // Shopify app proxy passes shop in query string as well
-  if (!shop) {
-    // Try to get from logged_in_customer_id or other proxy params
-    shop = url.searchParams.get("shop") || "";
-  }
 
   // Clean up shop domain if needed
   if (shop && !shop.includes(".myshopify.com")) {
@@ -142,7 +132,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 
   // Calculate available dates
-  const nowPacific = getNowInPacific();
   const { totalMinutes: currentTimeMinutes } = getCurrentTimePacific();
 
   const [cutOffHour, cutOffMinute] = prepTime.cutOffTime.split(":").map(Number);
@@ -164,6 +153,18 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       before: prepTime.leadTimeBefore,
       after: prepTime.leadTimeAfter,
     };
+  };
+
+  const timeOverlaps = (start1: string, end1: string, start2: string, end2: string): boolean => {
+    const toMinutes = (time: string) => {
+      const [h, m] = time.split(":").map(Number);
+      return h * 60 + m;
+    };
+    const s1 = toMinutes(start1);
+    const e1 = toMinutes(end1);
+    const s2 = toMinutes(start2);
+    const e2 = toMinutes(end2);
+    return s1 < e2 && e1 > s2;
   };
 
   const isDateBlackedOut = (date: Date, timeSlot?: TimeSlot): boolean => {
@@ -212,18 +213,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }
     }
     return false;
-  };
-
-  const timeOverlaps = (start1: string, end1: string, start2: string, end2: string): boolean => {
-    const toMinutes = (time: string) => {
-      const [h, m] = time.split(":").map(Number);
-      return h * 60 + m;
-    };
-    const s1 = toMinutes(start1);
-    const e1 = toMinutes(end1);
-    const s2 = toMinutes(start2);
-    const e2 = toMinutes(end2);
-    return s1 < e2 && e1 > s2;
   };
 
   const getTimeSlotsForDay = (dayOfWeek: number): TimeSlot[] => {
