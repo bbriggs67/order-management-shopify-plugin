@@ -585,13 +585,21 @@ export async function updateSellingPlanDiscounts(
 export async function getAllSellingPlanGroups(
   admin: AdminClient
 ): Promise<SellingPlanGroupDetail[]> {
-  const response = await admin.graphql(ALL_SELLING_PLAN_GROUPS_QUERY);
-  const jsonResponse = await response.json();
-  const data = jsonResponse.data;
+  try {
+    const response = await admin.graphql(ALL_SELLING_PLAN_GROUPS_QUERY);
+    const jsonResponse = await response.json();
 
-  if (!data?.sellingPlanGroups?.edges) {
-    return [];
-  }
+    // Check for GraphQL errors
+    if (jsonResponse.errors) {
+      console.error("GraphQL errors fetching selling plan groups:", jsonResponse.errors);
+      return [];
+    }
+
+    const data = jsonResponse.data;
+
+    if (!data?.sellingPlanGroups?.edges) {
+      return [];
+    }
 
   return data.sellingPlanGroups.edges.map((groupEdge: any) => {
     const group = groupEdge.node;
@@ -631,6 +639,10 @@ export async function getAllSellingPlanGroups(
       plans,
     };
   });
+  } catch (error) {
+    console.error("Error fetching selling plan groups:", error);
+    return [];
+  }
 }
 
 /**
