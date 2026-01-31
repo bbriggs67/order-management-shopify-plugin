@@ -148,6 +148,59 @@
     const locationInput = document.getElementById('ps-location-input');
     const methodInput = document.getElementById('ps-method-input');
 
+    // Find cart form and checkout button for validation
+    const cartForm = document.querySelector('form[action="/cart"]') ||
+                     document.querySelector('form[action*="/cart"]') ||
+                     document.querySelector('[data-cart-form]');
+    const checkoutBtn = cartForm?.querySelector('[type="submit"]') ||
+                        cartForm?.querySelector('button[name="checkout"]') ||
+                        document.querySelector('[name="checkout"]');
+
+    // Add validation message element
+    const validationMsg = document.createElement('div');
+    validationMsg.id = 'ps-validation-message';
+    validationMsg.className = 'pickup-scheduler__validation';
+    validationMsg.style.cssText = 'display: none; color: #DC143C; background: #FFF0F0; border: 1px solid #DC143C; padding: 10px 12px; border-radius: 6px; margin-top: 12px; font-size: 14px;';
+    const schedulerContainer = document.getElementById('pickup-scheduler-container');
+    if (schedulerContainer) {
+      schedulerContainer.appendChild(validationMsg);
+    }
+
+    // Intercept form submission to validate pickup selection
+    if (cartForm) {
+      cartForm.addEventListener('submit', function(e) {
+        const hasDate = dateInput && dateInput.value && dateInput.value.trim() !== '';
+        const hasTime = timeInput && timeInput.value && timeInput.value.trim() !== '';
+
+        if (!hasDate || !hasTime) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          // Show validation message
+          if (validationMsg) {
+            if (!hasDate && !hasTime) {
+              validationMsg.textContent = '⚠️ Please select a pickup date and time slot before proceeding to checkout.';
+            } else if (!hasDate) {
+              validationMsg.textContent = '⚠️ Please select a pickup date before proceeding to checkout.';
+            } else {
+              validationMsg.textContent = '⚠️ Please select a time slot before proceeding to checkout.';
+            }
+            validationMsg.style.display = 'block';
+
+            // Scroll to the scheduler
+            schedulerContainer?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+
+          return false;
+        }
+
+        // Hide validation message if valid
+        if (validationMsg) {
+          validationMsg.style.display = 'none';
+        }
+      });
+    }
+
     // Setup calendar navigation
     if (prevMonthBtn) {
       prevMonthBtn.addEventListener('click', () => {
@@ -166,6 +219,10 @@
     if (timeSelect) {
       timeSelect.addEventListener('change', (e) => {
         timeInput.value = e.target.value;
+        // Hide validation message when time is selected
+        if (e.target.value && validationMsg) {
+          validationMsg.style.display = 'none';
+        }
       });
     }
 
