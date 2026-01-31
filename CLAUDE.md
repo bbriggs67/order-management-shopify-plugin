@@ -2,6 +2,8 @@
 
 This file provides context for Claude Code sessions working on this Shopify app.
 
+> **IMPORTANT FOR CLAUDE**: When making any feature additions, modifications, bug fixes, or significant changes to this codebase, you MUST update this documentation file AND add an entry to the Change History section at the bottom. This ensures future sessions have accurate context.
+
 ## Quick Start
 
 ```bash
@@ -148,3 +150,48 @@ npx prisma migrate deploy                      # Production (Railway runs this)
 ### Calendar showing wrong month
 - Calendar auto-advances to first available date's month
 - Lead time settings affect which dates are available
+
+---
+
+## Change History
+
+> **Instructions**: Add new entries at the TOP of this list. Include date, brief description, and files changed.
+
+### 2026-01-31 - Pickup Scheduler Cart Validation & Documentation
+**Changes:**
+- Added checkout validation requiring date AND time slot selection before proceeding
+- Calendar now auto-advances to first available date's month
+- Fixed app proxy routing (`apps.pickup-availability.tsx` handles pickup API)
+- Added CSS fixes for full-width layout in various themes
+- Created this CLAUDE.md documentation file
+
+**Files Modified:**
+- `extensions/pickup-scheduler-cart/assets/pickup-scheduler.js` - validation logic, calendar month fix
+- `extensions/pickup-scheduler-cart/assets/pickup-scheduler.css` - full-width container styles
+- `app/routes/apps.pickup-availability.tsx` - NEW: pickup availability API endpoint
+- `CLAUDE.md` - NEW: project documentation
+
+**App Versions Released:** susies-sourdough-manager-6 through susies-sourdough-manager-9
+
+---
+
+### 2026-01-31 - Selling Plan Groups Fix
+**Changes:**
+- Fixed selling plan groups display loop by falling back to local database config
+- Added SellingPlan model to store additional plans beyond weekly/biweekly
+- Fixed duplicate options error by including discount in option label
+
+**Files Modified:**
+- `app/routes/app.settings.subscriptions.tsx` - fallback logic
+- `app/services/selling-plans.server.ts` - local plan storage
+- `prisma/schema.prisma` - SellingPlan model
+
+---
+
+### Initial Release
+**Features:**
+- Subscription management with weekly/bi-weekly plans
+- Customer self-service portal at `/apps/my-subscription`
+- Pickup scheduling on cart page
+- Admin configuration for pickup days, time slots, blackouts
+- Order management dashboard
