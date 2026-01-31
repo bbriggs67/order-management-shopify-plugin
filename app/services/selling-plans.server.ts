@@ -4,6 +4,7 @@
  */
 
 import prisma from "../db.server";
+import { formatFrequency as _formatFrequency } from "../utils/formatting";
 
 // Type for the admin GraphQL client returned by authenticate.admin()
 interface AdminClient {
@@ -737,9 +738,6 @@ export async function deleteSellingPlan(
     return { success: false, error: String(error) };
   }
 }
-
-// Import formatFrequency from shared utilities for internal use
-import { formatFrequency as _formatFrequency } from "../utils/formatting";
 
 /**
  * Helper to generate frequency label (uses shared formatting)
