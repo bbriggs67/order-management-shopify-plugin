@@ -203,6 +203,12 @@
         availableDates = data.availableDates || [];
         locations = data.locations || [];
 
+        // Set calendar to first available date's month
+        if (availableDates.length > 0) {
+          const firstDate = new Date(availableDates[0].date + 'T12:00:00');
+          currentMonth = new Date(firstDate.getFullYear(), firstDate.getMonth(), 1);
+        }
+
         // Update location display
         if (locations.length > 0) {
           const loc = locations.find(l => l.isDefault) || locations[0];
