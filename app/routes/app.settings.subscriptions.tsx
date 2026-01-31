@@ -58,30 +58,44 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (sellingPlanGroups.length === 0 && sellingPlanConfig) {
     console.log("No groups from Shopify but local config exists, using local config");
     usingLocalConfig = true;
+
+    // Build plans array from default plans + additional plans
+    const plans = [
+      ...(sellingPlanConfig.weeklyPlanId ? [{
+        id: sellingPlanConfig.weeklyPlanId,
+        name: `Deliver every week (${sellingPlanConfig.weeklyDiscount}% off)`,
+        interval: "WEEK",
+        intervalCount: 1,
+        discount: sellingPlanConfig.weeklyDiscount,
+        discountType: "PERCENTAGE",
+        productCount: 0,
+      }] : []),
+      ...(sellingPlanConfig.biweeklyPlanId ? [{
+        id: sellingPlanConfig.biweeklyPlanId,
+        name: `Deliver every 2 weeks (${sellingPlanConfig.biweeklyDiscount}% off)`,
+        interval: "WEEK",
+        intervalCount: 2,
+        discount: sellingPlanConfig.biweeklyDiscount,
+        discountType: "PERCENTAGE",
+        productCount: 0,
+      }] : []),
+      // Include additional plans from database
+      ...(sellingPlanConfig.additionalPlans || []).map((plan) => ({
+        id: plan.shopifyPlanId,
+        name: plan.name,
+        interval: plan.interval,
+        intervalCount: plan.intervalCount,
+        discount: plan.discount,
+        discountType: plan.discountType,
+        productCount: 0,
+      })),
+    ];
+
     sellingPlanGroups = [{
       id: sellingPlanConfig.groupId,
       name: sellingPlanConfig.groupName || "Subscribe & Save",
       productCount: 0, // Unknown without API access
-      plans: [
-        ...(sellingPlanConfig.weeklyPlanId ? [{
-          id: sellingPlanConfig.weeklyPlanId,
-          name: `Deliver every week (${sellingPlanConfig.weeklyDiscount}% off)`,
-          interval: "WEEK",
-          intervalCount: 1,
-          discount: sellingPlanConfig.weeklyDiscount,
-          discountType: "PERCENTAGE",
-          productCount: 0,
-        }] : []),
-        ...(sellingPlanConfig.biweeklyPlanId ? [{
-          id: sellingPlanConfig.biweeklyPlanId,
-          name: `Deliver every 2 weeks (${sellingPlanConfig.biweeklyDiscount}% off)`,
-          interval: "WEEK",
-          intervalCount: 2,
-          discount: sellingPlanConfig.biweeklyDiscount,
-          discountType: "PERCENTAGE",
-          productCount: 0,
-        }] : []),
-      ],
+      plans,
     }];
   }
 
@@ -189,6 +203,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         const result = await addSellingPlanToGroup(
           admin,
+          shop,
           groupId,
           planName,
           intervalCount,
@@ -214,7 +229,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ error: "Missing group or plan ID" }, { status: 400 });
         }
 
-        const result = await deleteSellingPlan(admin, groupId, planId);
+        const result = await deleteSellingPlan(admin, shop, groupId, planId);
 
         if (!result.success) {
           return json({ error: result.error }, { status: 400 });

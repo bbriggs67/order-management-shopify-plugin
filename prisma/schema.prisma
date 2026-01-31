@@ -386,8 +386,31 @@ model SellingPlanConfig {
   weeklyDiscount        Int      @default(10)
   biweeklyDiscount      Int      @default(5)
 
+  // Relationship to additional selling plans
+  additionalPlans SellingPlan[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Store additional selling plans beyond the default weekly/biweekly
+model SellingPlan {
+  id            String   @id @default(cuid())
+  shopifyPlanId String   // Shopify selling plan GID
+  name          String   // Plan display name
+  interval      String   // WEEK, MONTH, etc.
+  intervalCount Int      // 1, 2, 3, etc.
+  discount      Float    // Discount percentage or amount
+  discountType  String   @default("PERCENTAGE") // PERCENTAGE or FIXED_AMOUNT
+
+  // Link to config
+  configId String
+  config   SellingPlanConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([configId, shopifyPlanId])
 }
 
 // ============================================

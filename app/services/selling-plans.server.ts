@@ -84,6 +84,16 @@ import type {
   SellingPlanGroupDetail,
 } from "../types/selling-plans";
 
+export interface AdditionalPlanInfo {
+  id: string;
+  shopifyPlanId: string;
+  name: string;
+  interval: string;
+  intervalCount: number;
+  discount: number;
+  discountType: string;
+}
+
 export interface SellingPlanInfo {
   groupId: string;
   groupName: string;
@@ -91,6 +101,7 @@ export interface SellingPlanInfo {
   biweeklyPlanId: string | null;
   weeklyDiscount: number;
   biweeklyDiscount: number;
+  additionalPlans?: AdditionalPlanInfo[];
 }
 
 // ============================================
@@ -542,6 +553,9 @@ export async function removeProductsFromSellingPlanGroup(
 export async function getSellingPlanConfig(shop: string): Promise<SellingPlanInfo | null> {
   const config = await prisma.sellingPlanConfig.findUnique({
     where: { shop },
+    include: {
+      additionalPlans: true,
+    },
   });
 
   if (!config) {
@@ -555,6 +569,15 @@ export async function getSellingPlanConfig(shop: string): Promise<SellingPlanInf
     biweeklyPlanId: config.biweeklySellingPlanId,
     weeklyDiscount: config.weeklyDiscount,
     biweeklyDiscount: config.biweeklyDiscount,
+    additionalPlans: config.additionalPlans.map((plan) => ({
+      id: plan.id,
+      shopifyPlanId: plan.shopifyPlanId,
+      name: plan.name,
+      interval: plan.interval,
+      intervalCount: plan.intervalCount,
+      discount: plan.discount,
+      discountType: plan.discountType,
+    })),
   };
 }
 
@@ -655,6 +678,7 @@ export async function getAllSellingPlanGroups(
  */
 export async function addSellingPlanToGroup(
   admin: AdminClient,
+  shop: string,
   groupId: string,
   planName: string,
   intervalCount: number,
@@ -712,10 +736,44 @@ export async function addSellingPlanToGroup(
     // Find the newly created plan
     const plans = data?.sellingPlanGroupUpdate?.sellingPlanGroup?.sellingPlans?.edges || [];
     const newPlan = plans.find((p: any) => p.node.name === planName);
+    const planId = newPlan?.node?.id;
+
+    // Save the new plan to our local database for fallback display
+    if (planId) {
+      const config = await prisma.sellingPlanConfig.findUnique({
+        where: { shop },
+      });
+
+      if (config) {
+        await prisma.sellingPlan.upsert({
+          where: {
+            configId_shopifyPlanId: {
+              configId: config.id,
+              shopifyPlanId: planId,
+            },
+          },
+          create: {
+            configId: config.id,
+            shopifyPlanId: planId,
+            name: planName,
+            interval,
+            intervalCount,
+            discount: discountPercent,
+            discountType: "PERCENTAGE",
+          },
+          update: {
+            name: planName,
+            interval,
+            intervalCount,
+            discount: discountPercent,
+          },
+        });
+      }
+    }
 
     return {
       success: true,
-      planId: newPlan?.node?.id,
+      planId,
     };
   } catch (error) {
     console.error("Error adding selling plan:", error);
@@ -728,6 +786,7 @@ export async function addSellingPlanToGroup(
  */
 export async function deleteSellingPlan(
   admin: AdminClient,
+  shop: string,
   groupId: string,
   planId: string
 ): Promise<{ success: boolean; error?: string }> {
@@ -748,6 +807,11 @@ export async function deleteSellingPlan(
         .join(", ");
       return { success: false, error: errors };
     }
+
+    // Also delete from local database
+    await prisma.sellingPlan.deleteMany({
+      where: { shopifyPlanId: planId },
+    });
 
     return { success: true };
   } catch (error) {
