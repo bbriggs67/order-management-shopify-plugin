@@ -50,8 +50,16 @@ interface PickupLocation {
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
+export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
+
+  // Get the splat path (everything after /apps/my-subscription/)
+  const splatPath = params["*"] || "";
+
+  // Only handle pickup-availability requests
+  if (splatPath !== "pickup-availability") {
+    return json({ error: "Not found" }, { status: 404, headers: corsHeaders });
+  }
 
   // Shop can come from query param or from Shopify's app proxy headers
   let shop = url.searchParams.get("shop");
