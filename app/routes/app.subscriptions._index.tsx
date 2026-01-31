@@ -1,6 +1,6 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -13,20 +13,70 @@ import {
   DataTable,
   EmptyState,
   Tabs,
+  Thumbnail,
+  Tooltip,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import {
+  getContractDetails,
+  formatCurrency,
+  getDeliveryFrequencyLabel,
+  type ContractLineItem,
+  type ContractDeliveryPolicy,
+} from "../services/subscription-contracts.server";
+
+interface SubscriptionWithShopifyData {
+  id: string;
+  shopifyContractId: string;
+  customerName: string;
+  customerEmail: string | null;
+  status: string;
+  frequency: string;
+  preferredDay: number;
+  nextPickupDate: string | null;
+  discountPercent: number;
+  // Shopify data
+  lines: ContractLineItem[];
+  deliveryPolicy: ContractDeliveryPolicy | null;
+  totalPrice: string;
+  currencyCode: string;
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
 
   const subscriptions = await prisma.subscriptionPickup.findMany({
     where: { shop },
     orderBy: { nextPickupDate: "asc" },
   });
+
+  // Fetch Shopify contract details for each subscription
+  const subscriptionsWithDetails: SubscriptionWithShopifyData[] = [];
+
+  for (const sub of subscriptions) {
+    const contractDetails = await getContractDetails(admin, sub.shopifyContractId);
+
+    subscriptionsWithDetails.push({
+      id: sub.id,
+      shopifyContractId: sub.shopifyContractId,
+      customerName: sub.customerName,
+      customerEmail: sub.customerEmail,
+      status: sub.status,
+      frequency: sub.frequency,
+      preferredDay: sub.preferredDay,
+      nextPickupDate: sub.nextPickupDate?.toISOString() || null,
+      discountPercent: sub.discountPercent,
+      // Shopify data
+      lines: contractDetails?.lines || [],
+      deliveryPolicy: contractDetails?.deliveryPolicy || null,
+      totalPrice: contractDetails?.pricingSummary?.totalPrice?.amount || "0.00",
+      currencyCode: contractDetails?.pricingSummary?.totalPrice?.currencyCode || "USD",
+    });
+  }
 
   const activeCount = subscriptions.filter((s) => s.status === "ACTIVE").length;
   const pausedCount = subscriptions.filter((s) => s.status === "PAUSED").length;
@@ -35,16 +85,89 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   ).length;
 
   return json({
-    subscriptions,
+    subscriptions: subscriptionsWithDetails,
     activeCount,
     pausedCount,
     cancelledCount,
+    shop,
   });
 };
 
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const shop = session.shop;
+
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  if (intent === "export_csv") {
+    const subscriptions = await prisma.subscriptionPickup.findMany({
+      where: { shop },
+      orderBy: { customerName: "asc" },
+    });
+
+    // Build CSV content
+    const headers = [
+      "Contract ID",
+      "Customer Name",
+      "Customer Email",
+      "Status",
+      "Frequency",
+      "Preferred Day",
+      "Next Pickup Date",
+      "Discount %",
+      "Created At",
+    ];
+
+    const rows = subscriptions.map((sub) => [
+      sub.shopifyContractId,
+      sub.customerName,
+      sub.customerEmail || "",
+      sub.status,
+      sub.frequency,
+      getDayName(sub.preferredDay),
+      sub.nextPickupDate?.toISOString().split("T")[0] || "",
+      sub.discountPercent.toString(),
+      sub.createdAt.toISOString().split("T")[0],
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((row) =>
+        row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
+      ),
+    ].join("\n");
+
+    return new Response(csvContent, {
+      headers: {
+        "Content-Type": "text/csv",
+        "Content-Disposition": `attachment; filename="subscriptions-${new Date().toISOString().split("T")[0]}.csv"`,
+      },
+    });
+  }
+
+  return json({ error: "Unknown action" }, { status: 400 });
+};
+
+function getDayName(dayNum: number) {
+  const days = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
+  return days[dayNum] || "Unknown";
+}
+
 export default function SubscriptionsIndex() {
-  const { subscriptions, activeCount, pausedCount, cancelledCount } =
+  const { subscriptions, activeCount, pausedCount, cancelledCount, shop } =
     useLoaderData<typeof loader>();
+  const submit = useSubmit();
+  const navigation = useNavigation();
+  const isExporting = navigation.state === "submitting";
 
   const [selectedTab, setSelectedTab] = useState(0);
 
@@ -52,6 +175,10 @@ export default function SubscriptionsIndex() {
     (selectedTabIndex: number) => setSelectedTab(selectedTabIndex),
     []
   );
+
+  const handleExportCSV = useCallback(() => {
+    submit({ intent: "export_csv" }, { method: "post" });
+  }, [submit]);
 
   const tabs = [
     {
@@ -93,30 +220,6 @@ export default function SubscriptionsIndex() {
     }
   };
 
-  const getFrequencyLabel = (frequency: string) => {
-    switch (frequency) {
-      case "WEEKLY":
-        return "Weekly (10% off)";
-      case "BIWEEKLY":
-        return "Bi-weekly (5% off)";
-      default:
-        return frequency;
-    }
-  };
-
-  const getDayName = (dayNum: number) => {
-    const days = [
-      "Sunday",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-    ];
-    return days[dayNum] || "Unknown";
-  };
-
   const formatDate = (dateString: string | null) => {
     if (!dateString) return "—";
     const date = new Date(dateString);
@@ -125,6 +228,54 @@ export default function SubscriptionsIndex() {
       day: "numeric",
       year: "numeric",
     });
+  };
+
+  const renderProductCell = (lines: ContractLineItem[]) => {
+    if (lines.length === 0) {
+      return <Text as="span" tone="subdued">No products</Text>;
+    }
+
+    if (lines.length === 1) {
+      const line = lines[0];
+      return (
+        <InlineStack gap="200" blockAlign="center" wrap={false}>
+          {line.variantImage?.url && (
+            <Thumbnail
+              source={line.variantImage.url}
+              alt={line.variantImage.altText || line.title}
+              size="small"
+            />
+          )}
+          <BlockStack gap="0">
+            <Text as="span" fontWeight="medium" truncate>
+              {line.title}
+            </Text>
+            {line.quantity > 1 && (
+              <Text as="span" tone="subdued" variant="bodySm">
+                x{line.quantity}
+              </Text>
+            )}
+          </BlockStack>
+        </InlineStack>
+      );
+    }
+
+    // Multiple products - show first image and count
+    const firstWithImage = lines.find((l) => l.variantImage?.url);
+    return (
+      <Tooltip content={lines.map((l) => `${l.title} (x${l.quantity})`).join(", ")}>
+        <InlineStack gap="200" blockAlign="center" wrap={false}>
+          {firstWithImage?.variantImage?.url && (
+            <Thumbnail
+              source={firstWithImage.variantImage.url}
+              alt={firstWithImage.variantImage.altText || "Products"}
+              size="small"
+            />
+          )}
+          <Text as="span">{lines.length} products</Text>
+        </InlineStack>
+      </Tooltip>
+    );
   };
 
   const filteredSubscriptions = subscriptions.filter((sub) => {
@@ -137,9 +288,9 @@ export default function SubscriptionsIndex() {
 
   const tableRows = filteredSubscriptions.map((sub) => [
     sub.customerName,
-    sub.customerEmail || "—",
-    getFrequencyLabel(sub.frequency),
-    getDayName(sub.preferredDay),
+    renderProductCell(sub.lines),
+    formatCurrency(sub.totalPrice, sub.currencyCode),
+    getDeliveryFrequencyLabel(sub.deliveryPolicy),
     formatDate(sub.nextPickupDate),
     getStatusBadge(sub.status),
     <Button
@@ -152,7 +303,14 @@ export default function SubscriptionsIndex() {
   ]);
 
   return (
-    <Page>
+    <Page
+      title="Subscriptions"
+      primaryAction={{
+        content: "Export CSV",
+        onAction: handleExportCSV,
+        loading: isExporting,
+      }}
+    >
       <TitleBar title="Subscriptions" />
       <Layout>
         <Layout.Section>
@@ -164,7 +322,7 @@ export default function SubscriptionsIndex() {
                     columnContentTypes={[
                       "text",
                       "text",
-                      "text",
+                      "numeric",
                       "text",
                       "text",
                       "text",
@@ -172,9 +330,9 @@ export default function SubscriptionsIndex() {
                     ]}
                     headings={[
                       "Customer",
-                      "Email",
+                      "Product",
+                      "Price",
                       "Frequency",
-                      "Preferred Day",
                       "Next Pickup",
                       "Status",
                       "Actions",

@@ -20,6 +20,7 @@ import {
   DescriptionList,
   DatePicker,
   RangeSlider,
+  Thumbnail,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { useState, useCallback } from "react";
@@ -35,13 +36,21 @@ import {
   extractTimeSlotStart,
   getBillingLeadHoursConfig,
   validateBillingLeadHours,
+  retryBilling,
 } from "../services/subscription-billing.server";
+import {
+  getContractDetails,
+  formatCurrency,
+  type ContractLineItem,
+  type ContractPaymentMethod,
+  type ContractPricingSummary,
+} from "../services/subscription-contracts.server";
 
 // Timezone constant for client-side formatting
 const SHOP_TIMEZONE = "America/Los_Angeles";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const { contractId } = params;
 
@@ -72,6 +81,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   if (!subscription) {
     throw new Response("Subscription not found", { status: 404 });
   }
+
+  // Fetch Shopify contract details (products, payment method, pricing)
+  const shopifyContract = await getContractDetails(admin, subscription.shopifyContractId);
 
   // Get available time slots
   const timeSlots = await prisma.timeSlot.findMany({
@@ -104,6 +116,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       ...subscription,
       billingAttemptLogs: formattedBillingLogs,
     },
+    shopifyContract: shopifyContract || null,
     timeSlots,
     pickupDayConfigs,
     billingLeadHoursConfig,
@@ -426,6 +439,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({ success: true, action: "oneTimeRescheduleCleared" });
   }
 
+  if (action === "chargeNow") {
+    const { admin } = await authenticate.admin(request);
+
+    try {
+      await retryBilling(shop, admin, subscription.id);
+      return json({ success: true, action: "chargeNow", message: "Billing attempt initiated successfully" });
+    } catch (error) {
+      console.error("Charge now failed:", error);
+      return json({ error: `Billing attempt failed: ${error}` }, { status: 500 });
+    }
+  }
+
   return json({ error: "Unknown action" }, { status: 400 });
 };
 
@@ -473,11 +498,16 @@ function calculateNextPickupDateAfter(
 }
 
 export default function SubscriptionDetail() {
-  const { subscription, timeSlots, pickupDayConfigs, billingLeadHoursConfig } =
+  const { subscription, shopifyContract, timeSlots, pickupDayConfigs, billingLeadHoursConfig } =
     useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const isLoading = navigation.state === "submitting";
+
+  // Extract Shopify contract data
+  const contractLines = shopifyContract?.lines || [];
+  const paymentMethod = shopifyContract?.customerPaymentMethod || null;
+  const pricingSummary = shopifyContract?.pricingSummary || null;
 
   const [pauseModalOpen, setPauseModalOpen] = useState(false);
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
@@ -712,6 +742,18 @@ export default function SubscriptionDetail() {
     (month: number, year: number) => setRescheduleMonth({ month, year }),
     []
   );
+
+  const handleChargeNow = useCallback(() => {
+    if (
+      confirm(
+        "Are you sure you want to charge the customer now? This will attempt to bill them immediately."
+      )
+    ) {
+      const formData = new FormData();
+      formData.append("_action", "chargeNow");
+      submit(formData, { method: "post" });
+    }
+  }, [submit]);
 
   // Helper to format billing lead hours for display
   const formatLeadHours = (hours: number) => {
@@ -950,6 +992,128 @@ export default function SubscriptionDetail() {
               </BlockStack>
             </Card>
 
+            {/* Subscription Products */}
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Subscription Details
+                </Text>
+                {contractLines.length > 0 ? (
+                  <BlockStack gap="300">
+                    {contractLines.map((line: ContractLineItem) => (
+                      <InlineStack key={line.id} gap="300" blockAlign="center">
+                        {line.variantImage?.url ? (
+                          <Thumbnail
+                            source={line.variantImage.url}
+                            alt={line.variantImage.altText || line.title}
+                            size="small"
+                          />
+                        ) : (
+                          <Box
+                            background="bg-surface-secondary"
+                            padding="300"
+                            borderRadius="100"
+                          >
+                            <Text as="span" tone="subdued">No image</Text>
+                          </Box>
+                        )}
+                        <BlockStack gap="0">
+                          <Text as="p" variant="bodyMd" fontWeight="medium">
+                            {line.title}
+                          </Text>
+                          {line.variantTitle && (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {line.variantTitle}
+                            </Text>
+                          )}
+                          <InlineStack gap="200">
+                            <Text as="span" variant="bodySm">
+                              {formatCurrency(line.currentPrice.amount, line.currentPrice.currencyCode)}
+                            </Text>
+                            {line.quantity > 1 && (
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                × {line.quantity}
+                              </Text>
+                            )}
+                          </InlineStack>
+                        </BlockStack>
+                      </InlineStack>
+                    ))}
+                    <Divider />
+                    {/* Payment Summary */}
+                    {pricingSummary && (
+                      <BlockStack gap="100">
+                        <InlineStack align="space-between">
+                          <Text as="span" variant="bodySm">Subtotal</Text>
+                          <Text as="span" variant="bodySm">
+                            {formatCurrency(pricingSummary.subtotalPrice.amount, pricingSummary.subtotalPrice.currencyCode)}
+                          </Text>
+                        </InlineStack>
+                        <InlineStack align="space-between">
+                          <Text as="span" variant="bodySm" tone="subdued">Discount</Text>
+                          <Text as="span" variant="bodySm" tone="success">
+                            -{subscription.discountPercent}%
+                          </Text>
+                        </InlineStack>
+                        <Divider />
+                        <InlineStack align="space-between">
+                          <Text as="span" variant="bodyMd" fontWeight="semibold">Total</Text>
+                          <Text as="span" variant="bodyMd" fontWeight="semibold">
+                            {formatCurrency(
+                              (parseFloat(pricingSummary.subtotalPrice.amount) * (1 - subscription.discountPercent / 100)).toFixed(2),
+                              pricingSummary.subtotalPrice.currencyCode
+                            )}
+                          </Text>
+                        </InlineStack>
+                      </BlockStack>
+                    )}
+                  </BlockStack>
+                ) : (
+                  <Text as="p" tone="subdued">
+                    Product details not available.
+                  </Text>
+                )}
+              </BlockStack>
+            </Card>
+
+            {/* Payment Method */}
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Payment Method
+                </Text>
+                {paymentMethod?.instrument ? (
+                  <BlockStack gap="200">
+                    <InlineStack gap="200" blockAlign="center">
+                      <Box
+                        background="bg-surface-secondary"
+                        padding="200"
+                        borderRadius="100"
+                      >
+                        <Text as="span" variant="bodySm" fontWeight="semibold">
+                          {paymentMethod.instrument.brand?.toUpperCase() || "CARD"}
+                        </Text>
+                      </Box>
+                      <BlockStack gap="0">
+                        <Text as="p" variant="bodyMd">
+                          •••• {paymentMethod.instrument.lastDigits}
+                        </Text>
+                        {paymentMethod.instrument.expiryMonth && paymentMethod.instrument.expiryYear && (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            Expires {paymentMethod.instrument.expiryMonth.toString().padStart(2, '0')}/{paymentMethod.instrument.expiryYear.toString().slice(-2)}
+                          </Text>
+                        )}
+                      </BlockStack>
+                    </InlineStack>
+                  </BlockStack>
+                ) : (
+                  <Text as="p" tone="subdued">
+                    No payment method on file.
+                  </Text>
+                )}
+              </BlockStack>
+            </Card>
+
             {/* Billing Info */}
             <Card>
               <BlockStack gap="300">
@@ -1003,14 +1167,26 @@ export default function SubscriptionDetail() {
                     </InlineStack>
                   )}
                   {subscription.billingFailureCount > 0 && (
-                    <Banner tone="warning">
-                      {subscription.billingFailureCount} billing failure{subscription.billingFailureCount > 1 ? "s" : ""}
-                      {subscription.billingFailureReason && (
-                        <Text as="p" variant="bodySm">
-                          {subscription.billingFailureReason}
-                        </Text>
+                    <BlockStack gap="200">
+                      <Banner tone="warning">
+                        {subscription.billingFailureCount} billing failure{subscription.billingFailureCount > 1 ? "s" : ""}
+                        {subscription.billingFailureReason && (
+                          <Text as="p" variant="bodySm">
+                            {subscription.billingFailureReason}
+                          </Text>
+                        )}
+                      </Banner>
+                      {isActive && (
+                        <Button
+                          variant="primary"
+                          onClick={handleChargeNow}
+                          loading={isLoading}
+                          fullWidth
+                        >
+                          Charge Now
+                        </Button>
                       )}
-                    </Banner>
+                    </BlockStack>
                   )}
                 </BlockStack>
               </BlockStack>

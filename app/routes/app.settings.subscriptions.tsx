@@ -19,7 +19,7 @@ import {
   FormLayout,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import {
   ensureSellingPlanGroup,
@@ -74,11 +74,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       : "-",
   }));
 
+  // Build customer subscription management URL
+  const customerPortalUrl = `https://${shop}/apps/my-subscription`;
+
   return json({
     shop,
     sellingPlanConfig,
     failedBillings,
     upcomingBillings,
+    customerPortalUrl,
   });
 };
 
@@ -135,13 +139,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SubscriptionsSettings() {
-  const { sellingPlanConfig, failedBillings, upcomingBillings } = useLoaderData<typeof loader>();
+  const { sellingPlanConfig, failedBillings, upcomingBillings, customerPortalUrl } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const isLoading = navigation.state !== "idle";
 
   const [productIds, setProductIds] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyUrl = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(customerPortalUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  }, [customerPortalUrl]);
 
   const handleCreateSellingPlans = () => {
     submit({ intent: "create_selling_plans" }, { method: "post" });
@@ -286,6 +301,55 @@ export default function SubscriptionsSettings() {
             </Card>
           </Layout.Section>
         )}
+
+        {/* Customer Subscription Management URL */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">
+                Customer Subscription Management URL
+              </Text>
+              <Text as="p" tone="subdued">
+                Add this URL to your store's navigation so customers can manage their subscriptions.
+                The best place is in the Account menu or Footer navigation.
+              </Text>
+              <Box
+                padding="300"
+                background="bg-surface-secondary"
+                borderRadius="200"
+              >
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="p" variant="bodyMd" breakWord>
+                    {customerPortalUrl}
+                  </Text>
+                  <Button
+                    onClick={handleCopyUrl}
+                    size="slim"
+                  >
+                    {copied ? "Copied!" : "Copy"}
+                  </Button>
+                </InlineStack>
+              </Box>
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" fontWeight="semibold">
+                  How to add to your store:
+                </Text>
+                <Text as="p" variant="bodySm">
+                  1. Go to <strong>Online Store → Navigation</strong> in your Shopify admin
+                </Text>
+                <Text as="p" variant="bodySm">
+                  2. Edit your <strong>Account menu</strong> or <strong>Footer menu</strong>
+                </Text>
+                <Text as="p" variant="bodySm">
+                  3. Add a new menu item with name "Manage Subscription" and link <code>/apps/my-subscription</code>
+                </Text>
+              </BlockStack>
+              <Banner tone="info">
+                Customers must be logged in to view their subscriptions. The portal will prompt them to log in if they're not.
+              </Banner>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
 
         <Layout.Section>
           <Divider />
