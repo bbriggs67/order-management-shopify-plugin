@@ -48,6 +48,8 @@
     // Create and inject the pickup scheduler
     const schedulerContainer = document.createElement('div');
     schedulerContainer.id = 'pickup-scheduler-container';
+    schedulerContainer.setAttribute('data-pickup-scheduler', 'true');
+    schedulerContainer.setAttribute('data-cart-item', 'false');
     schedulerContainer.innerHTML = getSchedulerHTML(defaultLocationName, defaultLocationAddress);
 
     // Simple insertion: append to end of form
@@ -105,10 +107,12 @@
             </div>
           </div>
 
-          <input type="hidden" name="attributes[Pickup Date]" id="ps-date-input" value="">
-          <input type="hidden" name="attributes[Pickup Time Slot]" id="ps-time-input" value="">
-          <input type="hidden" name="attributes[Pickup Location]" id="ps-location-input" value="">
-          <input type="hidden" name="attributes[Delivery Method]" id="ps-method-input" value="pickup">
+          <fieldset class="pickup-scheduler__hidden-fields" style="display:none;border:none;padding:0;margin:0;">
+            <input type="hidden" name="attributes[Pickup Date]" id="ps-date-input" value="" data-pickup-scheduler="true">
+            <input type="hidden" name="attributes[Pickup Time Slot]" id="ps-time-input" value="" data-pickup-scheduler="true">
+            <input type="hidden" name="attributes[Pickup Location]" id="ps-location-input" value="" data-pickup-scheduler="true">
+            <input type="hidden" name="attributes[Delivery Method]" id="ps-method-input" value="pickup" data-pickup-scheduler="true">
+          </fieldset>
         </div>
 
         <div class="pickup-scheduler__loading" id="ps-loading" style="display: none;">
@@ -209,12 +213,34 @@
       });
     }
 
-    // Setup time selection
+    // Stop change/input events from bubbling to theme cart.js EXCEPT for our handlers
+    // Use capture phase to intercept before bubbling, but let our select handler run first
+    if (schedulerContainer) {
+      // Stop propagation at container level (bubbling phase) so theme doesn't see it
+      schedulerContainer.addEventListener('change', (e) => {
+        // Only stop if event originated from our container
+        if (e.target && schedulerContainer.contains(e.target)) {
+          e.stopPropagation();
+        }
+      }, false); // bubbling phase, runs after our specific handlers
+      schedulerContainer.addEventListener('input', (e) => {
+        if (e.target && schedulerContainer.contains(e.target)) {
+          e.stopPropagation();
+        }
+      }, false);
+    }
+
+    // Setup time selection - runs before the container's stopPropagation
     if (timeSelect) {
       timeSelect.addEventListener('change', (e) => {
-        timeInput.value = e.target.value;
+        const selectedValue = e.target.value;
+        console.log('Pickup Scheduler: Time selected:', selectedValue);
+        if (timeInput) {
+          timeInput.value = selectedValue;
+          console.log('Pickup Scheduler: Time input set to:', timeInput.value);
+        }
         // Hide validation message when time is selected
-        if (e.target.value && validationMsg) {
+        if (selectedValue && validationMsg) {
           validationMsg.style.display = 'none';
         }
       });
@@ -253,6 +279,7 @@
         const data = await response.json();
         availableDates = data.availableDates || [];
         locations = data.locations || [];
+        console.log('Pickup Scheduler: Received', availableDates.length, 'available dates');
 
         // Set calendar to first available date's month
         if (availableDates.length > 0) {

@@ -120,12 +120,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const functionsData = await functionsResponse.json();
   const shopifyFunctions = functionsData.data?.shopifyFunctions?.nodes || [];
 
-  // Find our payment customization function
+  console.log("Available Shopify Functions:", JSON.stringify(shopifyFunctions, null, 2));
+
+  // Find our payment customization function - look for payment customization API type
   const hideCodFunction = shopifyFunctions.find(
     (fn: { title: string; apiType: string }) =>
-      fn.title.toLowerCase().includes("hide cod") ||
-      fn.title.toLowerCase().includes("hide-cod-subscriptions")
+      fn.apiType === "payment_customization" &&
+      (fn.title.toLowerCase().includes("hide cod") ||
+       fn.title.toLowerCase().includes("hide-cod") ||
+       fn.title.toLowerCase().includes("subscription"))
   );
+
+  console.log("Found hideCodFunction:", hideCodFunction);
 
   // Check if our function is already activated
   const existingCustomization = paymentCustomizations.find(
@@ -150,8 +156,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (actionType === "activate") {
     const functionId = formData.get("functionId") as string;
 
+    console.log("Activate action - functionId:", functionId);
+
     if (!functionId) {
-      return json({ error: "Function ID is required" }, { status: 400 });
+      return json({ error: "Function ID is required. The function may not be deployed yet." }, { status: 400 });
     }
 
     const response = await admin.graphql(CREATE_PAYMENT_CUSTOMIZATION, {
@@ -163,6 +171,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     const data = await response.json();
+
+    console.log("Create payment customization response:", JSON.stringify(data, null, 2));
 
     if (data.data?.paymentCustomizationCreate?.userErrors?.length > 0) {
       return json({
@@ -307,10 +317,15 @@ export default function PaymentCustomizationsSettings() {
 
                 {!hideCodFunction ? (
                   <Banner tone="critical">
-                    <Text as="p">
-                      The "Hide COD for Subscriptions" function was not found.
-                      Please ensure the app has been deployed with the latest version.
-                    </Text>
+                    <BlockStack gap="200">
+                      <Text as="p">
+                        The "Hide COD for Subscriptions" function was not found.
+                        Please ensure the app has been deployed with the latest version.
+                      </Text>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Run `npx shopify app deploy` to deploy the function extension.
+                      </Text>
+                    </BlockStack>
                   </Banner>
                 ) : !existingCustomization ? (
                   <InlineStack gap="300">
