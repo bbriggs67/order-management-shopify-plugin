@@ -50,33 +50,10 @@
     schedulerContainer.id = 'pickup-scheduler-container';
     schedulerContainer.innerHTML = getSchedulerHTML(defaultLocationName, defaultLocationAddress);
 
-    // Find the best insertion point - after cart items, before checkout section
-    // Try to find cart items container first
-    const cartItems = cartForm.querySelector('cart-items') ||
-                      cartForm.querySelector('.cart-items') ||
-                      cartForm.querySelector('[data-cart-items]') ||
-                      cartForm.querySelector('tbody'); // table-based carts
-
-    // Try to find the checkout/totals section
-    const checkoutSection = cartForm.querySelector('.cart__ctas') ||
-                            cartForm.querySelector('.cart__checkout') ||
-                            cartForm.querySelector('[data-cart-checkout]') ||
-                            cartForm.querySelector('button[name="checkout"]')?.closest('div');
-
-    // Determine where to insert
-    if (cartItems && cartItems.parentElement) {
-      // Insert after the cart items
-      cartItems.parentElement.insertBefore(schedulerContainer, cartItems.nextSibling);
-      console.log('Pickup Scheduler: Inserted after cart items');
-    } else if (checkoutSection && checkoutSection.parentElement) {
-      // Insert before the checkout section
-      checkoutSection.parentElement.insertBefore(schedulerContainer, checkoutSection);
-      console.log('Pickup Scheduler: Inserted before checkout section');
-    } else {
-      // Fallback: append to form
-      cartForm.appendChild(schedulerContainer);
-      console.log('Pickup Scheduler: Appended to cart form (fallback)');
-    }
+    // Simple insertion: append to end of form
+    // This ensures we don't interfere with cart item controls
+    cartForm.appendChild(schedulerContainer);
+    console.log('Pickup Scheduler: Appended to cart form');
 
     // Initialize the scheduler functionality
     initScheduler(shopDomain);
