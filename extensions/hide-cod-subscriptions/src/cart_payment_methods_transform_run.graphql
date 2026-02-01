@@ -1,0 +1,15 @@
+query CartPaymentMethodsTransformRunInput {
+  cart {
+    lines {
+      sellingPlanAllocation {
+        sellingPlan {
+          id
+        }
+      }
+    }
+  }
+  paymentMethods {
+    id
+    name
+  }
+}

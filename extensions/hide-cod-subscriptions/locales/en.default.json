@@ -1,0 +1,4 @@
+{
+  "name": "Hide COD for Subscriptions",
+  "description": "Hides Cash on Delivery payment option when the cart contains subscription items"
+}
