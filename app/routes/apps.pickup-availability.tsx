@@ -227,11 +227,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 
   // Generate available dates
+  // maxBookingDays is the number of CALENDAR days into the future to allow booking
+  // (not the number of available pickup dates)
   const availableDates: AvailableDate[] = [];
-  const maxDays = prepTime.maxBookingDays;
+  const maxCalendarDays = prepTime.maxBookingDays;
 
-  for (let daysAhead = 0; daysAhead <= maxDays + 14; daysAhead++) {
-    if (availableDates.length >= maxDays) break;
+  for (let daysAhead = 0; daysAhead <= maxCalendarDays; daysAhead++) {
 
     const checkDate = getDatePacific(daysAhead);
     checkDate.setHours(12, 0, 0, 0);

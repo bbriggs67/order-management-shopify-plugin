@@ -157,6 +157,34 @@ npx prisma migrate deploy                      # Production (Railway runs this)
 
 > **Instructions**: Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-01-31 - Fix maxBookingDays to Use Calendar Days
+**Changes:**
+- Changed pickup availability API to limit by calendar days instead of number of available pickup dates
+- Previously: `maxBookingDays: 14` meant 14 available pickup dates (~3.5 weeks with 4 pickup days/week)
+- Now: `maxBookingDays: 14` means dates within the next 14 calendar days (~7 pickup dates)
+
+**Files Modified:**
+- `app/routes/apps.pickup-availability.tsx` - changed loop logic to use calendar days
+
+**App Versions Released:** susies-sourdough-manager-18
+
+---
+
+### 2026-01-31 - Theme Cart.js Compatibility Fix
+**Changes:**
+- Fixed theme cart.js conflict causing "increments of undefined" error
+- Wrapped hidden inputs in fieldset with `data-pickup-scheduler` attributes to prevent theme JS from processing them as cart item inputs
+- Added `data-cart-item="false"` attribute to scheduler container for theme compatibility
+
+**Root Cause:** Theme's `CartItems.resetQuantityInput` was iterating over all form inputs and failing when encountering our hidden pickup scheduler inputs.
+
+**Files Modified:**
+- `extensions/pickup-scheduler-cart/assets/pickup-scheduler.js` - wrapped inputs in fieldset, added data attributes
+
+**App Versions Released:** susies-sourdough-manager-15
+
+---
+
 ### 2026-01-31 - Pickup Scheduler Cart Validation & Documentation
 **Changes:**
 - Added checkout validation requiring date AND time slot selection before proceeding
