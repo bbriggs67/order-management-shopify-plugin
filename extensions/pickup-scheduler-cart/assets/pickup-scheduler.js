@@ -339,8 +339,9 @@
       // Days of the month
       for (let day = 1; day <= totalDays; day++) {
         const date = new Date(year, month, day);
-        const dateStr = date.toISOString().split('T')[0];
-        const isAvailable = availableDateSet.has(dateStr) || availableDates.length === 0; // If no data, allow all future
+        // Format date as YYYY-MM-DD in local time (not UTC) to match API format
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const isAvailable = availableDateSet.has(dateStr);
         const isPast = date < today;
         const isToday = date.getTime() === today.getTime();
         const isSelected = selectedDate === dateStr;
