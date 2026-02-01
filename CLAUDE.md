@@ -157,11 +157,12 @@ npx prisma migrate deploy                      # Production (Railway runs this)
 
 > **Instructions**: Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
-### 2026-02-01 - Hide COD for Subscriptions Function
+### 2026-02-01 - Hide COD for Subscriptions Function + Admin Page
 **Changes:**
 - Created new Shopify Function to hide Cash on Delivery (COD) payment option when cart contains subscription items
 - COD is incompatible with subscriptions because it cannot be charged automatically for recurring billing
 - Function checks cart lines for `sellingPlanAllocation` and hides any payment method containing "cash on delivery", "cod", "pay on delivery", or "collect on delivery" in the name
+- Added admin page for managing payment customization activation
 
 **Files Added:**
 - `extensions/hide-cod-subscriptions/` - New payment customization function extension
@@ -169,12 +170,13 @@ npx prisma migrate deploy                      # Production (Railway runs this)
   - `src/cart_payment_methods_transform_run.graphql` - Input query for cart and payment methods
   - `shopify.extension.toml` - Extension configuration
   - `locales/en.default.json` - Localized strings
+- `app/routes/app.settings.payment-customizations.tsx` - Admin UI for activating/managing the function
 
-**Activation Required:**
-After deployment, the function must be activated in Shopify Admin:
-1. Go to Settings > Payments
-2. Click "Manage" on the payment provider
-3. Enable the "Hide COD for Subscriptions" customization
+**Files Modified:**
+- `app/routes/app.settings._index.tsx` - Added link to Payment Customizations settings
+
+**Activation:**
+Navigate to the app's Settings > Payment Customizations page and click "Activate Function" to enable COD hiding for subscriptions.
 
 **App Versions Released:** susies-sourdough-manager-19
 
