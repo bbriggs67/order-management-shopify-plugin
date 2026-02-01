@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -232,9 +232,11 @@ export default function PaymentCustomizationsSettings() {
   const {
     hideCodFunction,
     existingCustomization,
-    isActivated
+    isActivated,
+    shopifyFunctions
   } = useLoaderData<typeof loader>();
 
+  const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const isLoading = navigation.state === "submitting";
@@ -276,6 +278,16 @@ export default function PaymentCustomizationsSettings() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
+            {actionData?.error && (
+              <Banner tone="critical" title="Error">
+                <Text as="p">{actionData.error}</Text>
+              </Banner>
+            )}
+            {actionData?.success && (
+              <Banner tone="success" title="Success">
+                <Text as="p">Payment customization {actionData.action} successfully!</Text>
+              </Banner>
+            )}
             <Card>
               <BlockStack gap="400">
                 <InlineStack align="space-between" blockAlign="center">
@@ -381,6 +393,36 @@ export default function PaymentCustomizationsSettings() {
                     5. Check that the subscription appears in the customer portal and admin
                   </Text>
                 </BlockStack>
+              </BlockStack>
+            </Card>
+
+            {/* Debug info - can be removed later */}
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Debug Info
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Function found: {hideCodFunction ? "Yes" : "No"}
+                </Text>
+                {hideCodFunction && (
+                  <>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Function ID: {hideCodFunction.id}
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Function Title: {hideCodFunction.title}
+                    </Text>
+                  </>
+                )}
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Available functions ({shopifyFunctions?.length || 0}):
+                </Text>
+                {shopifyFunctions?.map((fn: { id: string; title: string; apiType: string }) => (
+                  <Text key={fn.id} as="p" variant="bodySm" tone="subdued">
+                    - {fn.title} ({fn.apiType}): {fn.id}
+                  </Text>
+                ))}
               </BlockStack>
             </Card>
           </BlockStack>
