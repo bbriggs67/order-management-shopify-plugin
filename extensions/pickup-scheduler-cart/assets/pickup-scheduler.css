@@ -1,19 +1,22 @@
 /* Pickup Scheduler Styles */
 
-/* Container - constrain width for proper layout */
+/* Container - proper sizing and ensure it's in its own row */
 #pickup-scheduler-container {
   width: 100%;
-  max-width: 400px;
+  max-width: 500px;
+  min-width: 300px;
   display: block;
   box-sizing: border-box;
+  clear: both;
+  margin: 1.5rem auto;
 }
 
 .pickup-scheduler {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   max-width: 100%;
   width: 100%;
-  margin: 1rem 0;
-  padding: 1rem;
+  margin: 0;
+  padding: 1.25rem;
   border: 1px solid #e5e5e5;
   border-radius: 8px;
   background: #fff;
