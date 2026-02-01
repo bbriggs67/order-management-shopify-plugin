@@ -157,28 +157,33 @@ npx prisma migrate deploy                      # Production (Railway runs this)
 
 > **Instructions**: Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
-### 2026-02-01 - Hide COD for Subscriptions Function + Admin Page
-**Changes:**
-- Created new Shopify Function to hide Cash on Delivery (COD) payment option when cart contains subscription items
-- COD is incompatible with subscriptions because it cannot be charged automatically for recurring billing
-- Function checks cart lines for `sellingPlanAllocation` and hides any payment method containing "cash on delivery", "cod", "pay on delivery", or "collect on delivery" in the name
-- Added admin page for managing payment customization activation
+### 2026-02-01 - COD Payment Issue Resolution
+**Problem:**
+- Test subscription order (#1784) placed with Cash on Delivery (COD) payment didn't create a subscription contract
+- COD is incompatible with subscriptions because Shopify requires payment methods that can be charged automatically for recurring billing
+- When COD is used for a subscription order, Shopify creates a regular one-time order instead of a subscription contract
 
-**Files Added:**
-- `extensions/hide-cod-subscriptions/` - New payment customization function extension
-  - `src/cart_payment_methods_transform_run.js` - Function logic
-  - `src/cart_payment_methods_transform_run.graphql` - Input query for cart and payment methods
-  - `shopify.extension.toml` - Extension configuration
-  - `locales/en.default.json` - Localized strings
-- `app/routes/app.settings.payment-customizations.tsx` - Admin UI for activating/managing the function
+**Investigation:**
+- Initially attempted to create a Shopify Function to hide COD at checkout for subscription orders
+- Created `hide-cod-subscriptions` payment customization function extension
+- Discovered that payment customization functions require **Shopify Plus** ($399/month) for custom apps
+- Basic plan ($39/month) cannot use payment customization functions from custom apps
+
+**Resolution:**
+- Disabled COD entirely in Shopify Settings → Payments → Manual payment methods
+- This ensures all subscription orders use card payments that support automatic recurring billing
+- Removed the unused function extension and admin page code
+
+**Files Removed:**
+- `extensions/hide-cod-subscriptions/` - Payment customization function (requires Plus plan)
+- `app/routes/app.settings.payment-customizations.tsx` - Admin page for managing the function
 
 **Files Modified:**
-- `app/routes/app.settings._index.tsx` - Added link to Payment Customizations settings
+- `app/routes/app.settings._index.tsx` - Removed Payment Customizations settings link
+- `shopify.app.susies-sourdough-manager.toml` - Removed payment_customizations API scopes
 
-**Activation:**
-Navigate to the app's Settings > Payment Customizations page and click "Activate Function" to enable COD hiding for subscriptions.
-
-**App Versions Released:** susies-sourdough-manager-19
+**Key Learning:**
+Shopify Functions for payment customizations are only available to Shopify Plus merchants when using custom apps. For Basic plan stores, use Shopify's built-in payment settings to disable incompatible payment methods.
 
 ---
 

@@ -18,7 +18,6 @@ import {
   NotificationIcon,
   SettingsIcon,
   RefreshIcon,
-  PaymentIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -105,13 +104,6 @@ export default function SettingsIndex() {
               description="Manage selling plans, billing, and subscription settings"
               href="/app/settings/subscriptions"
               icon={RefreshIcon}
-            />
-
-            <SettingsCard
-              title="Payment Customizations"
-              description="Control which payment methods are available for subscription orders"
-              href="/app/settings/payment-customizations"
-              icon={PaymentIcon}
             />
           </BlockStack>
         </Layout.Section>
