@@ -45,6 +45,44 @@ interface TokenResponse {
   token_type: string;
 }
 
+// Retry configuration
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [1000, 2000, 4000]; // Exponential backoff
+
+/**
+ * Helper to retry a function with exponential backoff
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  operationName: string
+): Promise<T> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Don't retry on 4xx errors (client errors) except 429 (rate limit)
+      if (lastError.message.includes("400") ||
+          lastError.message.includes("401") ||
+          lastError.message.includes("403") ||
+          lastError.message.includes("404")) {
+        throw lastError;
+      }
+
+      if (attempt < MAX_RETRIES - 1) {
+        const delay = RETRY_DELAYS[attempt] || 4000;
+        console.warn(`${operationName} failed (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError || new Error(`${operationName} failed after ${MAX_RETRIES} attempts`);
+}
+
 /**
  * Check if Google Calendar is configured
  */
@@ -273,25 +311,26 @@ Status: ${pickup.pickupStatus}`,
   };
 
   try {
-    const response = await fetch(
-      `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(auth.calendarId)}/events`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(event),
+    const createdEvent = await withRetry(async () => {
+      const response = await fetch(
+        `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(auth.calendarId)}/events`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(event),
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`${response.status}: ${error}`);
       }
-    );
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error("Failed to create calendar event:", error);
-      return null;
-    }
-
-    const createdEvent = await response.json();
+      return response.json();
+    }, "Create calendar event");
 
     // Save the event ID to the pickup schedule
     await prisma.pickupSchedule.update({
@@ -355,19 +394,28 @@ Status: ${pickup.pickupStatus}`,
   };
 
   try {
-    const response = await fetch(
-      `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(auth.calendarId)}/events/${pickup.googleEventId}`,
-      {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(updates),
-      }
-    );
+    await withRetry(async () => {
+      const response = await fetch(
+        `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(auth.calendarId)}/events/${pickup.googleEventId}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(updates),
+        }
+      );
 
-    return response.ok;
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`${response.status}: ${error}`);
+      }
+
+      return response.json();
+    }, "Update calendar event");
+
+    return true;
   } catch (error) {
     console.error("Error updating calendar event:", error);
     return false;
@@ -446,23 +494,26 @@ Status: ${pickup.pickupStatus}`,
   };
 
   try {
-    const response = await fetch(
-      `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(auth.calendarId)}/events/${pickup.googleEventId}`,
-      {
-        method: "PUT", // Use PUT for full replacement including date/time
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(updates),
-      }
-    );
+    await withRetry(async () => {
+      const response = await fetch(
+        `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(auth.calendarId)}/events/${pickup.googleEventId}`,
+        {
+          method: "PUT", // Use PUT for full replacement including date/time
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(updates),
+        }
+      );
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error("Failed to update calendar event date/time:", error);
-      return false;
-    }
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`${response.status}: ${error}`);
+      }
+
+      return response.json();
+    }, "Update calendar event date/time");
 
     return true;
   } catch (error) {
@@ -500,26 +551,33 @@ export async function deletePickupEvent(
   }
 
   try {
-    const response = await fetch(
-      `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(auth.calendarId)}/events/${pickup.googleEventId}`,
-      {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+    await withRetry(async () => {
+      const response = await fetch(
+        `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(auth.calendarId)}/events/${pickup.googleEventId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+      // 404 is acceptable - event may already be deleted
+      if (!response.ok && response.status !== 404) {
+        const error = await response.text();
+        throw new Error(`${response.status}: ${error}`);
       }
-    );
 
-    if (response.ok || response.status === 404) {
-      // Clear the event ID from the pickup
-      await prisma.pickupSchedule.update({
-        where: { id: pickupScheduleId },
-        data: { googleEventId: null },
-      });
       return true;
-    }
+    }, "Delete calendar event");
 
-    return false;
+    // Clear the event ID from the pickup
+    await prisma.pickupSchedule.update({
+      where: { id: pickupScheduleId },
+      data: { googleEventId: null },
+    });
+
+    return true;
   } catch (error) {
     console.error("Error deleting calendar event:", error);
     return false;

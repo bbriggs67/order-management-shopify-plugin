@@ -14,48 +14,98 @@ import {
   EmptyState,
   Filters,
   ChoiceList,
-  TextField,
+  Banner,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import type { Prisma } from "@prisma/client";
+
+const ITEMS_PER_PAGE = 50;
+
+// Valid pickup statuses
+const VALID_STATUSES = ["SCHEDULED", "READY", "PICKED_UP", "CANCELLED", "NO_SHOW"] as const;
+type PickupStatus = typeof VALID_STATUSES[number];
+
+function isValidStatus(status: string): status is PickupStatus {
+  return VALID_STATUSES.includes(status as PickupStatus);
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const url = new URL(request.url);
-  const status = url.searchParams.get("status");
-  const search = url.searchParams.get("search");
+  try {
+    const url = new URL(request.url);
+    const status = url.searchParams.get("status");
+    const search = url.searchParams.get("search");
+    const cursor = url.searchParams.get("cursor");
 
-  const where: any = { shop };
+    // Build where clause with proper typing
+    const where: Prisma.PickupScheduleWhereInput = { shop };
 
-  if (status && status !== "all") {
-    where.pickupStatus = status;
+    // Validate status filter against allowed values
+    if (status && status !== "all" && isValidStatus(status)) {
+      where.pickupStatus = status;
+    }
+
+    // Sanitize search - limit length to prevent abuse
+    if (search && search.length <= 100) {
+      where.OR = [
+        { customerName: { contains: search, mode: "insensitive" } },
+        { shopifyOrderNumber: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    // Cursor-based pagination
+    const cursorOption = cursor ? { id: cursor } : undefined;
+
+    const pickups = await prisma.pickupSchedule.findMany({
+      where,
+      orderBy: { pickupDate: "desc" },
+      take: ITEMS_PER_PAGE + 1, // Fetch one extra to check if there's more
+      skip: cursor ? 1 : 0, // Skip the cursor item itself
+      cursor: cursorOption,
+      include: {
+        subscriptionPickup: {
+          select: { id: true }, // Only select what we need to reduce payload
+        },
+      },
+    });
+
+    // Check if there are more results
+    const hasMore = pickups.length > ITEMS_PER_PAGE;
+    const results = hasMore ? pickups.slice(0, ITEMS_PER_PAGE) : pickups;
+    const nextCursor = hasMore ? results[results.length - 1]?.id : null;
+
+    return json({
+      pickups: results,
+      hasMore,
+      nextCursor,
+      error: null as string | null,
+    });
+  } catch (error) {
+    console.error("Error loading orders:", error);
+    return json({ pickups: [] as Prisma.PickupScheduleGetPayload<{ include: { subscriptionPickup: { select: { id: true } } } }>[], hasMore: false, nextCursor: null as string | null, error: "Failed to load orders" });
   }
+};
 
-  if (search) {
-    where.OR = [
-      { customerName: { contains: search, mode: "insensitive" } },
-      { shopifyOrderNumber: { contains: search, mode: "insensitive" } },
-    ];
-  }
+type PickupWithSubscription = Prisma.PickupScheduleGetPayload<{
+  include: { subscriptionPickup: { select: { id: true } } }
+}>;
 
-  const pickups = await prisma.pickupSchedule.findMany({
-    where,
-    orderBy: { pickupDate: "desc" },
-    take: 50,
-    include: {
-      subscriptionPickup: true,
-    },
-  });
-
-  return json({ pickups });
+type LoaderData = {
+  pickups: PickupWithSubscription[];
+  hasMore: boolean;
+  nextCursor: string | null;
+  error: string | null;
 };
 
 export default function OrdersIndex() {
-  const { pickups } = useLoaderData<typeof loader>();
+  const data = useLoaderData<typeof loader>();
+  const pickups = data.pickups as unknown as PickupWithSubscription[];
+  const { hasMore, nextCursor, error } = data;
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [statusFilter, setStatusFilter] = useState<string[]>(
@@ -113,8 +163,8 @@ export default function OrdersIndex() {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+  const formatDate = (dateInput: string | Date) => {
+    const date = typeof dateInput === "string" ? new Date(dateInput) : dateInput;
     return date.toLocaleDateString("en-US", {
       weekday: "short",
       month: "short",
@@ -197,26 +247,47 @@ export default function OrdersIndex() {
                 onClearAll={handleClearAll}
               />
 
+              {error && (
+                <Banner tone="critical">
+                  {error}
+                </Banner>
+              )}
+
               {pickups.length > 0 ? (
-                <DataTable
-                  columnContentTypes={[
-                    "text",
-                    "text",
-                    "text",
-                    "text",
-                    "text",
-                    "text",
-                  ]}
-                  headings={[
-                    "Order",
-                    "Customer",
-                    "Pickup Date",
-                    "Time Slot",
-                    "Status",
-                    "Actions",
-                  ]}
-                  rows={tableRows}
-                />
+                <>
+                  <DataTable
+                    columnContentTypes={[
+                      "text",
+                      "text",
+                      "text",
+                      "text",
+                      "text",
+                      "text",
+                    ]}
+                    headings={[
+                      "Order",
+                      "Customer",
+                      "Pickup Date",
+                      "Time Slot",
+                      "Status",
+                      "Actions",
+                    ]}
+                    rows={tableRows}
+                  />
+                  {hasMore && nextCursor && (
+                    <InlineStack align="center">
+                      <Button
+                        onClick={() => {
+                          const params = new URLSearchParams(searchParams);
+                          params.set("cursor", nextCursor);
+                          setSearchParams(params);
+                        }}
+                      >
+                        Load More
+                      </Button>
+                    </InlineStack>
+                  )}
+                </>
               ) : (
                 <EmptyState
                   heading="No orders found"

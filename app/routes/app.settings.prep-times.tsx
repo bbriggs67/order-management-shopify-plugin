@@ -47,65 +47,96 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({ config });
 };
 
+// Helper to safely parse integer with validation
+function parseLeadTime(value: unknown, min = 1, max = 7): number | null {
+  if (!value || value === "") return null;
+  const num = parseInt(String(value), 10);
+  if (isNaN(num) || num < min || num > max) return null;
+  return num;
+}
+
+// Helper to validate time format (HH:MM)
+function isValidTimeFormat(time: string): boolean {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(time);
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const formData = await request.formData();
-  const data = Object.fromEntries(formData);
+  try {
+    const formData = await request.formData();
+    const data = Object.fromEntries(formData);
 
-  await prisma.prepTimeConfig.upsert({
-    where: { shop },
-    create: {
-      shop,
-      isEnabled: data.isEnabled === "true",
-      cutOffTime: data.cutOffTime as string,
-      leadTimeBefore: parseInt(data.leadTimeBefore as string),
-      leadTimeAfter: parseInt(data.leadTimeAfter as string),
-      maxBookingDays: parseInt(data.maxBookingDays as string),
-      customByDay: data.customByDay === "true",
-      // Day-specific settings
-      mondayBefore: data.mondayBefore ? parseInt(data.mondayBefore as string) : null,
-      mondayAfter: data.mondayAfter ? parseInt(data.mondayAfter as string) : null,
-      tuesdayBefore: data.tuesdayBefore ? parseInt(data.tuesdayBefore as string) : null,
-      tuesdayAfter: data.tuesdayAfter ? parseInt(data.tuesdayAfter as string) : null,
-      wednesdayBefore: data.wednesdayBefore ? parseInt(data.wednesdayBefore as string) : null,
-      wednesdayAfter: data.wednesdayAfter ? parseInt(data.wednesdayAfter as string) : null,
-      thursdayBefore: data.thursdayBefore ? parseInt(data.thursdayBefore as string) : null,
-      thursdayAfter: data.thursdayAfter ? parseInt(data.thursdayAfter as string) : null,
-      fridayBefore: data.fridayBefore ? parseInt(data.fridayBefore as string) : null,
-      fridayAfter: data.fridayAfter ? parseInt(data.fridayAfter as string) : null,
-      saturdayBefore: data.saturdayBefore ? parseInt(data.saturdayBefore as string) : null,
-      saturdayAfter: data.saturdayAfter ? parseInt(data.saturdayAfter as string) : null,
-      sundayBefore: data.sundayBefore ? parseInt(data.sundayBefore as string) : null,
-      sundayAfter: data.sundayAfter ? parseInt(data.sundayAfter as string) : null,
-    },
-    update: {
-      isEnabled: data.isEnabled === "true",
-      cutOffTime: data.cutOffTime as string,
-      leadTimeBefore: parseInt(data.leadTimeBefore as string),
-      leadTimeAfter: parseInt(data.leadTimeAfter as string),
-      maxBookingDays: parseInt(data.maxBookingDays as string),
-      customByDay: data.customByDay === "true",
-      // Day-specific settings
-      mondayBefore: data.mondayBefore ? parseInt(data.mondayBefore as string) : null,
-      mondayAfter: data.mondayAfter ? parseInt(data.mondayAfter as string) : null,
-      tuesdayBefore: data.tuesdayBefore ? parseInt(data.tuesdayBefore as string) : null,
-      tuesdayAfter: data.tuesdayAfter ? parseInt(data.tuesdayAfter as string) : null,
-      wednesdayBefore: data.wednesdayBefore ? parseInt(data.wednesdayBefore as string) : null,
-      wednesdayAfter: data.wednesdayAfter ? parseInt(data.wednesdayAfter as string) : null,
-      thursdayBefore: data.thursdayBefore ? parseInt(data.thursdayBefore as string) : null,
-      thursdayAfter: data.thursdayAfter ? parseInt(data.thursdayAfter as string) : null,
-      fridayBefore: data.fridayBefore ? parseInt(data.fridayBefore as string) : null,
-      fridayAfter: data.fridayAfter ? parseInt(data.fridayAfter as string) : null,
-      saturdayBefore: data.saturdayBefore ? parseInt(data.saturdayBefore as string) : null,
-      saturdayAfter: data.saturdayAfter ? parseInt(data.saturdayAfter as string) : null,
-      sundayBefore: data.sundayBefore ? parseInt(data.sundayBefore as string) : null,
-      sundayAfter: data.sundayAfter ? parseInt(data.sundayAfter as string) : null,
-    },
-  });
+    // Validate required fields
+    const cutOffTime = String(data.cutOffTime || "12:00");
+    if (!isValidTimeFormat(cutOffTime)) {
+      return json({ success: false, error: "Invalid cut-off time format" }, { status: 400 });
+    }
 
-  return json({ success: true });
+    const leadTimeBefore = parseLeadTime(data.leadTimeBefore, 1, 7) ?? 3;
+    const leadTimeAfter = parseLeadTime(data.leadTimeAfter, 1, 7) ?? 4;
+    const maxBookingDaysRaw = parseInt(String(data.maxBookingDays || "14"), 10);
+    const maxBookingDays = isNaN(maxBookingDaysRaw) || maxBookingDaysRaw < 7 || maxBookingDaysRaw > 60
+      ? 14
+      : maxBookingDaysRaw;
+
+    await prisma.prepTimeConfig.upsert({
+      where: { shop },
+      create: {
+        shop,
+        isEnabled: data.isEnabled === "true",
+        cutOffTime,
+        leadTimeBefore,
+        leadTimeAfter,
+        maxBookingDays,
+        customByDay: data.customByDay === "true",
+        // Day-specific settings (validated)
+        mondayBefore: parseLeadTime(data.mondayBefore),
+        mondayAfter: parseLeadTime(data.mondayAfter),
+        tuesdayBefore: parseLeadTime(data.tuesdayBefore),
+        tuesdayAfter: parseLeadTime(data.tuesdayAfter),
+        wednesdayBefore: parseLeadTime(data.wednesdayBefore),
+        wednesdayAfter: parseLeadTime(data.wednesdayAfter),
+        thursdayBefore: parseLeadTime(data.thursdayBefore),
+        thursdayAfter: parseLeadTime(data.thursdayAfter),
+        fridayBefore: parseLeadTime(data.fridayBefore),
+        fridayAfter: parseLeadTime(data.fridayAfter),
+        saturdayBefore: parseLeadTime(data.saturdayBefore),
+        saturdayAfter: parseLeadTime(data.saturdayAfter),
+        sundayBefore: parseLeadTime(data.sundayBefore),
+        sundayAfter: parseLeadTime(data.sundayAfter),
+      },
+      update: {
+        isEnabled: data.isEnabled === "true",
+        cutOffTime,
+        leadTimeBefore,
+        leadTimeAfter,
+        maxBookingDays,
+        customByDay: data.customByDay === "true",
+        // Day-specific settings (validated)
+        mondayBefore: parseLeadTime(data.mondayBefore),
+        mondayAfter: parseLeadTime(data.mondayAfter),
+        tuesdayBefore: parseLeadTime(data.tuesdayBefore),
+        tuesdayAfter: parseLeadTime(data.tuesdayAfter),
+        wednesdayBefore: parseLeadTime(data.wednesdayBefore),
+        wednesdayAfter: parseLeadTime(data.wednesdayAfter),
+        thursdayBefore: parseLeadTime(data.thursdayBefore),
+        thursdayAfter: parseLeadTime(data.thursdayAfter),
+        fridayBefore: parseLeadTime(data.fridayBefore),
+        fridayAfter: parseLeadTime(data.fridayAfter),
+        saturdayBefore: parseLeadTime(data.saturdayBefore),
+        saturdayAfter: parseLeadTime(data.saturdayAfter),
+        sundayBefore: parseLeadTime(data.sundayBefore),
+        sundayAfter: parseLeadTime(data.sundayAfter),
+      },
+    });
+
+    return json({ success: true });
+  } catch (error) {
+    console.error("Error saving prep time config:", error);
+    return json({ success: false, error: "Failed to save configuration" }, { status: 500 });
+  }
 };
 
 export default function PrepTimesSettings() {

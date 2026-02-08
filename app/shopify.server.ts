@@ -6,6 +6,10 @@ import {
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
+import { logEnvValidation } from "./utils/env.server";
+
+// Validate environment variables at startup
+logEnvValidation();
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,

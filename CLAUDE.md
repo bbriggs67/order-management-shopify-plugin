@@ -157,6 +157,55 @@ npx prisma migrate deploy                      # Production (Railway runs this)
 
 > **Instructions**: Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-08 - Code Audit & Security Improvements
+**Context:**
+Comprehensive code audit identified multiple areas for improvement including input validation, error handling, pagination, and environment configuration.
+
+**Improvements Made:**
+
+1. **Input Validation (prep-times route)**
+   - Added `parseLeadTime()` helper with min/max bounds (1-7 days)
+   - Added `isValidTimeFormat()` regex validation for HH:MM format
+   - Wrapped action handler in try-catch with proper error responses
+
+2. **Orders Page Pagination & Error Handling**
+   - Added cursor-based pagination with `ITEMS_PER_PAGE = 50`
+   - Added status filter validation against allowed values array
+   - Added search input length limit (100 chars) to prevent abuse
+   - Optimized N+1 query by selecting only needed fields from subscriptionPickup
+   - Added error banner display in UI
+   - Added "Load More" button for pagination
+
+3. **Environment Variable Validation**
+   - Created `app/utils/env.server.ts` utility
+   - Validates required vars at startup (SHOPIFY_API_KEY, SHOPIFY_API_SECRET, etc.)
+   - Warns about partially configured integrations (Twilio, SendGrid, Google)
+   - Provides `getRequiredEnv()` and `isIntegrationConfigured()` helpers
+   - Logs validation results to console at startup
+
+**Files Modified:**
+- `app/routes/app.settings.prep-times.tsx` - Input validation and error handling
+- `app/routes/app.orders._index.tsx` - Pagination, validation, error handling, UI updates
+- `app/shopify.server.ts` - Added env validation call at startup
+
+**Files Created:**
+- `app/utils/env.server.ts` - Environment variable validation utility
+
+4. **Google Calendar Retry Logic**
+   - Added `withRetry()` helper with exponential backoff (1s, 2s, 4s)
+   - Retries up to 3 times for transient failures
+   - Skips retry on 4xx client errors (except 429 rate limit)
+   - Applied to create, update, and delete calendar operations
+
+**Files Modified (additional):**
+- `app/services/google-calendar.server.ts` - Added retry logic with exponential backoff
+
+**Notes:**
+- Webhook idempotency already implemented via WebhookEvent table ✓
+- Rate limiting is in-memory (suitable for single-instance, consider Redis for multi-instance)
+
+---
+
 ### 2026-02-01 - COD Payment Issue Resolution
 **Problem:**
 - Test subscription order (#1784) placed with Cash on Delivery (COD) payment didn't create a subscription contract
