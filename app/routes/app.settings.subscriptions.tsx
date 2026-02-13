@@ -301,14 +301,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 nodes {
                   id
                   name
+                  tags
                   customAttributes {
                     key
                     value
                   }
                   lineItems(first: 10) {
                     nodes {
+                      name
                       sellingPlan {
                         sellingPlanId
+                        name
                       }
                     }
                   }
@@ -335,11 +338,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             // Provide more debug info - include full line item details
             const lineItems = order.lineItems?.nodes || [];
             const customAttrs = order.customAttributes || [];
-            const lineItemDetails = lineItems.map((item: { sellingPlan: { sellingPlanId: string } | null }) =>
-              `sellingPlan: ${item.sellingPlan ? JSON.stringify(item.sellingPlan) : "null"}`
+            const tags = order.tags || [];
+            const lineItemDetails = lineItems.map((item: { name: string; sellingPlan: { sellingPlanId: string; name: string } | null }) =>
+              `"${item.name}": sellingPlan=${item.sellingPlan ? JSON.stringify(item.sellingPlan) : "null"}`
             ).join("; ");
             return json({
-              error: `Order "${orderInput}" doesn't have a sellingPlan on line items. Line items: ${lineItems.length} (${lineItemDetails}), Custom attributes: ${customAttrs.map((a: {key: string, value: string}) => `${a.key}=${a.value}`).join(", ") || "none"}`
+              error: `Order "${orderInput}" doesn't have a sellingPlan on line items. Tags: [${tags.join(", ")}], Line items: ${lineItems.length} (${lineItemDetails}), Custom attributes: ${customAttrs.map((a: {key: string, value: string}) => `${a.key}=${a.value}`).join(", ") || "none"}`
             }, { status: 400 });
           }
 
