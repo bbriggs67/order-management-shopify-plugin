@@ -332,11 +332,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           const hasSellingPlan = order.lineItems?.nodes?.some((item: { sellingPlan: { sellingPlanId: string } | null }) => item.sellingPlan?.sellingPlanId);
 
           if (!hasSellingPlan) {
-            // Provide more debug info
+            // Provide more debug info - include full line item details
             const lineItems = order.lineItems?.nodes || [];
             const customAttrs = order.customAttributes || [];
+            const lineItemDetails = lineItems.map((item: { sellingPlan: { sellingPlanId: string } | null }) =>
+              `sellingPlan: ${item.sellingPlan ? JSON.stringify(item.sellingPlan) : "null"}`
+            ).join("; ");
             return json({
-              error: `Order "${orderInput}" is not a subscription order. Line items: ${lineItems.length}, Custom attributes: ${customAttrs.map((a: {key: string}) => a.key).join(", ") || "none"}`
+              error: `Order "${orderInput}" doesn't have a sellingPlan on line items. Line items: ${lineItems.length} (${lineItemDetails}), Custom attributes: ${customAttrs.map((a: {key: string, value: string}) => `${a.key}=${a.value}`).join(", ") || "none"}`
             }, { status: 400 });
           }
 
