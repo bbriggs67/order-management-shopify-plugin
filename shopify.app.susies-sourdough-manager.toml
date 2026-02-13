@@ -16,6 +16,18 @@ api_version = "2024-10"
   topics = ["app/uninstalled", "app/scopes_update"]
   uri = "/webhooks"
 
+  [[webhooks.subscriptions]]
+  topics = ["subscription_contracts/create", "subscription_contracts/update"]
+  uri = "/webhooks"
+
+  [[webhooks.subscriptions]]
+  topics = ["subscription_billing_attempts/success", "subscription_billing_attempts/failure"]
+  uri = "/webhooks"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create", "orders/updated", "orders/cancelled"]
+  uri = "/webhooks"
+
 [access_scopes]
 # Subscription scopes included from the start
 scopes = "read_orders,write_orders,read_products,write_products,read_customers,read_own_subscription_contracts,write_own_subscription_contracts"

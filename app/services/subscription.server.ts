@@ -317,6 +317,11 @@ function calculateNextPickupDateFromToday(
     daysUntil += 7;
   }
 
+  // For tri-weekly, ensure we're at least 14 days out
+  if (frequency === "TRIWEEKLY" && daysUntil < 14) {
+    daysUntil += 14;
+  }
+
   const nextDate = getDatePacific(daysUntil);
   return nextDate;
 }
@@ -330,11 +335,25 @@ export async function createSubscriptionFromContract(
   customerName: string,
   customerEmail: string | null,
   customerPhone: string | null,
-  frequency: "WEEKLY" | "BIWEEKLY",
+  frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY",
   preferredDay: number,
   preferredTimeSlot: string
 ): Promise<string> {
-  const discountPercent = frequency === "WEEKLY" ? 10 : 5;
+  // Determine discount based on frequency (matching selling plan discounts)
+  let discountPercent: number;
+  switch (frequency) {
+    case "WEEKLY":
+      discountPercent = 10;
+      break;
+    case "BIWEEKLY":
+      discountPercent = 5;
+      break;
+    case "TRIWEEKLY":
+      discountPercent = 2.5;
+      break;
+    default:
+      discountPercent = 5;
+  }
   const nextPickupDate = calculateNextPickupDateFromToday(preferredDay, frequency);
 
   // Extract time slot start for billing calculation

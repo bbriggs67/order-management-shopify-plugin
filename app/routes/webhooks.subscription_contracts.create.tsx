@@ -72,8 +72,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const customerPhone = contract.customer.phone || null;
 
     // Determine frequency from billing policy
-    const frequency =
-      contract.billing_policy.interval_count === 1 ? "WEEKLY" : "BIWEEKLY";
+    let frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY";
+    switch (contract.billing_policy.interval_count) {
+      case 1:
+        frequency = "WEEKLY";
+        break;
+      case 2:
+        frequency = "BIWEEKLY";
+        break;
+      case 3:
+        frequency = "TRIWEEKLY";
+        break;
+      default:
+        // Default to weekly for unknown intervals
+        console.warn(`Unknown interval count: ${contract.billing_policy.interval_count}, defaulting to WEEKLY`);
+        frequency = "WEEKLY";
+    }
 
     // Extract preferred day and time slot from note attributes
     // These would be set during checkout via cart attributes
@@ -95,7 +109,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       customerName,
       customerEmail,
       customerPhone,
-      frequency as "WEEKLY" | "BIWEEKLY",
+      frequency,
       preferredDay,
       preferredTimeSlot
     );
