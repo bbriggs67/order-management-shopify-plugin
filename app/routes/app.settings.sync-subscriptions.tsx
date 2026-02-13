@@ -128,41 +128,53 @@ interface ContractForDisplay {
 }
 
 async function fetchAllContracts(
-  admin: AdminClient,
-  statusFilter: string | null
+  admin: AdminClient
 ): Promise<ShopifyContract[]> {
   const contracts: ShopifyContract[] = [];
   let hasNextPage = true;
   let cursor: string | null = null;
 
-  // Build query string for status filter
-  const query = statusFilter ? `status:${statusFilter}` : null;
+  // Note: Status filter in query param requires API version 2025-04+
+  // We're on 2024-10, so we fetch all and filter client-side
+  console.log("Fetching all subscription contracts from Shopify...");
 
   while (hasNextPage) {
+    const variables: Record<string, unknown> = {
+      first: 50,
+      after: cursor,
+      query: null, // Don't use query filter - not supported in 2024-10
+    };
+
     const response = await admin.graphql(SUBSCRIPTION_CONTRACTS_QUERY, {
-      variables: {
-        first: 50,
-        after: cursor,
-        query,
-      },
+      variables,
     });
 
     const jsonResponse = await response.json();
+
+    if (jsonResponse.errors) {
+      console.error("GraphQL errors fetching subscription contracts:", jsonResponse.errors);
+      // Continue anyway to try to get partial data
+    }
+
     const data = jsonResponse.data?.subscriptionContracts;
 
     if (!data) {
-      console.error("Failed to fetch subscription contracts:", jsonResponse.errors);
+      console.error("Failed to fetch subscription contracts - no data returned");
+      console.error("Response:", JSON.stringify(jsonResponse, null, 2).substring(0, 1000));
       break;
     }
 
-    for (const edge of data.edges) {
+    console.log(`Fetched ${data.edges?.length || 0} contracts in this batch`);
+
+    for (const edge of data.edges || []) {
       contracts.push(edge.node);
     }
 
-    hasNextPage = data.pageInfo.hasNextPage;
-    cursor = data.pageInfo.endCursor;
+    hasNextPage = data.pageInfo?.hasNextPage || false;
+    cursor = data.pageInfo?.endCursor || null;
   }
 
+  console.log(`Total contracts fetched: ${contracts.length}`);
   return contracts;
 }
 
@@ -207,8 +219,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const statusFilter = url.searchParams.get("status") || "ACTIVE";
 
-  // Fetch contracts from Shopify
-  const shopifyContracts = await fetchAllContracts(admin, statusFilter);
+  // Fetch ALL contracts from Shopify (API 2024-10 doesn't support status filter in query)
+  const allContracts = await fetchAllContracts(admin);
+
+  // Filter client-side by status
+  const shopifyContracts = statusFilter
+    ? allContracts.filter((c) => c.status === statusFilter)
+    : allContracts;
+
+  console.log(`Filtered to ${shopifyContracts.length} contracts with status: ${statusFilter || 'ALL'}`);
 
   // Get existing synced contract IDs from our database
   const existingSubscriptions = await prisma.subscriptionPickup.findMany({
