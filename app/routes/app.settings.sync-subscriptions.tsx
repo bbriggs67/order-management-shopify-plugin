@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useActionData, useSubmit, useNavigation } from "@remix-run/react";
+import { useLoaderData, useActionData, useSubmit, useNavigation, useSearchParams, useNavigate } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -401,6 +401,8 @@ export default function LegacySubscriptionManagement() {
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const isLoading = navigation.state !== "idle";
 
   const [selectedContracts, setSelectedContracts] = useState<Set<string>>(new Set());
@@ -409,11 +411,11 @@ export default function LegacySubscriptionManagement() {
   const handleStatusFilterChange = useCallback((value: string) => {
     setFilterStatus(value);
     setSelectedContracts(new Set());
-    // Navigate with new filter
+    // Use Remix navigate to stay within embedded app context
     const params = new URLSearchParams();
     if (value) params.set("status", value);
-    window.location.href = `/app/settings/sync-subscriptions?${params.toString()}`;
-  }, []);
+    navigate(`/app/settings/sync-subscriptions?${params.toString()}`);
+  }, [navigate]);
 
   const handleSelectAll = useCallback(() => {
     const unsyncedContracts = contracts.filter((c) => !c.alreadySynced);
