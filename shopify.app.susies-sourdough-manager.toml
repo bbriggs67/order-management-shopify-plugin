@@ -29,8 +29,8 @@ api_version = "2024-10"
   uri = "/webhooks"
 
 [access_scopes]
-# Subscription scopes included from the start
-scopes = "read_orders,write_orders,read_products,write_products,read_customers,read_own_subscription_contracts,write_own_subscription_contracts"
+# Subscription scopes - using "all" scopes to read/write contracts from any app (needed for migration)
+scopes = "read_orders,write_orders,read_products,write_products,read_customers,read_all_subscription_contracts,write_own_subscription_contracts"
 
 [auth]
 redirect_urls = [ "https://order-management-shopify-plugin-production.up.railway.app/auth/callback" ]
