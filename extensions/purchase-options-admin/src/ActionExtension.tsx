@@ -19,7 +19,6 @@ const SELLING_PLAN_GROUP_QUERY = `
     sellingPlanGroup(id: $id) {
       id
       name
-      productCount
       sellingPlans(first: 20) {
         edges {
           node {
@@ -85,7 +84,6 @@ interface SellingPlan {
 interface SellingPlanGroup {
   id: string;
   name: string;
-  productCount: number;
   plans: SellingPlan[];
 }
 
@@ -172,7 +170,6 @@ function PurchaseOptionsAction() {
       setSellingPlanGroup({
         id: group.id,
         name: group.name,
-        productCount: group.productCount,
         plans,
       });
     } catch (e) {
