@@ -211,6 +211,29 @@ const DELETE_SELLING_PLAN_MUTATION = `
   }
 `;
 
+const SELLING_PLAN_GROUP_BY_ID_QUERY = `
+  query getSellingPlanGroupById($id: ID!) {
+    sellingPlanGroup(id: $id) {
+      id
+      name
+      sellingPlans(first: 20) {
+        edges {
+          node {
+            id
+            name
+            billingPolicy {
+              ... on SellingPlanRecurringBillingPolicy {
+                interval
+                intervalCount
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 const CREATE_SELLING_PLAN_GROUP_MUTATION = `
   mutation createSellingPlanGroup($input: SellingPlanGroupInput!) {
     sellingPlanGroupCreate(input: $input) {
@@ -674,7 +697,38 @@ export async function getAllSellingPlanGroups(
 }
 
 /**
+ * Get selling plans in a specific group
+ * Used for duplicate detection before adding new plans
+ */
+async function getSellingPlansInGroup(
+  admin: AdminClient,
+  groupId: string
+): Promise<Array<{ id: string; name: string; interval: string; intervalCount: number }>> {
+  const response = await admin.graphql(SELLING_PLAN_GROUP_BY_ID_QUERY, {
+    variables: { id: groupId },
+  });
+
+  const jsonResponse = await response.json();
+  const group = jsonResponse.data?.sellingPlanGroup;
+
+  if (!group?.sellingPlans?.edges) {
+    return [];
+  }
+
+  return group.sellingPlans.edges.map((edge: any) => {
+    const plan = edge.node;
+    return {
+      id: plan.id,
+      name: plan.name,
+      interval: plan.billingPolicy?.interval || "WEEK",
+      intervalCount: plan.billingPolicy?.intervalCount || 1,
+    };
+  });
+}
+
+/**
  * Add a new selling plan to an existing group
+ * Includes duplicate detection to prevent creating plans with same interval/frequency
  */
 export async function addSellingPlanToGroup(
   admin: AdminClient,
@@ -685,6 +739,24 @@ export async function addSellingPlanToGroup(
   discountPercent: number,
   interval: string = "WEEK"
 ): Promise<{ success: boolean; error?: string; planId?: string }> {
+  // First, check for existing plans with the same interval/frequency to prevent duplicates
+  try {
+    const existingPlans = await getSellingPlansInGroup(admin, groupId);
+    const duplicatePlan = existingPlans.find(
+      (plan) => plan.interval === interval && plan.intervalCount === intervalCount
+    );
+
+    if (duplicatePlan) {
+      return {
+        success: false,
+        error: `A plan with ${getFrequencyLabel(interval, intervalCount)} delivery already exists: "${duplicatePlan.name}". Please delete it first if you want to create a new one with different settings.`,
+      };
+    }
+  } catch (error) {
+    console.warn("Could not check for duplicate plans, proceeding with creation:", error);
+    // Continue with creation - Shopify will reject true duplicates anyway
+  }
+
   // Create a unique option that includes discount to avoid "duplicate options" error
   // Shopify requires each selling plan within a group to have unique options
   const uniqueOption = `${getFrequencyLabel(interval, intervalCount)} (${discountPercent}% off)`;
