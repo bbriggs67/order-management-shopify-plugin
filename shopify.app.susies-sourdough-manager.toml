@@ -38,3 +38,6 @@ destination = "/"
 [[extensions.admin_link]]
 label = "Subscription Settings"
 destination = "/app/settings/subscriptions"
+
+[extensions.product_subscription]
+url = "/app/settings/subscriptions"
