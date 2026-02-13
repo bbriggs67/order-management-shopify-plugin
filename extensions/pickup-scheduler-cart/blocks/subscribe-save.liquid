@@ -1,6 +1,12 @@
 {% comment %}
-  Subscribe and Save App Embed
-  Auto-injects subscription options on product pages
+  Subscribe and Save App Embed (Custom Widget)
+
+  NOTE: This custom widget is DISABLED by default because Shopify's native
+  selling plan UI is now working properly. Only enable this if you need
+  a custom subscription selector that differs from Shopify's native UI.
+
+  The native Shopify UI automatically appears when products are associated
+  with a Selling Plan Group.
 {% endcomment %}
 
 {% if block.settings.enabled %}
@@ -18,7 +24,7 @@
 
 {% schema %}
 {
-  "name": "Subscribe & Save",
+  "name": "Subscribe & Save (Custom)",
   "target": "body",
   "javascript": "subscribe-save.js",
   "stylesheet": "subscribe-save.css",
@@ -26,9 +32,9 @@
     {
       "type": "checkbox",
       "id": "enabled",
-      "label": "Enable Subscribe & Save",
-      "default": true,
-      "info": "Shows subscription options on product pages"
+      "label": "Enable Custom Subscribe & Save Widget",
+      "default": false,
+      "info": "Only enable if you need a custom widget. Shopify's native selling plan UI works automatically when products are in a Selling Plan Group."
     },
     {
       "type": "range",
