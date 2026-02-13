@@ -291,10 +291,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           contract = data.data?.subscriptionContract;
         } else {
           // Assume it's an order number - look up the order first
-          // Clean up the input - remove # if present
-          const orderName = orderInput.replace(/^#/, "");
+          // Clean up the input - add # if not present (Shopify stores names with #)
+          const orderName = orderInput.startsWith("#") ? orderInput : `#${orderInput}`;
 
-          // Find the order by name
+          // Find the order by name - use exact match with quotes
           const orderResponse = await admin.graphql(`
             query getOrderByName($query: String!) {
               orders(first: 1, query: $query) {
@@ -312,7 +312,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               }
             }
           `, {
-            variables: { query: `name:${orderName}` },
+            variables: { query: `name:"${orderName}"` },
           });
 
           const orderData = await orderResponse.json();
