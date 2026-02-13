@@ -13,20 +13,40 @@ automatically_update_urls_on_dev = false
 api_version = "2024-10"
 
   [[webhooks.subscriptions]]
-  topics = ["app/uninstalled", "app/scopes_update"]
-  uri = "/webhooks"
+  topics = ["app/uninstalled"]
+  uri = "/webhooks/app/uninstalled"
 
   [[webhooks.subscriptions]]
-  topics = ["subscription_contracts/create", "subscription_contracts/update"]
-  uri = "/webhooks"
+  topics = ["app/scopes_update"]
+  uri = "/webhooks/app/scopes_update"
 
   [[webhooks.subscriptions]]
-  topics = ["subscription_billing_attempts/success", "subscription_billing_attempts/failure"]
-  uri = "/webhooks"
+  topics = ["subscription_contracts/create"]
+  uri = "/webhooks/subscription_contracts/create"
 
   [[webhooks.subscriptions]]
-  topics = ["orders/create", "orders/updated", "orders/cancelled"]
-  uri = "/webhooks"
+  topics = ["subscription_contracts/update"]
+  uri = "/webhooks/subscription_contracts/update"
+
+  [[webhooks.subscriptions]]
+  topics = ["subscription_billing_attempts/success"]
+  uri = "/webhooks/subscription_billing_attempts/success"
+
+  [[webhooks.subscriptions]]
+  topics = ["subscription_billing_attempts/failure"]
+  uri = "/webhooks/subscription_billing_attempts/failure"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "/webhooks/orders/create"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/updated"]
+  uri = "/webhooks/orders/updated"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/cancelled"]
+  uri = "/webhooks/orders/cancelled"
 
 [access_scopes]
 # Subscription scopes - "own" scopes only allow access to contracts created by THIS app

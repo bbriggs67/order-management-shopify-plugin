@@ -38,6 +38,8 @@ import {
   retryBilling,
 } from "../services/subscription-billing.server";
 import { formatDatePacific } from "../utils/timezone.server";
+import { createSubscriptionFromContract } from "../services/subscription.server";
+import prisma from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -241,6 +243,103 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
       }
 
+      case "manual_sync_contract": {
+        const contractId = formData.get("contractId") as string;
+
+        if (!contractId) {
+          return json({ error: "No contract ID provided" }, { status: 400 });
+        }
+
+        // Fetch the subscription contract from Shopify
+        const response = await admin.graphql(`
+          query getSubscriptionContract($id: ID!) {
+            subscriptionContract(id: $id) {
+              id
+              status
+              customer {
+                id
+                email
+                firstName
+                lastName
+                phone
+              }
+              billingPolicy {
+                interval
+                intervalCount
+              }
+              deliveryPolicy {
+                interval
+                intervalCount
+              }
+            }
+          }
+        `, {
+          variables: { id: contractId },
+        });
+
+        const data = await response.json();
+        const contract = data.data?.subscriptionContract;
+
+        if (!contract) {
+          return json({ error: "Subscription contract not found. Make sure the ID is correct and the contract was created by this app." }, { status: 404 });
+        }
+
+        // Check if already synced
+        const existingSubscription = await prisma.subscriptionPickup.findFirst({
+          where: {
+            shop,
+            shopifyContractId: contract.id,
+          },
+        });
+
+        if (existingSubscription) {
+          return json({ error: "This subscription contract has already been synced" }, { status: 400 });
+        }
+
+        // Extract customer info
+        const customerName = `${contract.customer?.firstName || ""} ${contract.customer?.lastName || ""}`.trim() || "Unknown Customer";
+        const customerEmail = contract.customer?.email || null;
+        const customerPhone = contract.customer?.phone || null;
+
+        // Determine frequency from billing policy
+        let frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY";
+        switch (contract.billingPolicy.intervalCount) {
+          case 1:
+            frequency = "WEEKLY";
+            break;
+          case 2:
+            frequency = "BIWEEKLY";
+            break;
+          case 3:
+            frequency = "TRIWEEKLY";
+            break;
+          default:
+            frequency = "WEEKLY";
+        }
+
+        // Default pickup settings (can be adjusted later by customer)
+        const preferredDay = 2; // Tuesday
+        const preferredTimeSlot = "12:00 PM - 2:00 PM";
+
+        // Create the subscription
+        const subscriptionId = await createSubscriptionFromContract(
+          shop,
+          contract.id,
+          customerName,
+          customerEmail,
+          customerPhone,
+          frequency,
+          preferredDay,
+          preferredTimeSlot
+        );
+
+        return json({
+          success: true,
+          message: `Successfully synced subscription for ${customerName}`,
+          subscriptionId,
+        });
+      }
+
       default:
         return json({ error: "Unknown action" }, { status: 400 });
     }
@@ -271,6 +370,9 @@ export default function SubscriptionsSettings() {
   // Delete confirmation state
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [planToDelete, setPlanToDelete] = useState<{ groupId: string; planId: string; name: string } | null>(null);
+
+  // Manual sync state
+  const [contractId, setContractId] = useState("");
 
   const handleCopyUrl = useCallback(async () => {
     try {
@@ -340,6 +442,12 @@ export default function SubscriptionsSettings() {
     }
     setDeleteConfirmOpen(false);
     setPlanToDelete(null);
+  };
+
+  const handleManualSync = () => {
+    if (!contractId.trim()) return;
+    submit({ intent: "manual_sync_contract", contractId: contractId.trim() }, { method: "post" });
+    setContractId("");
   };
 
   // Format failed billings for data table
@@ -577,6 +685,39 @@ export default function SubscriptionsSettings() {
           </Card>
         </Layout.Section>
 
+        {/* Manual Subscription Sync */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">
+                Manual Subscription Sync
+              </Text>
+              <Text as="p" tone="subdued">
+                If a subscription wasn't captured automatically, you can manually sync it by entering
+                the Shopify Subscription Contract ID. Find this in your Shopify admin under
+                Orders → Subscriptions.
+              </Text>
+              <FormLayout>
+                <TextField
+                  label="Subscription Contract ID"
+                  value={contractId}
+                  onChange={setContractId}
+                  placeholder="gid://shopify/SubscriptionContract/123456789"
+                  autoComplete="off"
+                  helpText="The full GID of the subscription contract from Shopify"
+                />
+                <Button
+                  onClick={handleManualSync}
+                  disabled={!contractId.trim()}
+                  loading={isLoading}
+                >
+                  Sync Subscription
+                </Button>
+              </FormLayout>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
         <Layout.Section>
           <Divider />
         </Layout.Section>
@@ -663,28 +804,6 @@ export default function SubscriptionsSettings() {
                   rows={upcomingBillingsRows}
                 />
               )}
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
-        {/* Legacy Data Management */}
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingMd">
-                  Legacy Data Management
-                </Text>
-                <Badge tone="info">Migration Tool</Badge>
-              </InlineStack>
-              <Text as="p" tone="subdued">
-                Import existing subscription contracts from Shopify into Susies Sourdough Manager.
-                Use this tool to migrate subscriptions created before this app was deployed, or to
-                recover subscriptions that weren't captured by webhooks.
-              </Text>
-              <Button url="/app/settings/sync-subscriptions">
-                Open Legacy Subscription Import
-              </Button>
             </BlockStack>
           </Card>
         </Layout.Section>
