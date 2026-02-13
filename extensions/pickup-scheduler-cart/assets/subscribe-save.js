@@ -12,6 +12,7 @@
     constructor(options) {
       this.weeklyDiscount = options.weeklyDiscount || 10;
       this.biweeklyDiscount = options.biweeklyDiscount || 5;
+      this.triweeklyDiscount = options.triweeklyDiscount || 0;
       this.productId = this.getProductId();
       this.container = null;
 
@@ -89,6 +90,7 @@
       widget.dataset.productId = this.productId;
       widget.dataset.weeklyDiscount = this.weeklyDiscount;
       widget.dataset.biweeklyDiscount = this.biweeklyDiscount;
+      widget.dataset.triweeklyDiscount = this.triweeklyDiscount;
 
       widget.innerHTML = `
         <div class="subscribe-save-options">
@@ -117,6 +119,13 @@
                 <span class="subscribe-save-choice__radio"></span>
                 <span class="subscribe-save-choice__text">Deliver every 2 weeks, <strong>${this.biweeklyDiscount}% off</strong></span>
               </label>
+              ${this.triweeklyDiscount > 0 ? `
+              <label class="subscribe-save-choice">
+                <input type="radio" name="purchase_option" value="triweekly" data-frequency="TRIWEEKLY" data-discount="${this.triweeklyDiscount}">
+                <span class="subscribe-save-choice__radio"></span>
+                <span class="subscribe-save-choice__text">Deliver every 3 weeks, <strong>${this.triweeklyDiscount}% off</strong></span>
+              </label>
+              ` : ''}
             </div>
           </div>
         </div>
@@ -139,7 +148,7 @@
       const subscriptionSection = this.container.querySelector('.subscribe-save-option--subscription');
 
       // Update visual state
-      if (value === 'weekly' || value === 'biweekly') {
+      if (value === 'weekly' || value === 'biweekly' || value === 'triweekly') {
         subscriptionSection.classList.add('has-selection');
       } else if (value === 'onetime') {
         subscriptionSection.classList.remove('has-selection');
@@ -173,6 +182,9 @@
       } else if (value === 'biweekly') {
         data.frequency = 'BIWEEKLY';
         data.discount = this.biweeklyDiscount;
+      } else if (value === 'triweekly') {
+        data.frequency = 'TRIWEEKLY';
+        data.discount = this.triweeklyDiscount;
       }
 
       try {
@@ -266,11 +278,13 @@
     // Get settings from the embed element
     const weeklyDiscount = parseInt(embed.dataset.weeklyDiscount) || 10;
     const biweeklyDiscount = parseInt(embed.dataset.biweeklyDiscount) || 5;
+    const triweeklyDiscount = parseInt(embed.dataset.triweeklyDiscount) || 0;
 
     // Create the widget
     new SubscribeSaveWidget({
       weeklyDiscount,
-      biweeklyDiscount
+      biweeklyDiscount,
+      triweeklyDiscount
     });
   }
 

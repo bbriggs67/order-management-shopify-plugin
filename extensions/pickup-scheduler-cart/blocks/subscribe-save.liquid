@@ -9,6 +9,7 @@
     data-enabled="true"
     data-weekly-discount="{{ block.settings.weekly_discount }}"
     data-biweekly-discount="{{ block.settings.biweekly_discount }}"
+    data-triweekly-discount="{{ block.settings.triweekly_discount }}"
     style="display: none;"
   ></div>
 {% endif %}
@@ -46,6 +47,17 @@
       "unit": "%",
       "label": "Bi-Weekly Subscription Discount",
       "default": 5
+    },
+    {
+      "type": "range",
+      "id": "triweekly_discount",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "unit": "%",
+      "label": "Tri-Weekly (Every 3 Weeks) Discount",
+      "default": 3,
+      "info": "Set to 0 to hide this option"
     }
   ]
 }
