@@ -1,0 +1,22 @@
+# Purchase Options Admin Extension
+# This extension handles the edit button on selling plan groups in the product admin page
+
+api_version = "2025-04"
+
+[[extensions]]
+uid = "purchase-options-admin-d8a72b3f"
+type = "ui_extension"
+name = "Susies Subscription Manager"
+handle = "purchase-options-admin"
+
+  [[extensions.targeting]]
+  module = "./src/ActionExtension.tsx"
+  target = "admin.product-purchase-option.action.render"
+
+  [[extensions.targeting]]
+  module = "./src/ActionExtension.tsx"
+  target = "admin.product-variant-purchase-option.action.render"
+
+  [extensions.capabilities]
+  api_access = true
+  network_access = true

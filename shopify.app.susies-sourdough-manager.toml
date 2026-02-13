@@ -39,5 +39,5 @@ destination = "/"
 label = "Subscription Settings"
 destination = "/app/settings/subscriptions"
 
-[extensions.product_subscription]
-url = "/app/settings/subscriptions"
+# Note: The purchase-options-admin extension handles the edit button on selling plan groups
+# See extensions/purchase-options-admin/
