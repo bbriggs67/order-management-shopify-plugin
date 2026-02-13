@@ -331,19 +331,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
           console.log("Order data for manual sync:", JSON.stringify(order, null, 2));
 
-          // Check if this order has a selling plan (subscription)
+          // Check if this order has a selling plan (subscription) on line items
           const hasSellingPlan = order.lineItems?.nodes?.some((item: { sellingPlan: { sellingPlanId: string } | null }) => item.sellingPlan?.sellingPlanId);
 
-          if (!hasSellingPlan) {
-            // Provide more debug info - include full line item details
+          // Also check custom attributes for subscription-related info
+          const customAttrs = order.customAttributes || [];
+          const getAttr = (key: string) => customAttrs.find((a: {key: string; value: string}) => a.key === key)?.value;
+          const hasPickupInfo = getAttr("Pickup Date") && getAttr("Pickup Time Slot");
+
+          // If no selling plan on line items but has pickup info, this might be a subscription
+          // that wasn't properly linked - let's still try to find the contract
+          if (!hasSellingPlan && !hasPickupInfo) {
             const lineItems = order.lineItems?.nodes || [];
-            const customAttrs = order.customAttributes || [];
             const tags = order.tags || [];
             const lineItemDetails = lineItems.map((item: { name: string; sellingPlan: { sellingPlanId: string; name: string } | null }) =>
               `"${item.name}": sellingPlan=${item.sellingPlan ? JSON.stringify(item.sellingPlan) : "null"}`
             ).join("; ");
             return json({
-              error: `Order "${orderInput}" doesn't have a sellingPlan on line items. Tags: [${tags.join(", ")}], Line items: ${lineItems.length} (${lineItemDetails}), Custom attributes: ${customAttrs.map((a: {key: string, value: string}) => `${a.key}=${a.value}`).join(", ") || "none"}`
+              error: `Order "${orderInput}" doesn't have a sellingPlan on line items and no pickup info. Tags: [${tags.join(", ")}], Line items: ${lineItems.length} (${lineItemDetails}), Custom attributes: ${customAttrs.map((a: {key: string, value: string}) => `${a.key}=${a.value}`).join(", ") || "none"}`
             }, { status: 400 });
           }
 
@@ -385,9 +390,90 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           // Find contract matching the order
           contract = contracts.find((c: { originOrder?: { id: string } }) => c.originOrder?.id === order.id);
 
+          // If no contract found but we have pickup info, we can create a subscription
+          // record directly from the order data
+          if (!contract && hasPickupInfo) {
+            // Get customer info from order
+            const orderDetailResponse = await admin.graphql(`
+              query getOrderDetail($id: ID!) {
+                order(id: $id) {
+                  id
+                  name
+                  customer {
+                    id
+                    email
+                    firstName
+                    lastName
+                    phone
+                  }
+                }
+              }
+            `, {
+              variables: { id: order.id },
+            });
+
+            const orderDetail = (await orderDetailResponse.json()).data?.order;
+            const customer = orderDetail?.customer;
+
+            const customerName = customer
+              ? `${customer.firstName || ""} ${customer.lastName || ""}`.trim()
+              : "Unknown Customer";
+            const customerEmail = customer?.email || null;
+            const customerPhone = customer?.phone || null;
+
+            // Parse pickup date to get preferred day
+            const pickupDateStr = getAttr("Pickup Date");
+            const pickupTimeSlot = getAttr("Pickup Time Slot") || "12:00 PM - 2:00 PM";
+
+            // Try to determine the day of week from the pickup date
+            let preferredDay = 5; // Default to Friday
+            if (pickupDateStr) {
+              // Try to parse day name from string like "Friday, February 20"
+              const dayMatch = pickupDateStr.match(/^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)/i);
+              if (dayMatch) {
+                const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+                preferredDay = dayNames.findIndex(d => d.toLowerCase() === dayMatch[1].toLowerCase());
+              }
+            }
+
+            // Default to BIWEEKLY since that's what was selected
+            // In the future, we could try to detect this from order notes or metafields
+            const frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY" = "BIWEEKLY";
+
+            // Check if already synced by order ID
+            const existingByOrder = await prisma.subscriptionPickup.findFirst({
+              where: {
+                shop,
+                shopifyContractId: order.id, // Use order ID as contract ID placeholder
+              },
+            });
+
+            if (existingByOrder) {
+              return json({ error: "This order has already been synced as a subscription" }, { status: 400 });
+            }
+
+            // Create the subscription using order ID as the contract reference
+            const subscriptionId = await createSubscriptionFromContract(
+              shop,
+              order.id, // Use order ID since there's no contract
+              customerName,
+              customerEmail,
+              customerPhone,
+              frequency,
+              preferredDay,
+              pickupTimeSlot
+            );
+
+            return json({
+              success: true,
+              message: `Successfully created subscription for ${customerName} (no contract found, created from order data)`,
+              subscriptionId,
+            });
+          }
+
           if (!contract) {
             return json({
-              error: `Could not find subscription contract for order "${orderInput}". The contract may have been created by a different app.`,
+              error: `Could not find subscription contract for order "${orderInput}". The contract may have been created by a different app or not created at all.`,
             }, { status: 404 });
           }
         }
