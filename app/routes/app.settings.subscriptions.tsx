@@ -788,16 +788,16 @@ export default function SubscriptionsSettings() {
               </Text>
               <Text as="p" tone="subdued">
                 If a subscription wasn't captured automatically, you can manually sync it by entering
-                the order confirmation number (e.g., #GGNVHWWKP) from the subscription order.
+                the order number (e.g., #1829 or 1829) from the subscription order.
               </Text>
               <FormLayout>
                 <TextField
                   label="Order Number"
                   value={contractId}
                   onChange={setContractId}
-                  placeholder="#GGNVHWWKP or GGNVHWWKP"
+                  placeholder="#1829 or 1829"
                   autoComplete="off"
-                  helpText="The order confirmation number from the subscription order"
+                  helpText="The order number from the subscription order (found at the top of the order page)"
                 />
                 <Button
                   onClick={handleManualSync}
