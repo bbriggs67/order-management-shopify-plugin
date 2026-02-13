@@ -301,6 +301,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 nodes {
                   id
                   name
+                  customAttributes {
+                    key
+                    value
+                  }
                   lineItems(first: 10) {
                     nodes {
                       sellingPlan {
@@ -322,11 +326,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             return json({ error: `Order "${orderInput}" not found` }, { status: 404 });
           }
 
+          console.log("Order data for manual sync:", JSON.stringify(order, null, 2));
+
           // Check if this order has a selling plan (subscription)
           const hasSellingPlan = order.lineItems?.nodes?.some((item: { sellingPlan: { sellingPlanId: string } | null }) => item.sellingPlan?.sellingPlanId);
 
           if (!hasSellingPlan) {
-            return json({ error: `Order "${orderInput}" is not a subscription order` }, { status: 400 });
+            // Provide more debug info
+            const lineItems = order.lineItems?.nodes || [];
+            const customAttrs = order.customAttributes || [];
+            return json({
+              error: `Order "${orderInput}" is not a subscription order. Line items: ${lineItems.length}, Custom attributes: ${customAttrs.map((a: {key: string}) => a.key).join(", ") || "none"}`
+            }, { status: 400 });
           }
 
           // Now get the subscription contracts and find one associated with this customer/order
