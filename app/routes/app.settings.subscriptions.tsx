@@ -667,6 +667,28 @@ export default function SubscriptionsSettings() {
           </Card>
         </Layout.Section>
 
+        {/* Legacy Data Management */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">
+                  Legacy Data Management
+                </Text>
+                <Badge tone="info">Migration Tool</Badge>
+              </InlineStack>
+              <Text as="p" tone="subdued">
+                Import existing subscription contracts from Shopify into Susies Sourdough Manager.
+                Use this tool to migrate subscriptions created before this app was deployed, or to
+                recover subscriptions that weren't captured by webhooks.
+              </Text>
+              <Button url="/app/settings/sync-subscriptions">
+                Open Legacy Subscription Import
+              </Button>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
         {/* Billing Schedule Explanation */}
         <Layout.Section>
           <Card>
