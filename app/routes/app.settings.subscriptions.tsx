@@ -244,41 +244,135 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       case "manual_sync_contract": {
-        const contractId = formData.get("contractId") as string;
+        const orderInput = formData.get("contractId") as string;
 
-        if (!contractId) {
-          return json({ error: "No contract ID provided" }, { status: 400 });
+        if (!orderInput) {
+          return json({ error: "No order number or contract ID provided" }, { status: 400 });
         }
 
-        // Fetch the subscription contract from Shopify
-        const response = await admin.graphql(`
-          query getSubscriptionContract($id: ID!) {
-            subscriptionContract(id: $id) {
-              id
-              status
-              customer {
+        let contract: {
+          id: string;
+          status: string;
+          customer: { id: string; email: string; firstName: string; lastName: string; phone: string | null } | null;
+          billingPolicy: { interval: string; intervalCount: number };
+          deliveryPolicy: { interval: string; intervalCount: number };
+        } | null = null;
+
+        // Check if it's a contract GID or an order number/name
+        if (orderInput.startsWith("gid://shopify/SubscriptionContract/")) {
+          // Direct contract ID lookup
+          const response = await admin.graphql(`
+            query getSubscriptionContract($id: ID!) {
+              subscriptionContract(id: $id) {
                 id
-                email
-                firstName
-                lastName
-                phone
-              }
-              billingPolicy {
-                interval
-                intervalCount
-              }
-              deliveryPolicy {
-                interval
-                intervalCount
+                status
+                customer {
+                  id
+                  email
+                  firstName
+                  lastName
+                  phone
+                }
+                billingPolicy {
+                  interval
+                  intervalCount
+                }
+                deliveryPolicy {
+                  interval
+                  intervalCount
+                }
               }
             }
-          }
-        `, {
-          variables: { id: contractId },
-        });
+          `, {
+            variables: { id: orderInput },
+          });
 
-        const data = await response.json();
-        const contract = data.data?.subscriptionContract;
+          const data = await response.json();
+          contract = data.data?.subscriptionContract;
+        } else {
+          // Assume it's an order number - look up the order first
+          // Clean up the input - remove # if present
+          const orderName = orderInput.replace(/^#/, "");
+
+          // Find the order by name
+          const orderResponse = await admin.graphql(`
+            query getOrderByName($query: String!) {
+              orders(first: 1, query: $query) {
+                nodes {
+                  id
+                  name
+                  lineItems(first: 10) {
+                    nodes {
+                      sellingPlan {
+                        sellingPlanId
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          `, {
+            variables: { query: `name:${orderName}` },
+          });
+
+          const orderData = await orderResponse.json();
+          const order = orderData.data?.orders?.nodes?.[0];
+
+          if (!order) {
+            return json({ error: `Order "${orderInput}" not found` }, { status: 404 });
+          }
+
+          // Check if this order has a selling plan (subscription)
+          const hasSellingPlan = order.lineItems?.nodes?.some((item: { sellingPlan: { sellingPlanId: string } | null }) => item.sellingPlan?.sellingPlanId);
+
+          if (!hasSellingPlan) {
+            return json({ error: `Order "${orderInput}" is not a subscription order` }, { status: 400 });
+          }
+
+          // Now get the subscription contracts and find one associated with this customer/order
+          // We'll search for recent contracts created around the same time
+          const contractsResponse = await admin.graphql(`
+            query getRecentContracts {
+              subscriptionContracts(first: 50, reverse: true) {
+                nodes {
+                  id
+                  status
+                  createdAt
+                  customer {
+                    id
+                    email
+                    firstName
+                    lastName
+                    phone
+                  }
+                  billingPolicy {
+                    interval
+                    intervalCount
+                  }
+                  deliveryPolicy {
+                    interval
+                    intervalCount
+                  }
+                  originOrder {
+                    id
+                  }
+                }
+              }
+            }
+          `);
+
+          const contractsData = await contractsResponse.json();
+          const contracts = contractsData.data?.subscriptionContracts?.nodes || [];
+
+          // Find contract matching the order
+          contract = contracts.find((c: { originOrder?: { id: string } }) => c.originOrder?.id === order.id);
+
+          if (!contract) {
+            return json({
+              error: `Could not find subscription contract for order "${orderInput}". The contract may have been created by a different app.`,
+            }, { status: 404 });
+          }
+        }
 
         if (!contract) {
           return json({ error: "Subscription contract not found. Make sure the ID is correct and the contract was created by this app." }, { status: 404 });
@@ -694,17 +788,16 @@ export default function SubscriptionsSettings() {
               </Text>
               <Text as="p" tone="subdued">
                 If a subscription wasn't captured automatically, you can manually sync it by entering
-                the Shopify Subscription Contract ID. Find this in your Shopify admin under
-                Orders → Subscriptions.
+                the order confirmation number (e.g., #GGNVHWWKP) from the subscription order.
               </Text>
               <FormLayout>
                 <TextField
-                  label="Subscription Contract ID"
+                  label="Order Number"
                   value={contractId}
                   onChange={setContractId}
-                  placeholder="gid://shopify/SubscriptionContract/123456789"
+                  placeholder="#GGNVHWWKP or GGNVHWWKP"
                   autoComplete="off"
-                  helpText="The full GID of the subscription contract from Shopify"
+                  helpText="The order confirmation number from the subscription order"
                 />
                 <Button
                   onClick={handleManualSync}
