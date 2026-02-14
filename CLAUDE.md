@@ -157,6 +157,39 @@ npx prisma migrate deploy                      # Production (Railway runs this)
 
 > **Instructions**: Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-14 - Duplicate Widget Root Cause Identified
+
+**Context:**
+Continued investigation of duplicate subscription widgets on product pages.
+
+**Root Cause Discovered:**
+Shopify has TWO separate systems rendering subscription options:
+1. **Native Selling Plan UI** - Automatically injected by Shopify for products in Selling Plan Groups (no theme code required)
+2. **Custom Subscribe & Save Widget** - Our app embed that injects via JavaScript
+
+Both were active simultaneously, causing duplicates.
+
+**Investigation Steps Completed:**
+- Pulled and analyzed TEST theme code - confirmed NO `selling_plan` Liquid code exists
+- Cleaned settings_data.json by removing Shopify Subscriptions and Bird Pickup Delivery entries
+- Verified product.json template has no subscription blocks
+- Researched Shopify documentation and community forums
+- Confirmed Shopify's automatic selling plan UI behavior
+
+**Solution:**
+- **Option A (Recommended)**: Disable our custom "Subscribe & Save" widget in Theme Editor → App embeds, use Shopify's native UI
+- **Option B**: Remove product from Selling Plan Groups, use only our custom widget
+- **Option C**: Modify custom widget JS to detect and defer to native UI when present
+
+**Files Modified:**
+- `CLAUDE.md` - Updated Known Issues section with root cause and solutions
+
+**References:**
+- https://shopify.dev/docs/storefronts/themes/pricing-payments/subscriptions/add-subscriptions-to-your-theme
+- https://community.shopify.com/c/shopify-discussions/subscription-options-appearing-twice-on-product-page/td-p/1294566
+
+---
+
 ### 2026-02-13 - Subscription Integration Fixes & Duplicate Widget Investigation
 
 **Context:**
@@ -217,54 +250,178 @@ See "Known Issues" section below for detailed investigation plan.
 
 ### Duplicate Subscription Widgets on Product Pages
 
-**Status:** Under Investigation
+**Status:** ✅ ROOT CAUSE FOUND & FIXED (2026-02-14)
 
-**Symptom:** Two subscription/selling plan picker widgets appear on product pages in the TEST theme.
+**Root Cause:**
+Products were associated with **MULTIPLE Selling Plan Groups** instead of ONE group containing multiple frequencies. Each Selling Plan Group renders its own widget, causing duplicates.
 
-**Investigation Plan:**
+**Original Problem:**
+- 3 separate Selling Plan Groups existed: "Weekly Subscription", "Pick up Every other week", "Pick up Every 3 Weeks"
+- Products were added to multiple groups (e.g., a product in both Weekly AND Bi-weekly groups)
+- Each group rendered its own subscription picker widget
 
-1. **Check Shopify Admin - Selling Plan Groups**
-   - Go to Apps → Susies Sourdough Manager → Subscription Settings
-   - Check if multiple selling plan groups exist
-   - Check which products are associated with each group
-   - Look for duplicate associations
+**Solution Applied:**
+Consolidate into **3 properly-configured Selling Plan Groups** where each product is in ONLY ONE group:
 
-2. **Check Product Configuration**
-   - Go to Products → [Product] → scroll to "Purchase options"
-   - See if product is in multiple selling plan groups
-   - Try removing product from ALL selling plan groups, save, then re-add to ONE group
+| Plan Group Name | Frequencies Included | Products |
+|-----------------|---------------------|----------|
+| Weekly Only | 1 week (10% off) | 1 product |
+| Weekly + Bi-Weekly | 1 week (10% off), 2 weeks (5% off) | 11 products |
+| Weekly + Bi-Weekly + Tri-Weekly | 1 week (10% off), 2 weeks (5% off), 3 weeks (2.5% off) | 3 products |
 
-3. **Check Theme Configuration**
-   - In Theme Editor → Default product template
-   - Look for duplicate "Variant picker" or subscription-related blocks
-   - Check if there's a selling plan block AND our custom Subscribe & Save embed both active
+**Key Learning:**
+- A Selling Plan Group can contain MULTIPLE delivery frequencies
+- Each product should be in exactly ONE Selling Plan Group
+- Shopify's native UI automatically renders all frequencies within a single group as one widget
 
-4. **Check Theme Code Directly**
-   - Look at theme's `main-product.liquid` or similar for duplicate selling plan renders
-   - Search for `selling_plan_groups` in theme code
-   - Check `settings_data.json` for duplicate embed entries
+---
 
-5. **Check for Residual App Code**
-   - Sami B2B Lock was showing in console - check for leftover embeds
-   - Bird Pickup Delivery DateTime Picker - ensure it's disabled
-   - Look for any third-party subscription apps still active
+## Susies Sourdough Manager - Custom Subscription Widget Implementation Plan
 
-6. **Research Shopify Forums**
-   - Search: "duplicate selling plan picker Shopify"
-   - Search: "subscription widget showing twice"
-   - Search: "selling plan UI duplicate theme"
-   - Check Shopify Community forums and GitHub issues
+**Status:** PLANNING - Do not implement until live store Shopify Subscriptions are fixed
 
-7. **Test with Fresh Theme**
-   - Duplicate the Dawn theme (fresh copy)
-   - Enable ONLY our app embeds
-   - Test if duplicate still appears
-   - This isolates whether it's theme-specific or product-specific
+### Background & Context
 
-**Workaround (if needed):**
-- Disable our custom Subscribe & Save widget in App embeds
-- Use only Shopify's native selling plan UI
-- This loses the "Porch Pick-up Only" custom messaging but prevents duplicates
+The Susies Sourdough Manager app has a custom "Subscribe & Save" widget that was designed to:
+1. Show subscription options with custom "Porch Pick-up Only" messaging
+2. Integrate with the app's pickup scheduling system
+3. Provide a consistent branded experience
+
+**Current Problem:**
+The custom widget adds `properties` (like `Subscription=Yes`) to cart items, but these are just metadata - they do NOT create Shopify subscription contracts. Only the `selling_plan` parameter triggers actual subscriptions.
+
+**Critical Insight:**
+Shopify's native Subscriptions app + Selling Plan Groups already provide:
+- Automatic subscription contract creation
+- Customer portal for managing subscriptions
+- Webhook notifications for subscription events
+- Native selling plan UI on product pages
+
+### Decision: Use Shopify Native vs Custom Widget
+
+**Option A: Use Shopify's Native Subscriptions (Recommended for Now)**
+- Pros: Works out of the box, proper subscription contracts, less maintenance
+- Cons: No custom "Porch Pick-up Only" messaging
+- Implementation: Just configure Selling Plan Groups properly (already done)
+
+**Option B: Custom Widget with Selling Plan Integration**
+- Pros: Custom messaging, branded experience, integration with pickup scheduler
+- Cons: More complex, must pass `selling_plan` ID correctly, potential for duplicates
+- Implementation: See detailed plan below
+
+### Implementation Plan for Option B (Custom Widget)
+
+**Prerequisites:**
+1. ✅ Live store Shopify Subscriptions fixed (single Selling Plan Group per product)
+2. ⬜ Create a TEST product not associated with any live selling plans
+3. ⬜ Create a TEST Selling Plan Group for testing only
+
+**Phase 1: Test Environment Setup**
+
+1. **Create Test Selling Plan Group** (in Shopify Admin → Apps → Subscriptions → Plans)
+   - Name: "TEST - Subscribe & Save"
+   - Add frequencies: Weekly (10%), Bi-weekly (5%), Tri-weekly (2.5%)
+   - Do NOT add any live products
+
+2. **Create Test Product**
+   - Name: "TEST Subscription Product - DO NOT PURCHASE"
+   - Price: $0.01
+   - Associate ONLY with "TEST - Subscribe & Save" plan group
+   - Hide from collections/search
+
+3. **Create or use TEST Theme**
+   - Duplicate Dawn theme for testing
+   - Enable our "Subscribe & Save" app embed ONLY on test theme
+
+**Phase 2: Update Custom Widget to Use Selling Plan IDs**
+
+Files to modify:
+- `extensions/pickup-scheduler-cart/assets/subscribe-save.js`
+- `extensions/pickup-scheduler-cart/blocks/subscribe-save.liquid`
+- `app/routes/api.selling-plans.tsx`
+
+**Step 2.1: API Endpoint Enhancement**
+The `api.selling-plans.tsx` endpoint needs to return selling plan IDs mapped to frequencies:
+
+```typescript
+// Expected response format:
+{
+  "enabled": true,
+  "groupId": "gid://shopify/SellingPlanGroup/123456",
+  "plans": [
+    { "id": "gid://shopify/SellingPlan/111", "frequency": "WEEKLY", "discount": 10 },
+    { "id": "gid://shopify/SellingPlan/222", "frequency": "BIWEEKLY", "discount": 5 },
+    { "id": "gid://shopify/SellingPlan/333", "frequency": "TRIWEEKLY", "discount": 2.5 }
+  ]
+}
+```
+
+**Step 2.2: Widget JavaScript Updates**
+Modify `subscribe-save.js` to:
+1. Fetch selling plan IDs from API on page load
+2. Store selling plan ID in data attributes on radio buttons
+3. On form submit, add hidden `selling_plan` input with the numeric ID
+4. Remove or keep properties as supplementary metadata
+
+**Key code change:**
+```javascript
+// In addSubscriptionData() function:
+if (selection.sellingPlanId) {
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'selling_plan';  // THIS IS THE KEY FIELD
+  input.value = extractNumericId(selection.sellingPlanId);
+  form.appendChild(input);
+}
+```
+
+**Step 2.3: Prevent Duplicate Widgets**
+Add detection for Shopify's native selling plan UI:
+```javascript
+function init() {
+  // Don't inject if Shopify's native UI is present
+  if (document.querySelector('[data-shopify-selling-plan-selector]')) {
+    console.log('Subscribe & Save: Native Shopify UI detected, skipping custom widget');
+    return;
+  }
+  // ... rest of init
+}
+```
+
+**Phase 3: Testing Checklist**
+
+1. ⬜ Test product page shows ONLY our custom widget (no duplicates)
+2. ⬜ Selecting "Weekly" subscription adds correct `selling_plan` ID to form
+3. ⬜ Adding to cart includes `selling_plan` parameter in request
+4. ⬜ Checkout shows subscription details correctly
+5. ⬜ After purchase, subscription contract is created in Shopify Admin
+6. ⬜ Subscription appears in Apps → Subscriptions → Contracts
+7. ⬜ Customer can manage subscription via Shopify's customer portal
+
+**Phase 4: Production Rollout**
+
+Only after all tests pass:
+1. Deploy updated extension code
+2. Enable app embed on live Dawn theme
+3. Disable Shopify Subscriptions widget (if using custom widget exclusively)
+4. Monitor for duplicate widgets or subscription issues
+
+### Files Reference
+
+| File | Purpose |
+|------|---------|
+| `extensions/pickup-scheduler-cart/blocks/subscribe-save.liquid` | App embed that injects the widget container |
+| `extensions/pickup-scheduler-cart/assets/subscribe-save.js` | Widget logic, form interception, selling plan handling |
+| `extensions/pickup-scheduler-cart/assets/subscribe-save.css` | Widget styling |
+| `app/routes/api.selling-plans.tsx` | API endpoint returning selling plan IDs |
+| `app/services/selling-plans.server.ts` | Server-side selling plan management |
+
+### Important Notes
+
+1. **Never have both active:** Either use Shopify's native UI OR our custom widget, not both
+2. **Selling Plan ID format:** Shopify uses GIDs like `gid://shopify/SellingPlan/123456` but the form needs just the numeric ID `123456`
+3. **Product association:** Products must be in a Selling Plan Group for `selling_plan` parameter to work
+4. **Webhook handling:** Subscription webhooks are configured in `shopify.app.susies-sourdough-manager.toml`
 
 ---
 
