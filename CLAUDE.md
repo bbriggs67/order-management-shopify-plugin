@@ -157,6 +157,117 @@ npx prisma migrate deploy                      # Production (Railway runs this)
 
 > **Instructions**: Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-13 - Subscription Integration Fixes & Duplicate Widget Investigation
+
+**Context:**
+User reported that subscription purchases weren't showing up in the Susies Sourdough Manager app (neither admin side nor customer portal). Investigation revealed multiple issues.
+
+**Issues Identified & Fixed:**
+
+1. **Webhook URIs Incorrect**
+   - Webhook URIs in TOML were pointing to `/webhooks` but Remix routes expect specific paths
+   - Fixed: Updated to `/webhooks/subscription_contracts/create`, `/webhooks/orders/create`, etc.
+
+2. **Manual Sync Feature Added**
+   - Added ability to manually sync subscriptions by order number (e.g., `#1829`)
+   - Useful for recovering orders that weren't captured by webhooks
+   - Added debug output showing line items, selling plans, custom attributes, tags
+
+3. **Root Cause Discovery: Selling Plan IDs**
+   - Discovered that the subscribe-save widget was adding `properties` (like `Subscription=Yes`) instead of actual `selling_plan` IDs
+   - Properties are metadata only - they do NOT create Shopify subscription contracts
+   - The `selling_plan` parameter is the KEY field that triggers Shopify to create a subscription contract
+
+4. **API Endpoint for Selling Plans**
+   - Created `app/routes/api.selling-plans.tsx` to expose selling plan IDs to the frontend
+   - Returns plan IDs, frequencies, and discounts from the database
+
+**Unresolved Issue: Duplicate Subscription Widgets**
+
+After making changes to fix subscription integration, duplicate subscription widgets started appearing on product pages. Investigation revealed:
+
+- Both widgets appear to be Shopify's native selling plan UI (not our custom widget)
+- The duplicate persists even after reverting ALL code changes to pre-today state
+- This confirms the duplicate is NOT caused by code changes
+
+**Possible Causes to Investigate:**
+1. Product associated with multiple Selling Plan Groups
+2. Theme has duplicate selling plan picker blocks
+3. Shopify Admin configuration changed (selling plans attached to products)
+4. Theme settings_data.json has duplicate app embed entries
+5. Another app (Bird Pickup Delivery, Sami B2B Lock remnants) injecting widgets
+
+**Files Modified:**
+- `shopify.app.susies-sourdough-manager.toml` - Fixed webhook URIs
+- `app/routes/app.settings.subscriptions.tsx` - Added manual sync feature with debug output
+- `app/routes/api.selling-plans.tsx` - NEW: API endpoint for selling plan IDs
+
+**Files Temporarily Modified Then Reverted:**
+- `extensions/pickup-scheduler-cart/assets/subscribe-save.js` - Attempted selling plan ID integration (reverted)
+- `extensions/pickup-scheduler-cart/blocks/subscribe-save.liquid` - Attempted modifications (reverted)
+
+**App Versions Released:** susies-sourdough-manager-37 through susies-sourdough-manager-42
+
+**Next Steps - Duplicate Widget Investigation Plan:**
+See "Known Issues" section below for detailed investigation plan.
+
+---
+
+## Known Issues
+
+### Duplicate Subscription Widgets on Product Pages
+
+**Status:** Under Investigation
+
+**Symptom:** Two subscription/selling plan picker widgets appear on product pages in the TEST theme.
+
+**Investigation Plan:**
+
+1. **Check Shopify Admin - Selling Plan Groups**
+   - Go to Apps → Susies Sourdough Manager → Subscription Settings
+   - Check if multiple selling plan groups exist
+   - Check which products are associated with each group
+   - Look for duplicate associations
+
+2. **Check Product Configuration**
+   - Go to Products → [Product] → scroll to "Purchase options"
+   - See if product is in multiple selling plan groups
+   - Try removing product from ALL selling plan groups, save, then re-add to ONE group
+
+3. **Check Theme Configuration**
+   - In Theme Editor → Default product template
+   - Look for duplicate "Variant picker" or subscription-related blocks
+   - Check if there's a selling plan block AND our custom Subscribe & Save embed both active
+
+4. **Check Theme Code Directly**
+   - Look at theme's `main-product.liquid` or similar for duplicate selling plan renders
+   - Search for `selling_plan_groups` in theme code
+   - Check `settings_data.json` for duplicate embed entries
+
+5. **Check for Residual App Code**
+   - Sami B2B Lock was showing in console - check for leftover embeds
+   - Bird Pickup Delivery DateTime Picker - ensure it's disabled
+   - Look for any third-party subscription apps still active
+
+6. **Research Shopify Forums**
+   - Search: "duplicate selling plan picker Shopify"
+   - Search: "subscription widget showing twice"
+   - Search: "selling plan UI duplicate theme"
+   - Check Shopify Community forums and GitHub issues
+
+7. **Test with Fresh Theme**
+   - Duplicate the Dawn theme (fresh copy)
+   - Enable ONLY our app embeds
+   - Test if duplicate still appears
+   - This isolates whether it's theme-specific or product-specific
+
+**Workaround (if needed):**
+- Disable our custom Subscribe & Save widget in App embeds
+- Use only Shopify's native selling plan UI
+- This loses the "Porch Pick-up Only" custom messaging but prevents duplicates
+
+---
+
 ### 2026-02-08 - Code Audit & Security Improvements
 **Context:**
 Comprehensive code audit identified multiple areas for improvement including input validation, error handling, pagination, and environment configuration.
