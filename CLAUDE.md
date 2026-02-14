@@ -276,152 +276,275 @@ Consolidate into **3 properly-configured Selling Plan Groups** where each produc
 
 ---
 
-## Susies Sourdough Manager - Custom Subscription Widget Implementation Plan
+## Susies Sourdough Manager App - Complete Test Plan
 
-**Status:** PLANNING - Do not implement until live store Shopify Subscriptions are fixed
+**Status:** READY FOR TESTING (2026-02-14)
 
-### Background & Context
+> ⚠️ **CRITICAL: DO NOT MODIFY THE LIVE STORE**
+> All testing must be done on a TEST theme and with TEST products only.
+> The live Dawn theme and live products must remain untouched until full testing is complete.
 
-The Susies Sourdough Manager app has a custom "Subscribe & Save" widget that was designed to:
-1. Show subscription options with custom "Porch Pick-up Only" messaging
-2. Integrate with the app's pickup scheduling system
-3. Provide a consistent branded experience
+### Current State
 
-**Current Problem:**
-The custom widget adds `properties` (like `Subscription=Yes`) to cart items, but these are just metadata - they do NOT create Shopify subscription contracts. Only the `selling_plan` parameter triggers actual subscriptions.
+**Live Store (DO NOT TOUCH):**
+- Using Shopify's native Subscriptions app
+- Selling Plan Groups properly configured (one group per product)
+- "Subscribe & Save (Porch Pick-Up Only)" title displays correctly
+- Existing customer subscriptions are managed by Shopify Subscriptions
 
-**Critical Insight:**
-Shopify's native Subscriptions app + Selling Plan Groups already provide:
-- Automatic subscription contract creation
-- Customer portal for managing subscriptions
-- Webhook notifications for subscription events
-- Native selling plan UI on product pages
+**Susies Sourdough Manager App Features (Not Yet Enabled on Live):**
+- Pickup date/time scheduling (cart page widget)
+- Flexible billing lead time (default 84 hours before pickup)
+- Customer subscription portal (`/apps/my-subscription`)
+- Pause/Resume/Cancel subscriptions
+- One-time and permanent rescheduling
+- Admin subscription dashboard
+- Failed billing monitoring and retry
+- Google Calendar integration
 
-### Decision: Use Shopify Native vs Custom Widget
+---
 
-**Option A: Use Shopify's Native Subscriptions (Recommended for Now)**
-- Pros: Works out of the box, proper subscription contracts, less maintenance
-- Cons: No custom "Porch Pick-up Only" messaging
-- Implementation: Just configure Selling Plan Groups properly (already done)
+### Phase 1: Test Environment Setup
 
-**Option B: Custom Widget with Selling Plan Integration**
-- Pros: Custom messaging, branded experience, integration with pickup scheduler
-- Cons: More complex, must pass `selling_plan` ID correctly, potential for duplicates
-- Implementation: See detailed plan below
+**DO THESE STEPS FIRST - All in Shopify Admin**
 
-### Implementation Plan for Option B (Custom Widget)
+#### Step 1.1: Create TEST Theme
+1. Go to **Online Store → Themes**
+2. Click **"..." on Dawn (live)** → **Duplicate**
+3. Rename to **"TEST - DO NOT PUBLISH"**
+4. **DO NOT** publish this theme
 
-**Prerequisites:**
-1. ✅ Live store Shopify Subscriptions fixed (single Selling Plan Group per product)
-2. ⬜ Create a TEST product not associated with any live selling plans
-3. ⬜ Create a TEST Selling Plan Group for testing only
+#### Step 1.2: Create TEST Product
+1. Go to **Products → Add product**
+2. Set:
+   - Title: `TEST Subscription Product - DO NOT PURCHASE`
+   - Price: `$0.01`
+   - Status: **Draft** (so customers can't find it)
+   - Uncheck all sales channels except Online Store
+3. Save the product
+4. Note the product URL for testing (you can access draft products via direct URL)
 
-**Phase 1: Test Environment Setup**
+#### Step 1.3: Create TEST Selling Plan Group
+1. Go to **Apps → Subscriptions → Plans**
+2. Click **Create plan**
+3. Set:
+   - Title: `TEST - Subscribe & Save (Porch Pick-Up Only)`
+   - Internal description: `FOR TESTING ONLY - DO NOT USE WITH LIVE PRODUCTS`
+4. Add frequencies:
+   - 1 Week, 10% off
+   - 2 Weeks, 5% off
+   - 3 Weeks, 2.5% off
+5. Add ONLY the TEST product to this plan
+6. Save
 
-1. **Create Test Selling Plan Group** (in Shopify Admin → Apps → Subscriptions → Plans)
-   - Name: "TEST - Subscribe & Save"
-   - Add frequencies: Weekly (10%), Bi-weekly (5%), Tri-weekly (2.5%)
-   - Do NOT add any live products
+#### Step 1.4: Configure TEST Theme App Embeds
+1. Go to **Online Store → Themes → TEST - DO NOT PUBLISH → Customize**
+2. Click **App embeds** (puzzle piece icon in left sidebar)
+3. Find **Susies Sourdough Manager** embeds:
+   - **Pickup Scheduler** - Toggle ON
+   - **Subscribe & Save** - Toggle OFF (we're using Shopify's native UI for now)
+4. Click **Save**
 
-2. **Create Test Product**
-   - Name: "TEST Subscription Product - DO NOT PURCHASE"
-   - Price: $0.01
-   - Associate ONLY with "TEST - Subscribe & Save" plan group
-   - Hide from collections/search
+---
 
-3. **Create or use TEST Theme**
-   - Duplicate Dawn theme for testing
-   - Enable our "Subscribe & Save" app embed ONLY on test theme
+### Phase 2: Test Pickup Scheduler (Cart Page)
 
-**Phase 2: Update Custom Widget to Use Selling Plan IDs**
+**Purpose:** Verify the pickup date/time selection works on the cart page.
 
-Files to modify:
-- `extensions/pickup-scheduler-cart/assets/subscribe-save.js`
-- `extensions/pickup-scheduler-cart/blocks/subscribe-save.liquid`
-- `app/routes/api.selling-plans.tsx`
+#### Test 2.1: Basic Pickup Selection
+1. Open TEST theme preview (click "Preview" on TEST theme)
+2. Navigate to the TEST product (use direct URL)
+3. Select a subscription option and click "Add to cart"
+4. Go to cart page
+5. **Expected:** Pickup scheduler widget should appear
+6. **Verify:**
+   - [ ] Available pickup days show correctly
+   - [ ] Time slots display for selected day
+   - [ ] Blackout dates are blocked
+   - [ ] Selection persists on page refresh
 
-**Step 2.1: API Endpoint Enhancement**
-The `api.selling-plans.tsx` endpoint needs to return selling plan IDs mapped to frequencies:
+#### Test 2.2: Pickup Validation
+1. Try to proceed to checkout WITHOUT selecting pickup date/time
+2. **Expected:** Error message preventing checkout
+3. Select a valid pickup date and time
+4. Proceed to checkout
+5. **Expected:** Checkout should proceed normally
 
-```typescript
-// Expected response format:
-{
-  "enabled": true,
-  "groupId": "gid://shopify/SellingPlanGroup/123456",
-  "plans": [
-    { "id": "gid://shopify/SellingPlan/111", "frequency": "WEEKLY", "discount": 10 },
-    { "id": "gid://shopify/SellingPlan/222", "frequency": "BIWEEKLY", "discount": 5 },
-    { "id": "gid://shopify/SellingPlan/333", "frequency": "TRIWEEKLY", "discount": 2.5 }
-  ]
-}
-```
+#### Test 2.3: Pickup Data in Order
+1. Complete a test checkout (use Shopify's test payment gateway)
+2. Check the order in Shopify Admin → Orders
+3. **Expected:** Order notes/attributes should include:
+   - Pickup date
+   - Pickup time slot
+   - Any other pickup metadata
 
-**Step 2.2: Widget JavaScript Updates**
-Modify `subscribe-save.js` to:
-1. Fetch selling plan IDs from API on page load
-2. Store selling plan ID in data attributes on radio buttons
-3. On form submit, add hidden `selling_plan` input with the numeric ID
-4. Remove or keep properties as supplementary metadata
+---
 
-**Key code change:**
-```javascript
-// In addSubscriptionData() function:
-if (selection.sellingPlanId) {
-  const input = document.createElement('input');
-  input.type = 'hidden';
-  input.name = 'selling_plan';  // THIS IS THE KEY FIELD
-  input.value = extractNumericId(selection.sellingPlanId);
-  form.appendChild(input);
-}
-```
+### Phase 3: Test Subscription Webhook Integration
 
-**Step 2.3: Prevent Duplicate Widgets**
-Add detection for Shopify's native selling plan UI:
-```javascript
-function init() {
-  // Don't inject if Shopify's native UI is present
-  if (document.querySelector('[data-shopify-selling-plan-selector]')) {
-    console.log('Subscribe & Save: Native Shopify UI detected, skipping custom widget');
-    return;
-  }
-  // ... rest of init
-}
-```
+**Purpose:** Verify the app receives and processes subscription contracts from Shopify.
 
-**Phase 3: Testing Checklist**
+#### Test 3.1: Subscription Creation Webhook
+1. Complete a subscription purchase on TEST theme with TEST product
+2. Check **Shopify Admin → Apps → Subscriptions → Contracts**
+3. **Expected:** New subscription contract appears
+4. Check **Susies Sourdough Manager App → Subscriptions**
+5. **Expected:** Subscription should appear in app (via webhook)
 
-1. ⬜ Test product page shows ONLY our custom widget (no duplicates)
-2. ⬜ Selecting "Weekly" subscription adds correct `selling_plan` ID to form
-3. ⬜ Adding to cart includes `selling_plan` parameter in request
-4. ⬜ Checkout shows subscription details correctly
-5. ⬜ After purchase, subscription contract is created in Shopify Admin
-6. ⬜ Subscription appears in Apps → Subscriptions → Contracts
-7. ⬜ Customer can manage subscription via Shopify's customer portal
+#### Test 3.2: Check Webhook Logs
+1. Check Railway logs for the app
+2. Search for `subscription_contracts/create` webhook
+3. **Expected:** Webhook received and processed successfully
+4. **Verify database:** Subscription record created in `SubscriptionPickup` table
 
-**Phase 4: Production Rollout**
+#### Test 3.3: Manual Sync (Fallback)
+If webhook didn't work:
+1. Go to **Susies Sourdough Manager → Settings → Subscriptions**
+2. Use **Manual Sync** feature with the contract ID or order number
+3. **Expected:** Subscription syncs to the app
 
-Only after all tests pass:
-1. Deploy updated extension code
-2. Enable app embed on live Dawn theme
-3. Disable Shopify Subscriptions widget (if using custom widget exclusively)
-4. Monitor for duplicate widgets or subscription issues
+---
+
+### Phase 4: Test Customer Portal
+
+**Purpose:** Verify customers can manage their subscriptions.
+
+#### Test 4.1: Access Customer Portal
+1. Log in as the test customer (or use customer impersonation)
+2. Navigate to: `https://susiessourdough.com/apps/my-subscription`
+3. **Expected:** Customer portal loads showing subscription(s)
+
+#### Test 4.2: Pause Subscription
+1. Click "Pause" on a subscription
+2. Select a resume date (or indefinite)
+3. Confirm
+4. **Expected:**
+   - Subscription status changes to PAUSED
+   - Pause reflected in Shopify Admin
+   - Pause reflected in app admin
+
+#### Test 4.3: Resume Subscription
+1. Click "Resume" on a paused subscription
+2. **Expected:** Status changes back to ACTIVE
+
+#### Test 4.4: One-Time Reschedule
+1. Click "Reschedule Next Pickup"
+2. Select a different date/time
+3. **Expected:** Next pickup rescheduled, future pickups unchanged
+
+#### Test 4.5: Permanent Schedule Change
+1. Click "Change Pickup Schedule"
+2. Select new preferred day and time slot
+3. **Expected:** All future pickups use new schedule
+
+#### Test 4.6: Cancel Subscription
+1. Click "Cancel Subscription"
+2. Optionally provide reason
+3. Confirm
+4. **Expected:**
+   - Subscription cancelled
+   - Reflected in Shopify Admin
+   - No future billings scheduled
+
+---
+
+### Phase 5: Test Admin Features
+
+**Purpose:** Verify admin can manage subscriptions from the app.
+
+#### Test 5.1: Subscription List
+1. Go to **Susies Sourdough Manager → Subscriptions**
+2. **Verify:**
+   - [ ] List shows all subscriptions
+   - [ ] Status filter works (Active/Paused/Cancelled)
+   - [ ] Search works
+   - [ ] CSV export works
+
+#### Test 5.2: Subscription Detail
+1. Click on a subscription
+2. **Verify:**
+   - [ ] Customer info displays correctly
+   - [ ] Product/variant info correct
+   - [ ] Pricing and discounts correct
+   - [ ] Payment method info shows
+   - [ ] Next billing/pickup dates correct
+
+#### Test 5.3: Admin Actions
+1. Test Pause/Resume from admin
+2. Test Reschedule from admin
+3. Test billing retry (if applicable)
+4. **Expected:** All actions work and sync with Shopify
+
+---
+
+### Phase 6: Test Billing System
+
+**Purpose:** Verify the billing lead time and billing attempts work.
+
+#### Test 6.1: Billing Date Calculation
+1. Check a subscription's next pickup date
+2. Verify billing date is correctly calculated (default: 84 hours before)
+3. **Formula:** `billing_date = pickup_date - billing_lead_hours`
+
+#### Test 6.2: Billing Lead Time Configuration
+1. Go to subscription settings in app
+2. Modify billing lead hours (1-168 hours)
+3. **Expected:** Future billing dates recalculated
+
+---
+
+### Phase 7: Production Rollout Plan
+
+**DO NOT EXECUTE UNTIL ALL TESTS PASS**
+
+#### Step 7.1: Migrate Existing Subscriptions
+1. Export existing subscriptions from Shopify Subscriptions
+2. Use Manual Sync to import each contract into Susies Sourdough Manager
+3. Verify all subscriptions appear in app with correct data
+
+#### Step 7.2: Enable App on Live Theme
+1. Go to **Dawn (live) → Customize → App embeds**
+2. Enable **Pickup Scheduler**
+3. Keep **Subscribe & Save** OFF (use Shopify native UI)
+4. Save
+
+#### Step 7.3: Monitor
+1. Watch for errors in Railway logs
+2. Monitor webhook deliveries in Shopify Admin
+3. Test a real subscription purchase
+4. Verify customer portal works
+
+---
+
+### Troubleshooting
+
+**Webhook not received:**
+- Check Shopify Admin → Settings → Notifications → Webhooks
+- Verify webhook URLs are correct in `shopify.app.susies-sourdough-manager.toml`
+- Check Railway logs for errors
+
+**Pickup scheduler not showing:**
+- Verify app embed is enabled in theme
+- Check browser console for JavaScript errors
+- Verify the app proxy is configured correctly
+
+**Customer portal not loading:**
+- Check app proxy configuration in TOML
+- Verify customer is logged in
+- Check for CORS or authentication errors
+
+---
 
 ### Files Reference
 
-| File | Purpose |
-|------|---------|
-| `extensions/pickup-scheduler-cart/blocks/subscribe-save.liquid` | App embed that injects the widget container |
-| `extensions/pickup-scheduler-cart/assets/subscribe-save.js` | Widget logic, form interception, selling plan handling |
-| `extensions/pickup-scheduler-cart/assets/subscribe-save.css` | Widget styling |
-| `app/routes/api.selling-plans.tsx` | API endpoint returning selling plan IDs |
-| `app/services/selling-plans.server.ts` | Server-side selling plan management |
-
-### Important Notes
-
-1. **Never have both active:** Either use Shopify's native UI OR our custom widget, not both
-2. **Selling Plan ID format:** Shopify uses GIDs like `gid://shopify/SellingPlan/123456` but the form needs just the numeric ID `123456`
-3. **Product association:** Products must be in a Selling Plan Group for `selling_plan` parameter to work
-4. **Webhook handling:** Subscription webhooks are configured in `shopify.app.susies-sourdough-manager.toml`
+| Component | Files |
+|-----------|-------|
+| Pickup Scheduler (Cart) | `extensions/pickup-scheduler-cart/assets/pickup-scheduler.js`, `blocks/pickup-scheduler.liquid` |
+| Subscribe & Save Widget | `extensions/pickup-scheduler-cart/assets/subscribe-save.js`, `blocks/subscribe-save.liquid` |
+| Customer Portal | `app/routes/apps.my-subscription.tsx` |
+| Subscription Webhooks | `app/routes/webhooks.subscription_contracts.*.tsx` |
+| Admin Dashboard | `app/routes/app.subscriptions.*.tsx` |
+| Billing Service | `app/services/subscription-billing.server.ts` |
 
 ---
 
