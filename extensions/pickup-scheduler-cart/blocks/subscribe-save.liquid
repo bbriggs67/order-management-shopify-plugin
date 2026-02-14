@@ -1,20 +1,12 @@
 {% comment %}
-  Subscribe and Save App Embed (Custom Widget)
-
-  NOTE: This custom widget is DISABLED by default because Shopify's native
-  selling plan UI is now working properly. Only enable this if you need
-  a custom subscription selector that differs from Shopify's native UI.
-
-  The native Shopify UI automatically appears when products are associated
-  with a Selling Plan Group.
+  Subscribe and Save App Embed
+  Auto-injects subscription options on product pages
 {% endcomment %}
 
 {% if block.settings.enabled %}
   <div
     id="subscribe-save-embed"
     data-enabled="true"
-    data-app-url="https://order-management-shopify-plugin-production.up.railway.app"
-    data-shop-domain="{{ shop.permanent_domain }}"
     data-weekly-discount="{{ block.settings.weekly_discount }}"
     data-biweekly-discount="{{ block.settings.biweekly_discount }}"
     data-triweekly-discount="{{ block.settings.triweekly_discount }}"
@@ -24,7 +16,7 @@
 
 {% schema %}
 {
-  "name": "Subscribe & Save (Custom)",
+  "name": "Subscribe & Save",
   "target": "body",
   "javascript": "subscribe-save.js",
   "stylesheet": "subscribe-save.css",
@@ -32,9 +24,9 @@
     {
       "type": "checkbox",
       "id": "enabled",
-      "label": "Enable Custom Subscribe & Save Widget",
-      "default": false,
-      "info": "Only enable if you need a custom widget. Shopify's native selling plan UI works automatically when products are in a Selling Plan Group."
+      "label": "Enable Subscribe & Save",
+      "default": true,
+      "info": "Shows subscription options on product pages"
     },
     {
       "type": "range",
