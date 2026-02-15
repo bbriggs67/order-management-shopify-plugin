@@ -61,7 +61,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  const shop = session.shop;
 
   const formData = await request.formData();
   const intent = formData.get("intent");
@@ -72,6 +73,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       success: result.success,
       result,
     });
+  }
+
+  if (intent === "view_payload") {
+    const eventId = formData.get("eventId") as string;
+    const event = await prisma.webhookEvent.findFirst({
+      where: { id: eventId, shop },
+    });
+    if (event) {
+      return json({
+        viewPayload: true,
+        event: {
+          id: event.id,
+          topic: event.topic,
+          shopifyId: event.shopifyId,
+          processedAt: event.processedAt,
+          payload: event.payload,
+        },
+      });
+    }
   }
 
   return json({ error: "Unknown action" }, { status: 400 });
@@ -257,6 +277,25 @@ export default function WebhookDebug() {
           </Card>
         </Layout.Section>
 
+        {actionData && "viewPayload" in actionData && actionData.viewPayload && (
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">Webhook Payload Details</Text>
+                  <Badge>{actionData.event.topic}</Badge>
+                </InlineStack>
+                <Text as="p" tone="subdued">Shopify ID: {actionData.event.shopifyId}</Text>
+                <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+                  <pre style={{ whiteSpace: "pre-wrap", fontSize: "11px", maxHeight: "400px", overflow: "auto" }}>
+                    {JSON.stringify(actionData.event.payload, null, 2)}
+                  </pre>
+                </Box>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        )}
+
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
@@ -264,19 +303,38 @@ export default function WebhookDebug() {
                 Recent Webhook Events ({recentWebhookEvents.length})
               </Text>
               <Text as="p" tone="subdued">
-                Shows webhooks that were successfully processed and stored in the database.
+                Shows webhooks that were successfully processed and stored in the database. Click "View Payload" to see what data was received.
               </Text>
 
               {recentWebhookEvents.length > 0 ? (
-                <DataTable
-                  columnContentTypes={["text", "text", "text"]}
-                  headings={["Topic", "Shopify ID", "Processed At"]}
-                  rows={recentWebhookEvents.map((event: any) => [
-                    event.topic,
-                    event.shopifyId,
-                    new Date(event.processedAt).toLocaleString(),
-                  ])}
-                />
+                <BlockStack gap="200">
+                  {recentWebhookEvents.map((event: any) => (
+                    <Box key={event.id} padding="200" background="bg-surface-secondary" borderRadius="100">
+                      <InlineStack align="space-between" blockAlign="center">
+                        <BlockStack gap="100">
+                          <InlineStack gap="200">
+                            <Badge>{event.topic}</Badge>
+                            <Text as="span" variant="bodySm">ID: {event.shopifyId}</Text>
+                          </InlineStack>
+                          <Text as="p" tone="subdued" variant="bodySm">
+                            {new Date(event.processedAt).toLocaleString()}
+                          </Text>
+                        </BlockStack>
+                        <Button
+                          size="slim"
+                          onClick={() => {
+                            const formData = new FormData();
+                            formData.append("intent", "view_payload");
+                            formData.append("eventId", event.id);
+                            submit(formData, { method: "post" });
+                          }}
+                        >
+                          View Payload
+                        </Button>
+                      </InlineStack>
+                    </Box>
+                  ))}
+                </BlockStack>
               ) : (
                 <Banner tone="warning">
                   No webhook events have been processed yet. If you placed orders, this means webhooks are NOT being received or are failing authentication.
