@@ -17,6 +17,7 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { listWebhooks, registerAllWebhooks, checkWebhookHealth } from "../services/webhook-registration.server";
+import prisma from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -31,11 +32,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Get app URL from env
   const appUrl = process.env.SHOPIFY_APP_URL || "https://order-management-shopify-plugin-production.up.railway.app";
 
+  // Get recent webhook events from database
+  const recentWebhookEvents = await prisma.webhookEvent.findMany({
+    where: { shop },
+    orderBy: { processedAt: "desc" },
+    take: 10,
+  });
+
+  // Check for sessions
+  const sessions = await prisma.session.findMany({
+    where: { shop },
+    select: {
+      id: true,
+      isOnline: true,
+      scope: true,
+      expires: true,
+    },
+  });
+
   return json({
     shop,
     webhooks,
     health,
     appUrl,
+    recentWebhookEvents,
+    sessions,
   });
 };
 
@@ -57,7 +78,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function WebhookDebug() {
-  const { shop, webhooks, health, appUrl } = useLoaderData<typeof loader>();
+  const { shop, webhooks, health, appUrl, recentWebhookEvents, sessions } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -196,6 +217,71 @@ export default function WebhookDebug() {
                   {" "}- Debug endpoint for testing
                 </Text>
               </BlockStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">Session Status</Text>
+              {sessions.length > 0 ? (
+                <BlockStack gap="200">
+                  {sessions.map((session: any) => (
+                    <Box key={session.id} padding="200" background="bg-surface-secondary" borderRadius="100">
+                      <BlockStack gap="100">
+                        <InlineStack gap="200">
+                          <Badge tone={session.isOnline ? "attention" : "success"}>
+                            {session.isOnline ? "Online" : "Offline"}
+                          </Badge>
+                          <Text as="span" variant="bodySm">ID: {session.id.substring(0, 20)}...</Text>
+                        </InlineStack>
+                        <Text as="p" tone="subdued" variant="bodySm">
+                          Scopes: {session.scope || "none"}
+                        </Text>
+                        {session.expires && (
+                          <Text as="p" tone="subdued" variant="bodySm">
+                            Expires: {new Date(session.expires).toLocaleString()}
+                          </Text>
+                        )}
+                      </BlockStack>
+                    </Box>
+                  ))}
+                </BlockStack>
+              ) : (
+                <Banner tone="critical">
+                  No sessions found for this shop. This might explain webhook authentication failures.
+                </Banner>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">
+                Recent Webhook Events ({recentWebhookEvents.length})
+              </Text>
+              <Text as="p" tone="subdued">
+                Shows webhooks that were successfully processed and stored in the database.
+              </Text>
+
+              {recentWebhookEvents.length > 0 ? (
+                <DataTable
+                  columnContentTypes={["text", "text", "text"]}
+                  headings={["Topic", "Shopify ID", "Processed At"]}
+                  rows={recentWebhookEvents.map((event: any) => [
+                    event.topic,
+                    event.shopifyId,
+                    new Date(event.processedAt).toLocaleString(),
+                  ])}
+                />
+              ) : (
+                <Banner tone="warning">
+                  No webhook events have been processed yet. If you placed orders, this means webhooks are NOT being received or are failing authentication.
+                </Banner>
+              )}
             </BlockStack>
           </Card>
         </Layout.Section>
