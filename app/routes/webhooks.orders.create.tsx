@@ -96,11 +96,71 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const pickupTimeSlot = getAttr(ATTR_PICKUP_TIME);
   const pickupLocationId = getAttr(ATTR_PICKUP_LOCATION_ID);
 
-  // If no pickup date/time, this order doesn't need a pickup schedule
-  if (!pickupDateRaw || !pickupTimeSlot) {
-    console.log(`Order ${order.name} has no pickup info, skipping`);
+  // Check if this is a subscription order
+  const subscriptionLineItem = order.line_items.find(
+    (item) => item.selling_plan_allocation?.selling_plan
+  );
 
-    // Still log the webhook for idempotency
+  // If no pickup date/time AND not a subscription, skip processing
+  if (!pickupDateRaw || !pickupTimeSlot) {
+    // Even without pickup info, create subscription record if this is a subscription order
+    if (subscriptionLineItem) {
+      console.log(`Order ${order.name} is a subscription order but has no pickup info - creating subscription record only`);
+
+      try {
+        const customerName = order.customer
+          ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
+          : order.billing_address
+            ? `${order.billing_address.first_name} ${order.billing_address.last_name}`.trim()
+            : "Guest";
+        const customerEmail = order.email || order.customer?.email || null;
+        const customerPhone =
+          order.customer?.phone ||
+          order.billing_address?.phone ||
+          order.shipping_address?.phone ||
+          order.phone ||
+          null;
+
+        const sellingPlanName = subscriptionLineItem.selling_plan_allocation?.selling_plan.name || "";
+        console.log(`Detected subscription with selling plan: ${sellingPlanName}`);
+
+        // Determine frequency from selling plan name
+        let frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY" = "WEEKLY";
+        if (sellingPlanName.toLowerCase().includes("every 2 weeks") ||
+            sellingPlanName.toLowerCase().includes("bi-weekly") ||
+            sellingPlanName.toLowerCase().includes("biweekly")) {
+          frequency = "BIWEEKLY";
+        } else if (sellingPlanName.toLowerCase().includes("every 3 weeks") ||
+                   sellingPlanName.toLowerCase().includes("tri-weekly") ||
+                   sellingPlanName.toLowerCase().includes("triweekly")) {
+          frequency = "TRIWEEKLY";
+        }
+
+        // Default preferred day to current day if no pickup date
+        const preferredDay = new Date().getDay();
+
+        // Create subscription record
+        const subscriptionId = await createSubscriptionFromOrder(
+          shop,
+          order.admin_graphql_api_id,
+          customerName,
+          customerEmail,
+          customerPhone,
+          frequency,
+          preferredDay,
+          "TBD", // Pickup time slot to be determined
+          subscriptionLineItem.title
+        );
+
+        console.log(`Created subscription ${subscriptionId} from order ${order.name} (no pickup info)`);
+      } catch (subError) {
+        console.error("Failed to create subscription from order:", subError);
+      }
+    } else {
+      console.log(`Order ${order.name} has no pickup info and is not a subscription, skipping`);
+    }
+
+    // Log the webhook for idempotency
     await prisma.webhookEvent.create({
       data: {
         shop,
@@ -110,7 +170,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
 
-    return json({ message: "No pickup info" });
+    return json({ message: subscriptionLineItem ? "Subscription created (no pickup info)" : "No pickup info" });
   }
 
   // Parse the pickup date (format: "Friday, January 17 (2025-01-17)")
