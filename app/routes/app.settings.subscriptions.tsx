@@ -620,9 +620,55 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             frequency = "WEEKLY";
         }
 
-        // Default pickup settings (can be adjusted later by customer)
-        const preferredDay = 2; // Tuesday
-        const preferredTimeSlot = "12:00 PM - 2:00 PM";
+        // Get the origin order to find pickup info
+        const originOrderResponse = await admin.graphql(`
+          query getOriginOrder($contractId: ID!) {
+            subscriptionContract(id: $contractId) {
+              originOrder {
+                id
+                name
+                customAttributes {
+                  key
+                  value
+                }
+              }
+            }
+          }
+        `, {
+          variables: { contractId: contract.id },
+        });
+
+        const originOrderData = await originOrderResponse.json();
+        const originOrder = originOrderData.data?.subscriptionContract?.originOrder;
+        const orderAttrs = originOrder?.customAttributes || [];
+        const getOrderAttr = (key: string) => orderAttrs.find((a: {key: string; value: string}) => a.key === key)?.value;
+
+        const pickupDateStr = getOrderAttr("Pickup Date");
+        const pickupTimeSlot = getOrderAttr("Pickup Time Slot") || "12:00 PM - 2:00 PM";
+
+        // Parse pickup date to get preferred day
+        let preferredDay = 2; // Default to Tuesday
+        let pickupDate: Date | null = null;
+
+        if (pickupDateStr) {
+          // Try to parse day name from string like "Friday, February 20"
+          const dayMatch = pickupDateStr.match(/^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)/i);
+          if (dayMatch) {
+            const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+            preferredDay = dayNames.findIndex(d => d.toLowerCase() === dayMatch[1].toLowerCase());
+          }
+
+          // Try to parse full date
+          const isoMatch = pickupDateStr.match(/\((\d{4}-\d{2}-\d{2})\)/);
+          if (isoMatch) {
+            pickupDate = new Date(isoMatch[1] + "T12:00:00");
+          } else {
+            const parsed = new Date(pickupDateStr);
+            if (!isNaN(parsed.getTime())) {
+              pickupDate = parsed;
+            }
+          }
+        }
 
         // Create the subscription
         const subscriptionId = await createSubscriptionFromContract(
@@ -633,12 +679,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           customerPhone,
           frequency,
           preferredDay,
-          preferredTimeSlot
+          pickupTimeSlot
         );
+
+        // Also create pickup schedule if we have the order info
+        let pickupScheduleCreated = false;
+        if (originOrder && pickupDate) {
+          try {
+            await prisma.pickupSchedule.create({
+              data: {
+                shop,
+                shopifyOrderId: originOrder.id,
+                shopifyOrderNumber: originOrder.name,
+                customerName,
+                customerEmail,
+                customerPhone,
+                pickupDate,
+                pickupTimeSlot,
+                pickupStatus: "SCHEDULED",
+                subscriptionPickupId: subscriptionId,
+              },
+            });
+            pickupScheduleCreated = true;
+          } catch (pickupError) {
+            console.error("Failed to create pickup schedule:", pickupError);
+            // Continue - subscription was still created
+          }
+        }
 
         return json({
           success: true,
-          message: `Successfully synced subscription for ${customerName}`,
+          message: `Successfully synced subscription for ${customerName}${pickupScheduleCreated ? ' with pickup schedule' : ' (no pickup schedule - missing order info)'}`,
           subscriptionId,
         });
       }
