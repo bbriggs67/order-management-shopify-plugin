@@ -3,12 +3,22 @@ import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
+// Attribute keys that match the checkout extension
+const ATTR_PICKUP_DATE = "Pickup Date";
+const ATTR_PICKUP_TIME = "Pickup Time Slot";
+
+interface OrderAttribute {
+  key: string;
+  value: string;
+}
+
 interface OrderWebhookPayload {
   id: number;
   admin_graphql_api_id: string;
   name: string;
   email: string;
   phone: string | null;
+  note_attributes: OrderAttribute[];
   customer: {
     id: number;
     email: string;
@@ -85,22 +95,60 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       order.phone ||
       pickup.customerPhone;
 
-    // Check if anything changed
-    const hasChanges =
-      customerName !== pickup.customerName ||
-      customerEmail !== pickup.customerEmail ||
-      customerPhone !== pickup.customerPhone;
+    // Check for pickup date/time updates from order attributes
+    const attributes = order.note_attributes || [];
+    const getAttr = (key: string) =>
+      attributes.find((a) => a.key === key)?.value || null;
+
+    const pickupDateRaw = getAttr(ATTR_PICKUP_DATE);
+    const pickupTimeSlot = getAttr(ATTR_PICKUP_TIME);
+
+    // Parse pickup date if provided
+    let newPickupDate: Date | null = null;
+    if (pickupDateRaw) {
+      const dateMatch = pickupDateRaw.match(/\((\d{4}-\d{2}-\d{2})\)/);
+      if (dateMatch) {
+        newPickupDate = new Date(dateMatch[1] + "T12:00:00");
+      } else {
+        const parsedDate = new Date(pickupDateRaw);
+        if (!isNaN(parsedDate.getTime())) {
+          newPickupDate = parsedDate;
+        }
+      }
+    }
+
+    // Build update data
+    const updateData: {
+      customerName?: string;
+      customerEmail?: string | null;
+      customerPhone?: string | null;
+      pickupDate?: Date;
+      pickupTimeSlot?: string;
+    } = {};
+
+    // Check what has changed
+    if (customerName !== pickup.customerName) updateData.customerName = customerName;
+    if (customerEmail !== pickup.customerEmail) updateData.customerEmail = customerEmail;
+    if (customerPhone !== pickup.customerPhone) updateData.customerPhone = customerPhone;
+
+    // Update pickup date/time if changed
+    if (newPickupDate && newPickupDate.getTime() !== pickup.pickupDate.getTime()) {
+      updateData.pickupDate = newPickupDate;
+      console.log(`Updating pickup date from ${pickup.pickupDate} to ${newPickupDate}`);
+    }
+    if (pickupTimeSlot && pickupTimeSlot !== pickup.pickupTimeSlot) {
+      updateData.pickupTimeSlot = pickupTimeSlot;
+      console.log(`Updating pickup time from ${pickup.pickupTimeSlot} to ${pickupTimeSlot}`);
+    }
+
+    const hasChanges = Object.keys(updateData).length > 0;
 
     if (hasChanges) {
       await prisma.pickupSchedule.update({
         where: { id: pickup.id },
-        data: {
-          customerName,
-          customerEmail,
-          customerPhone,
-        },
+        data: updateData,
       });
-      console.log(`Updated customer info for pickup ${pickup.id}`);
+      console.log(`Updated pickup ${pickup.id}:`, Object.keys(updateData).join(", "));
     }
 
     return json({ success: true, updated: hasChanges });

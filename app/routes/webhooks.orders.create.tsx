@@ -71,6 +71,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const order = payload as unknown as OrderWebhookPayload;
 
+  // Log the order details for debugging
+  console.log(`Processing order ${order.name} (ID: ${order.id})`);
+  console.log(`Order note_attributes:`, JSON.stringify(order.note_attributes));
+  console.log(`Order line_items count:`, order.line_items?.length);
+
   // Check for idempotency - has this webhook already been processed?
   const existingEvent = await prisma.webhookEvent.findUnique({
     where: {
@@ -88,13 +93,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   // Extract pickup attributes from the order
+  // Try both note_attributes (REST API) and check for any custom attributes format
   const attributes = order.note_attributes || [];
-  const getAttr = (key: string) =>
-    attributes.find((a) => a.key === key)?.value || null;
+  console.log(`Found ${attributes.length} note_attributes`);
+
+  const getAttr = (key: string) => {
+    const attr = attributes.find((a) => a.key === key);
+    if (attr) {
+      console.log(`Found attribute "${key}": ${attr.value}`);
+    }
+    return attr?.value || null;
+  };
 
   const pickupDateRaw = getAttr(ATTR_PICKUP_DATE);
   const pickupTimeSlot = getAttr(ATTR_PICKUP_TIME);
   const pickupLocationId = getAttr(ATTR_PICKUP_LOCATION_ID);
+
+  console.log(`Extracted pickup info - Date: ${pickupDateRaw}, Time: ${pickupTimeSlot}, Location: ${pickupLocationId}`);
 
   // Check if this is a subscription order
   const subscriptionLineItem = order.line_items.find(
