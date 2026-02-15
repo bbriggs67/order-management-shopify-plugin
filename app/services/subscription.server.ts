@@ -327,6 +327,80 @@ function calculateNextPickupDateFromToday(
 }
 
 /**
+ * Create a new subscription from an order that contains a selling plan
+ * This is used when we detect a subscription purchase via the orders/create webhook
+ */
+export async function createSubscriptionFromOrder(
+  shop: string,
+  orderId: string,
+  customerName: string,
+  customerEmail: string | null,
+  customerPhone: string | null,
+  frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY",
+  preferredDay: number,
+  preferredTimeSlot: string,
+  productTitle: string
+): Promise<string> {
+  // Check if we already have a subscription for this order
+  const existingSubscription = await prisma.subscriptionPickup.findFirst({
+    where: {
+      shop,
+      shopifyContractId: orderId, // Using orderId as contract ID since we don't have the actual contract
+    },
+  });
+
+  if (existingSubscription) {
+    console.log(`Subscription already exists for order ${orderId}`);
+    return existingSubscription.id;
+  }
+
+  // Determine discount based on frequency (matching selling plan discounts)
+  let discountPercent: number;
+  switch (frequency) {
+    case "WEEKLY":
+      discountPercent = 10;
+      break;
+    case "BIWEEKLY":
+      discountPercent = 5;
+      break;
+    case "TRIWEEKLY":
+      discountPercent = 2.5;
+      break;
+    default:
+      discountPercent = 5;
+  }
+
+  const nextPickupDate = calculateNextPickupDateFromToday(preferredDay, frequency);
+
+  // Extract time slot start for billing calculation
+  const preferredTimeSlotStart = extractTimeSlotStart(preferredTimeSlot);
+
+  // Calculate billing date (uses default 84 hours for new subscriptions)
+  const nextBillingDate = calculateBillingDate(nextPickupDate, preferredTimeSlotStart);
+
+  const subscription = await prisma.subscriptionPickup.create({
+    data: {
+      shop,
+      shopifyContractId: orderId, // Using order ID since we don't have the contract ID
+      customerName,
+      customerEmail,
+      customerPhone,
+      preferredDay,
+      preferredTimeSlot,
+      preferredTimeSlotStart,
+      frequency,
+      discountPercent,
+      nextPickupDate,
+      nextBillingDate,
+      status: "ACTIVE",
+    },
+  });
+
+  console.log(`Created subscription ${subscription.id} from order ${orderId} for product: ${productTitle}`);
+  return subscription.id;
+}
+
+/**
  * Create a new subscription from a Shopify subscription contract webhook
  */
 export async function createSubscriptionFromContract(

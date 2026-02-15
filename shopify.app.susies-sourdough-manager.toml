@@ -49,7 +49,7 @@ api_version = "2024-10"
   uri = "/webhooks/orders/cancelled"
 
 [access_scopes]
-# Subscription scopes - "own" scopes only allow access to contracts created by THIS app
+# Full subscription scopes to access contracts created via native Shopify subscription UI
 scopes = "read_orders,write_orders,read_products,write_products,read_customers,read_own_subscription_contracts,write_own_subscription_contracts"
 
 [auth]

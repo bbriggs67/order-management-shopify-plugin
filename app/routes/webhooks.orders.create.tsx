@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { createPickupEvent } from "../services/google-calendar.server";
+import { createSubscriptionFromOrder } from "../services/subscription.server";
 
 // Attribute keys that match the checkout extension
 const ATTR_PICKUP_DATE = "Pickup Date";
@@ -14,6 +15,13 @@ interface OrderAttribute {
   value: string;
 }
 
+interface SellingPlanAllocation {
+  selling_plan: {
+    id: number;
+    name: string;
+  };
+}
+
 interface OrderLineItem {
   id: string;
   product_id: number;
@@ -21,6 +29,7 @@ interface OrderLineItem {
   title: string;
   variant_title: string;
   quantity: number;
+  selling_plan_allocation?: SellingPlanAllocation;
 }
 
 interface OrderWebhookPayload {
@@ -171,6 +180,51 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     } catch (error) {
       console.error("Failed to create Google Calendar event:", error);
       // Continue even if calendar event creation fails
+    }
+
+    // Check if this is a subscription order and create subscription record
+    const subscriptionLineItem = order.line_items.find(
+      (item) => item.selling_plan_allocation?.selling_plan
+    );
+
+    if (subscriptionLineItem) {
+      try {
+        const sellingPlanName = subscriptionLineItem.selling_plan_allocation?.selling_plan.name || "";
+        console.log(`Detected subscription order with selling plan: ${sellingPlanName}`);
+
+        // Determine frequency from selling plan name
+        let frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY" = "WEEKLY";
+        if (sellingPlanName.toLowerCase().includes("every 2 weeks") ||
+            sellingPlanName.toLowerCase().includes("bi-weekly") ||
+            sellingPlanName.toLowerCase().includes("biweekly")) {
+          frequency = "BIWEEKLY";
+        } else if (sellingPlanName.toLowerCase().includes("every 3 weeks") ||
+                   sellingPlanName.toLowerCase().includes("tri-weekly") ||
+                   sellingPlanName.toLowerCase().includes("triweekly")) {
+          frequency = "TRIWEEKLY";
+        }
+
+        // Get preferred day from pickup date (day of week)
+        const preferredDay = pickupDate.getDay();
+
+        // Create subscription record from order
+        const subscriptionId = await createSubscriptionFromOrder(
+          shop,
+          order.admin_graphql_api_id,
+          customerName,
+          customerEmail,
+          customerPhone,
+          frequency,
+          preferredDay,
+          pickupTimeSlot,
+          subscriptionLineItem.title
+        );
+
+        console.log(`Created subscription ${subscriptionId} from order ${order.name}`);
+      } catch (subError) {
+        console.error("Failed to create subscription from order:", subError);
+        // Continue even if subscription creation fails - the order is still valid
+      }
     }
 
     // Log the webhook for idempotency
