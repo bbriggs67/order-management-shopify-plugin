@@ -221,6 +221,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         );
 
         console.log(`Created subscription ${subscriptionId} from order ${order.name}`);
+
+        // Link the pickup schedule to the subscription
+        await prisma.pickupSchedule.update({
+          where: { id: pickupSchedule.id },
+          data: { subscriptionPickupId: subscriptionId },
+        });
+        console.log(`Linked pickup schedule ${pickupSchedule.id} to subscription ${subscriptionId}`);
       } catch (subError) {
         console.error("Failed to create subscription from order:", subError);
         // Continue even if subscription creation fails - the order is still valid

@@ -33,7 +33,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const firstDay = new Date(year, month, 1);
   const lastDay = new Date(year, month + 1, 0);
 
-  // Get pickups for the month
+  // Get pickups for the month, including subscription status
   const pickups = await prisma.pickupSchedule.findMany({
     where: {
       shop,
@@ -41,8 +41,32 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         gte: firstDay,
         lte: lastDay,
       },
+      // Exclude cancelled pickups
+      pickupStatus: {
+        not: "CANCELLED",
+      },
+    },
+    include: {
+      subscriptionPickup: {
+        select: {
+          id: true,
+          status: true,
+          customerName: true,
+        },
+      },
     },
     orderBy: { pickupDate: "asc" },
+  });
+
+  // Filter out pickups from cancelled subscriptions
+  // but keep pickups from paused subscriptions (they may still be valid past pickups)
+  const filteredPickups = pickups.filter((pickup) => {
+    // If no subscription linked, it's a regular order - always show
+    if (!pickup.subscriptionPickup) return true;
+    // Exclude if subscription is cancelled
+    if (pickup.subscriptionPickup.status === "CANCELLED") return false;
+    // Include all others (ACTIVE, PAUSED)
+    return true;
   });
 
   // Get blackout dates for the month
@@ -65,8 +89,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 
   // Group pickups by date
-  const pickupsByDate: Record<string, typeof pickups> = {};
-  pickups.forEach((pickup) => {
+  const pickupsByDate: Record<string, typeof filteredPickups> = {};
+  filteredPickups.forEach((pickup) => {
     const dateKey = new Date(pickup.pickupDate).toISOString().split("T")[0];
     if (!pickupsByDate[dateKey]) {
       pickupsByDate[dateKey] = [];
@@ -74,16 +98,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     pickupsByDate[dateKey].push(pickup);
   });
 
+  // Count pickups by status for summary
+  const pickupStats = {
+    total: filteredPickups.length,
+    scheduled: filteredPickups.filter((p) => p.pickupStatus === "SCHEDULED").length,
+    ready: filteredPickups.filter((p) => p.pickupStatus === "READY").length,
+    pickedUp: filteredPickups.filter((p) => p.pickupStatus === "PICKED_UP").length,
+    fromPausedSubs: filteredPickups.filter(
+      (p) => p.subscriptionPickup?.status === "PAUSED"
+    ).length,
+  };
+
   return json({
     year,
     month,
     pickupsByDate,
     blackoutDates,
+    pickupStats,
   });
 };
 
 export default function CalendarPage() {
-  const { year, month, pickupsByDate, blackoutDates } =
+  const { year, month, pickupsByDate, blackoutDates, pickupStats } =
     useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -258,7 +294,17 @@ export default function CalendarPage() {
                           )}
                         </InlineStack>
                         {dayPickups.length > 0 && (
-                          <Badge tone="info">{dayPickups.length} pickups</Badge>
+                          <BlockStack gap="100">
+                            <Badge tone="info">{dayPickups.length} pickups</Badge>
+                            {dayPickups.some(
+                              (p: typeof dayPickups[0]) =>
+                                p.subscriptionPickup?.status === "PAUSED"
+                            ) && (
+                              <Badge tone="warning" size="small">
+                                ⚠ Paused sub
+                              </Badge>
+                            )}
+                          </BlockStack>
                         )}
                       </BlockStack>
                     </Box>
@@ -266,8 +312,36 @@ export default function CalendarPage() {
                 })}
               </InlineGrid>
 
+              {/* Month Summary */}
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm">
+                    Month Summary
+                  </Text>
+                  <InlineStack gap="400" wrap>
+                    <Text as="span" variant="bodySm">
+                      Total: <strong>{pickupStats.total}</strong>
+                    </Text>
+                    <Text as="span" variant="bodySm">
+                      Scheduled: <strong>{pickupStats.scheduled}</strong>
+                    </Text>
+                    <Text as="span" variant="bodySm">
+                      Ready: <strong>{pickupStats.ready}</strong>
+                    </Text>
+                    <Text as="span" variant="bodySm">
+                      Picked Up: <strong>{pickupStats.pickedUp}</strong>
+                    </Text>
+                    {pickupStats.fromPausedSubs > 0 && (
+                      <Text as="span" variant="bodySm" tone="caution">
+                        From Paused Subs: <strong>{pickupStats.fromPausedSubs}</strong>
+                      </Text>
+                    )}
+                  </InlineStack>
+                </BlockStack>
+              </Card>
+
               {/* Legend */}
-              <InlineStack gap="400">
+              <InlineStack gap="400" wrap>
                 <InlineStack gap="100" blockAlign="center">
                   <Box
                     background="bg-surface-critical-subdued"
@@ -301,7 +375,15 @@ export default function CalendarPage() {
                     N
                   </Badge>
                   <Text as="span" variant="bodySm">
-                    Number of pickups
+                    Pickups
+                  </Text>
+                </InlineStack>
+                <InlineStack gap="100" blockAlign="center">
+                  <Badge tone="warning" size="small">
+                    ⚠
+                  </Badge>
+                  <Text as="span" variant="bodySm">
+                    Paused subscription
                   </Text>
                 </InlineStack>
               </InlineStack>
