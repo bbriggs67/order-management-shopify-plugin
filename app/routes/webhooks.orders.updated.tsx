@@ -8,7 +8,7 @@ const ATTR_PICKUP_DATE = "Pickup Date";
 const ATTR_PICKUP_TIME = "Pickup Time Slot";
 
 interface OrderAttribute {
-  key: string;
+  name: string;  // Shopify REST API uses "name", not "key"
   value: string;
 }
 
@@ -98,20 +98,40 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Check for pickup date/time updates from order attributes
     const attributes = order.note_attributes || [];
     const getAttr = (key: string) =>
-      attributes.find((a) => a.key === key)?.value || null;
+      attributes.find((a) => a.name === key)?.value || null;  // Use "name" not "key"
 
     const pickupDateRaw = getAttr(ATTR_PICKUP_DATE);
     const pickupTimeSlot = getAttr(ATTR_PICKUP_TIME);
 
     // Parse pickup date if provided
+    // Supports formats: "Friday, January 17 (2025-01-17)", "Wednesday, February 25", "2025-01-17"
     let newPickupDate: Date | null = null;
     if (pickupDateRaw) {
-      const dateMatch = pickupDateRaw.match(/\((\d{4}-\d{2}-\d{2})\)/);
-      if (dateMatch) {
-        newPickupDate = new Date(dateMatch[1] + "T12:00:00");
+      const isoDateMatch = pickupDateRaw.match(/\((\d{4}-\d{2}-\d{2})\)/);
+      const plainIsoMatch = pickupDateRaw.match(/^(\d{4}-\d{2}-\d{2})$/);
+
+      if (isoDateMatch) {
+        newPickupDate = new Date(isoDateMatch[1] + "T12:00:00");
+      } else if (plainIsoMatch) {
+        newPickupDate = new Date(plainIsoMatch[1] + "T12:00:00");
       } else {
-        const parsedDate = new Date(pickupDateRaw);
+        // Format: "Wednesday, February 25" - need to infer year
+        const currentYear = new Date().getFullYear();
+        const dateWithYear = `${pickupDateRaw}, ${currentYear}`;
+        let parsedDate = new Date(dateWithYear);
+
+        if (isNaN(parsedDate.getTime())) {
+          // Try removing day name
+          const withoutDayName = pickupDateRaw.replace(/^[A-Za-z]+,\s*/, "");
+          parsedDate = new Date(`${withoutDayName}, ${currentYear}`);
+        }
+
         if (!isNaN(parsedDate.getTime())) {
+          // If date is more than 7 days in past, assume next year
+          const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+          if (parsedDate < weekAgo) {
+            parsedDate.setFullYear(currentYear + 1);
+          }
           newPickupDate = parsedDate;
         }
       }

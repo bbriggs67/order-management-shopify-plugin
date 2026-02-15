@@ -11,7 +11,7 @@ const ATTR_PICKUP_TIME = "Pickup Time Slot";
 const ATTR_PICKUP_LOCATION_ID = "Pickup Location ID";
 
 interface OrderAttribute {
-  key: string;
+  name: string;  // Shopify REST API uses "name", not "key"
   value: string;
 }
 
@@ -103,9 +103,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   console.log(`Found ${attributes.length} note_attributes`);
 
   const getAttr = (key: string) => {
-    const attr = attributes.find((a) => a.key === key);
+    // Shopify REST API uses "name" for the attribute key, not "key"
+    const attr = attributes.find((a) => a.name === key);
     if (attr) {
       console.log(`Found attribute "${key}": ${attr.value}`);
+    } else {
+      console.log(`Attribute "${key}" not found in note_attributes`);
     }
     return attr?.value || null;
   };
@@ -193,18 +196,49 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ message: subscriptionLineItem ? "Subscription created (no pickup info)" : "No pickup info" });
   }
 
-  // Parse the pickup date (format: "Friday, January 17 (2025-01-17)")
+  // Parse the pickup date
+  // Supported formats:
+  // 1. "Friday, January 17 (2025-01-17)" - with ISO date in parentheses
+  // 2. "Wednesday, February 25" - day name and date without year
+  // 3. "2025-01-17" - ISO date
   let pickupDate: Date;
-  const dateMatch = pickupDateRaw.match(/\((\d{4}-\d{2}-\d{2})\)/);
-  if (dateMatch) {
-    pickupDate = new Date(dateMatch[1] + "T12:00:00");
+  const isoDateMatch = pickupDateRaw.match(/\((\d{4}-\d{2}-\d{2})\)/);
+  const plainIsoMatch = pickupDateRaw.match(/^(\d{4}-\d{2}-\d{2})$/);
+
+  if (isoDateMatch) {
+    // Format: "Friday, January 17 (2025-01-17)"
+    pickupDate = new Date(isoDateMatch[1] + "T12:00:00");
+    console.log(`Parsed date from ISO in parentheses: ${pickupDate}`);
+  } else if (plainIsoMatch) {
+    // Format: "2025-01-17"
+    pickupDate = new Date(plainIsoMatch[1] + "T12:00:00");
+    console.log(`Parsed date from plain ISO: ${pickupDate}`);
   } else {
-    // Try to parse the raw value as a date
-    pickupDate = new Date(pickupDateRaw);
+    // Format: "Wednesday, February 25" - need to infer year
+    // Try parsing with current year, and if that date is in the past, use next year
+    const currentYear = new Date().getFullYear();
+    const dateWithYear = `${pickupDateRaw}, ${currentYear}`;
+    pickupDate = new Date(dateWithYear);
+
+    if (isNaN(pickupDate.getTime())) {
+      // Try removing day name: "February 25" from "Wednesday, February 25"
+      const withoutDayName = pickupDateRaw.replace(/^[A-Za-z]+,\s*/, "");
+      pickupDate = new Date(`${withoutDayName}, ${currentYear}`);
+    }
+
     if (isNaN(pickupDate.getTime())) {
       console.error(`Could not parse pickup date: ${pickupDateRaw}`);
       return json({ error: "Invalid pickup date" }, { status: 400 });
     }
+
+    // If the parsed date is more than 7 days in the past, assume it's for next year
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (pickupDate < weekAgo) {
+      pickupDate.setFullYear(currentYear + 1);
+      console.log(`Date was in the past, adjusted to next year: ${pickupDate}`);
+    }
+    console.log(`Parsed date from human-readable format: ${pickupDate}`);
   }
 
   // Get customer info
