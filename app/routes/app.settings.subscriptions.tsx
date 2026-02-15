@@ -45,6 +45,7 @@ import {
 import { formatDatePacific } from "../utils/timezone.server";
 import { createSubscriptionFromContract } from "../services/subscription.server";
 import prisma from "../db.server";
+import { checkWebhookHealth, registerAllWebhooks } from "../services/webhook-registration.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -144,6 +145,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Build customer subscription management URL
   const customerPortalUrl = `https://${shop}/apps/my-subscription`;
 
+  // Check webhook health
+  let webhookHealth = { healthy: false, missing: [] as string[], registered: [] as string[], wrongUrl: [] as string[] };
+  try {
+    webhookHealth = await checkWebhookHealth(admin);
+  } catch (error) {
+    console.error("Failed to check webhook health:", error);
+  }
+
   return json({
     shop,
     sellingPlanConfig,
@@ -152,6 +161,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     failedBillings,
     upcomingBillings,
     customerPortalUrl,
+    webhookHealth,
   });
 };
 
@@ -714,6 +724,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
       }
 
+      case "register_webhooks": {
+        const result = await registerAllWebhooks(admin);
+
+        if (result.success) {
+          const messages = [];
+          if (result.registered.length > 0) {
+            messages.push(`Registered: ${result.registered.join(", ")}`);
+          }
+          if (result.alreadyExists.length > 0) {
+            messages.push(`Already exists: ${result.alreadyExists.join(", ")}`);
+          }
+          return json({
+            success: true,
+            message: `Webhooks registered successfully. ${messages.join(". ")}`,
+          });
+        } else {
+          const failedTopics = result.failed.map(f => `${f.topic}: ${f.error}`).join("; ");
+          return json({
+            error: `Some webhooks failed to register: ${failedTopics}`,
+          }, { status: 500 });
+        }
+      }
+
       default:
         return json({ error: "Unknown action" }, { status: 400 });
     }
@@ -724,7 +757,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SubscriptionsSettings() {
-  const { sellingPlanConfig, sellingPlanGroups, usingLocalConfig, failedBillings, upcomingBillings, customerPortalUrl } = useLoaderData<typeof loader>();
+  const { sellingPlanConfig, sellingPlanGroups, usingLocalConfig, failedBillings, upcomingBillings, customerPortalUrl, webhookHealth } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -906,6 +939,70 @@ export default function SubscriptionsSettings() {
             <Banner tone="critical" onDismiss={() => {}}>
               {actionData.error}
             </Banner>
+          </Layout.Section>
+        )}
+
+        {/* Webhook Health Status */}
+        {!webhookHealth.healthy && (
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Webhook Configuration
+                  </Text>
+                  <Badge tone="critical">Action Required</Badge>
+                </InlineStack>
+
+                <Banner tone="warning">
+                  <BlockStack gap="200">
+                    <Text as="p">
+                      Order webhooks are not properly configured. Orders placed in your store will not automatically sync to SSMA.
+                    </Text>
+                    {webhookHealth.missing.length > 0 && (
+                      <Text as="p" tone="subdued">
+                        Missing webhooks: {webhookHealth.missing.join(", ")}
+                      </Text>
+                    )}
+                    {webhookHealth.wrongUrl.length > 0 && (
+                      <Text as="p" tone="subdued">
+                        Webhooks with incorrect URL: {webhookHealth.wrongUrl.join(", ")}
+                      </Text>
+                    )}
+                  </BlockStack>
+                </Banner>
+
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    const formData = new FormData();
+                    formData.append("intent", "register_webhooks");
+                    submit(formData, { method: "post" });
+                  }}
+                  loading={isLoading}
+                >
+                  Register Webhooks
+                </Button>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        )}
+
+        {webhookHealth.healthy && (
+          <Layout.Section>
+            <Card>
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">
+                    Webhook Configuration
+                  </Text>
+                  <Text as="p" tone="subdued">
+                    {webhookHealth.registered.length} webhooks registered and working
+                  </Text>
+                </BlockStack>
+                <Badge tone="success">Healthy</Badge>
+              </InlineStack>
+            </Card>
           </Layout.Section>
         )}
 
