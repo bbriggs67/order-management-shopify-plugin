@@ -535,9 +535,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               pickupTimeSlot
             );
 
+            // Also create a pickup schedule for the first pickup date
+            let pickupDate: Date | null = null;
+            if (pickupDateStr) {
+              // Try to parse date from string like "Friday, February 20 (2025-02-20)" or "Friday, February 20"
+              const isoMatch = pickupDateStr.match(/\((\d{4}-\d{2}-\d{2})\)/);
+              if (isoMatch) {
+                pickupDate = new Date(isoMatch[1] + "T12:00:00");
+              } else {
+                // Try parsing without ISO date
+                pickupDate = new Date(pickupDateStr);
+                if (isNaN(pickupDate.getTime())) {
+                  pickupDate = null;
+                }
+              }
+            }
+
+            if (pickupDate) {
+              // Create pickup schedule
+              await prisma.pickupSchedule.create({
+                data: {
+                  shop,
+                  shopifyOrderId: order.id,
+                  shopifyOrderNumber: order.name,
+                  customerName,
+                  customerEmail,
+                  customerPhone,
+                  pickupDate,
+                  pickupTimeSlot,
+                  pickupStatus: "SCHEDULED",
+                  subscriptionPickupId: subscriptionId,
+                },
+              });
+            }
+
             return json({
               success: true,
-              message: `Successfully created subscription for ${customerName} (no contract found, created from order data)`,
+              message: `Successfully created subscription for ${customerName} (no contract found, created from order data)${pickupDate ? ' with pickup schedule' : ''}`,
               subscriptionId,
             });
           }
