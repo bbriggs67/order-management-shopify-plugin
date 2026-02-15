@@ -302,8 +302,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 
   if (action === "cancelAndRefund") {
-    const { admin } = await authenticate.admin(request);
-
+    // Note: admin is already authenticated at the top of the action function
     const reason = formData.get("reason") as CancellationReason;
     const staffNote = formData.get("staffNote") as string;
     const restockInventory = formData.get("restockInventory") === "true";
@@ -336,24 +335,27 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ error: result.error || "Failed to cancel order" }, { status: 500 });
     }
 
-    // Update SSMA pickup status
-    await prisma.pickupSchedule.update({
-      where: { id: orderId },
-      data: {
-        pickupStatus: "CANCELLED",
-        notes: pickupWithSub.notes
-          ? `${pickupWithSub.notes}\n\nCancelled: ${reason}${staffNote ? ` - ${staffNote}` : ""}`
-          : `Cancelled: ${reason}${staffNote ? ` - ${staffNote}` : ""}`,
-      },
-    });
-
-    // If linked to a subscription, also cancel it
-    if (pickupWithSub.subscriptionPickupId) {
-      await prisma.subscriptionPickup.update({
-        where: { id: pickupWithSub.subscriptionPickupId },
-        data: { status: "CANCELLED" },
+    // Update SSMA pickup status and linked subscription atomically
+    await prisma.$transaction(async (tx) => {
+      // Update pickup status
+      await tx.pickupSchedule.update({
+        where: { id: orderId },
+        data: {
+          pickupStatus: "CANCELLED",
+          notes: pickupWithSub.notes
+            ? `${pickupWithSub.notes}\n\nCancelled: ${reason}${staffNote ? ` - ${staffNote}` : ""}`
+            : `Cancelled: ${reason}${staffNote ? ` - ${staffNote}` : ""}`,
+        },
       });
-    }
+
+      // If linked to a subscription, also cancel it within the same transaction
+      if (pickupWithSub.subscriptionPickupId) {
+        await tx.subscriptionPickup.update({
+          where: { id: pickupWithSub.subscriptionPickupId },
+          data: { status: "CANCELLED" },
+        });
+      }
+    });
 
     // Delete Google Calendar event
     try {
@@ -499,7 +501,7 @@ export default function OrderDetail() {
         {actionData && "success" in actionData && actionData.success && (
           <Layout.Section>
             <Banner tone="success" onDismiss={() => {}}>
-              {actionData.message || "Action completed successfully."}
+              {"message" in actionData ? actionData.message : "Action completed successfully."}
             </Banner>
           </Layout.Section>
         )}

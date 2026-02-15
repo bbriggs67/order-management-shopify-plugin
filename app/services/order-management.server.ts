@@ -4,6 +4,7 @@
  */
 
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import prisma from "../db.server";
 
 // Cancellation reasons matching Shopify's options
 export const CANCELLATION_REASONS = [
@@ -30,6 +31,14 @@ interface CancelOrderResult {
   refundAmount?: string;
   currencyCode?: string;
   error?: string;
+}
+
+// Idempotency key for refunds - stored in database to prevent double refunds
+interface RefundIdempotencyKey {
+  orderId: string;
+  refundId: string;
+  amount: string;
+  createdAt: Date;
 }
 
 interface OrderForRefund {
@@ -95,16 +104,18 @@ export async function getOrderForRefund(
           }
         }
         transactions(first: 10) {
-          id
-          kind
-          status
-          amountSet {
-            shopMoney {
-              amount
-              currencyCode
+          nodes {
+            id
+            kind
+            status
+            amountSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
             }
+            gateway
           }
-          gateway
         }
         lineItems(first: 50) {
           nodes {
@@ -120,7 +131,51 @@ export async function getOrderForRefund(
   });
 
   const data = await response.json();
-  return data.data?.order || null;
+
+  if (!data.data?.order) return null;
+
+  // Transform transactions from nodes array to flat array for consistency
+  const order = data.data.order;
+  return {
+    ...order,
+    transactions: order.transactions?.nodes || [],
+  };
+}
+
+/**
+ * Check if a refund has already been processed for this order (idempotency check)
+ */
+async function hasExistingRefund(orderId: string): Promise<boolean> {
+  const existing = await prisma.webhookEvent.findFirst({
+    where: {
+      topic: "refund_processed",
+      shopifyId: orderId,
+    },
+  });
+  return !!existing;
+}
+
+/**
+ * Record that a refund was processed (for idempotency)
+ */
+async function recordRefundProcessed(
+  shop: string,
+  orderId: string,
+  refundId: string,
+  amount: string
+): Promise<void> {
+  await prisma.webhookEvent.create({
+    data: {
+      shop,
+      topic: "refund_processed",
+      shopifyId: orderId,
+      payload: {
+        refundId,
+        amount,
+        processedAt: new Date().toISOString(),
+      },
+    },
+  });
 }
 
 /**
@@ -144,6 +199,14 @@ export async function cancelOrderWithRefund(
       return { success: false, error: "Order is already cancelled" };
     }
 
+    // Idempotency check - prevent double refunds
+    const alreadyRefunded = await hasExistingRefund(orderId);
+    if (alreadyRefunded) {
+      console.log(`Refund already processed for order ${orderId}, skipping refund step`);
+      // Still try to cancel if not already cancelled
+      return await cancelOrderOnly(admin, orderId, reason, staffNote, restockInventory, notifyCustomer);
+    }
+
     // Calculate refund amount (total price minus already refunded)
     const totalPrice = parseFloat(order.totalPriceSet.shopMoney.amount);
     const totalRefunded = parseFloat(order.totalRefundedSet.shopMoney.amount);
@@ -151,7 +214,7 @@ export async function cancelOrderWithRefund(
 
     if (refundAmount <= 0) {
       // No refund needed, just cancel the order
-      return await cancelOrderOnly(admin, orderId, reason, staffNote, notifyCustomer);
+      return await cancelOrderOnly(admin, orderId, reason, staffNote, restockInventory, notifyCustomer);
     }
 
     // Find the parent transaction to refund against
@@ -165,7 +228,7 @@ export async function cancelOrderWithRefund(
 
     if (!parentTransaction) {
       // No transaction to refund - might be unpaid, just cancel
-      return await cancelOrderOnly(admin, orderId, reason, staffNote, notifyCustomer);
+      return await cancelOrderOnly(admin, orderId, reason, staffNote, restockInventory, notifyCustomer);
     }
 
     // Build refund line items if restocking
@@ -207,6 +270,7 @@ export async function cancelOrderWithRefund(
           refundLineItems: refundLineItems.length > 0 ? refundLineItems : undefined,
           transactions: [
             {
+              orderId, // Added orderId to transaction
               parentId: parentTransaction.id,
               amount: refundAmount.toFixed(2),
               kind: "REFUND",
@@ -230,8 +294,25 @@ export async function cancelOrderWithRefund(
 
     const refund = refundData.data?.refundCreate?.refund;
 
+    // Record refund for idempotency - extract shop from orderId
+    const shopMatch = orderId.match(/Shop\/(\d+)/);
+    const shop = shopMatch ? shopMatch[1] : "unknown";
+    if (refund?.id) {
+      try {
+        await recordRefundProcessed(
+          shop,
+          orderId,
+          refund.id,
+          refundAmount.toFixed(2)
+        );
+      } catch (recordError) {
+        console.error("Failed to record refund for idempotency:", recordError);
+        // Continue - refund was successful
+      }
+    }
+
     // Now cancel the order
-    const cancelResult = await cancelOrderOnly(admin, orderId, reason, staffNote, notifyCustomer);
+    const cancelResult = await cancelOrderOnly(admin, orderId, reason, staffNote, restockInventory, notifyCustomer);
 
     if (!cancelResult.success) {
       // Refund succeeded but cancel failed - still return partial success
@@ -261,12 +342,13 @@ async function cancelOrderOnly(
   orderId: string,
   reason: CancellationReason,
   staffNote?: string,
+  restockInventory?: boolean,
   notifyCustomer?: boolean
 ): Promise<CancelOrderResult> {
   try {
     const response = await admin.graphql(`
-      mutation orderCancel($orderId: ID!, $reason: OrderCancelReason!, $notifyCustomer: Boolean, $staffNote: String) {
-        orderCancel(orderId: $orderId, reason: $reason, notifyCustomer: $notifyCustomer, staffNote: $staffNote) {
+      mutation orderCancel($orderId: ID!, $reason: OrderCancelReason!, $restock: Boolean!, $notifyCustomer: Boolean, $staffNote: String) {
+        orderCancel(orderId: $orderId, reason: $reason, restock: $restock, notifyCustomer: $notifyCustomer, staffNote: $staffNote) {
           job {
             id
           }
@@ -281,6 +363,7 @@ async function cancelOrderOnly(
       variables: {
         orderId,
         reason,
+        restock: restockInventory ?? true, // Required parameter - default to true
         notifyCustomer: notifyCustomer ?? false,
         staffNote: staffNote || undefined,
       },
