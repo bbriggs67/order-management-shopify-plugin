@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, Link } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useActionData, Link } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -17,6 +17,8 @@ import {
   Modal,
   DataTable,
   DescriptionList,
+  Select,
+  Checkbox,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { useState, useCallback } from "react";
@@ -24,9 +26,15 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { sendReadyNotification } from "../services/notifications.server";
 import { updatePickupEvent, deletePickupEvent } from "../services/google-calendar.server";
+import {
+  cancelOrderWithRefund,
+  getRefundableAmount,
+  CANCELLATION_REASONS,
+  type CancellationReason,
+} from "../services/order-management.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const { orderId } = params;
 
@@ -42,6 +50,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     include: {
       orderItems: true,
       pickupLocation: true,
+      subscriptionPickup: {
+        select: { id: true, status: true },
+      },
       notificationLogs: {
         orderBy: { createdAt: "desc" },
         take: 5,
@@ -53,11 +64,25 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Order not found", { status: 404 });
   }
 
-  return json({ pickup });
+  // Get refundable amount from Shopify
+  let refundableAmount: { amount: string; currencyCode: string } | null = null;
+  if (pickup.pickupStatus !== "CANCELLED" && pickup.pickupStatus !== "PICKED_UP") {
+    try {
+      refundableAmount = await getRefundableAmount(admin, pickup.shopifyOrderId);
+    } catch (error) {
+      console.error("Error getting refundable amount:", error);
+    }
+  }
+
+  return json({
+    pickup,
+    refundableAmount,
+    cancellationReasons: CANCELLATION_REASONS,
+  });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const { orderId } = params;
 
@@ -89,6 +114,144 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       data: { pickupStatus: newStatus as any },
     });
 
+    // Sync status to Shopify via tags and fulfillment
+    try {
+      // Map SSMA status to Shopify tags
+      const statusTagMap: Record<string, string> = {
+        SCHEDULED: "pickup-scheduled",
+        READY: "pickup-ready",
+        PICKED_UP: "pickup-completed",
+        CANCELLED: "pickup-cancelled",
+        NO_SHOW: "pickup-no-show",
+      };
+
+      // Remove old pickup status tags and add new one
+      const allStatusTags = Object.values(statusTagMap);
+      const newTag = statusTagMap[newStatus];
+
+      // Get current tags
+      const orderResponse = await admin.graphql(`
+        query getOrderTags($id: ID!) {
+          order(id: $id) {
+            id
+            tags
+          }
+        }
+      `, { variables: { id: pickup.shopifyOrderId } });
+
+      const orderData = await orderResponse.json();
+      const currentTags: string[] = orderData.data?.order?.tags || [];
+
+      // Filter out old status tags and add new one
+      const updatedTags = currentTags
+        .filter((tag: string) => !allStatusTags.includes(tag))
+        .concat(newTag);
+
+      // Update tags in Shopify
+      await admin.graphql(`
+        mutation updateOrderTags($input: OrderInput!) {
+          orderUpdate(input: $input) {
+            order {
+              id
+              tags
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `, {
+        variables: {
+          input: {
+            id: pickup.shopifyOrderId,
+            tags: updatedTags,
+          },
+        },
+      });
+
+      // If marking as PICKED_UP, also mark order as fulfilled in Shopify
+      if (newStatus === "PICKED_UP") {
+        try {
+          // Get fulfillment order
+          const fulfillmentResponse = await admin.graphql(`
+            query getFulfillmentOrders($orderId: ID!) {
+              order(id: $orderId) {
+                fulfillmentOrders(first: 5) {
+                  nodes {
+                    id
+                    status
+                    lineItems(first: 50) {
+                      nodes {
+                        id
+                        remainingQuantity
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          `, { variables: { orderId: pickup.shopifyOrderId } });
+
+          const fulfillmentData = await fulfillmentResponse.json();
+          const fulfillmentOrders = fulfillmentData.data?.order?.fulfillmentOrders?.nodes || [];
+
+          // Find unfulfilled orders
+          const unfulfilledOrder = fulfillmentOrders.find(
+            (fo: { status: string }) => fo.status === "OPEN" || fo.status === "IN_PROGRESS"
+          );
+
+          if (unfulfilledOrder) {
+            const lineItems = unfulfilledOrder.lineItems.nodes
+              .filter((li: { remainingQuantity: number }) => li.remainingQuantity > 0)
+              .map((li: { id: string }) => ({ fulfillmentOrderLineItemId: li.id }));
+
+            if (lineItems.length > 0) {
+              await admin.graphql(`
+                mutation fulfillOrder($fulfillment: FulfillmentV2Input!) {
+                  fulfillmentCreateV2(fulfillment: $fulfillment) {
+                    fulfillment {
+                      id
+                      status
+                    }
+                    userErrors {
+                      field
+                      message
+                    }
+                  }
+                }
+              `, {
+                variables: {
+                  fulfillment: {
+                    lineItemsByFulfillmentOrder: [
+                      {
+                        fulfillmentOrderId: unfulfilledOrder.id,
+                        fulfillmentOrderLineItems: lineItems,
+                      },
+                    ],
+                    notifyCustomer: false,
+                    trackingInfo: {
+                      company: "In-Store Pickup",
+                      number: `PICKUP-${pickup.shopifyOrderNumber}`,
+                    },
+                  },
+                },
+              });
+              console.log(`Fulfilled order ${pickup.shopifyOrderNumber} in Shopify`);
+            }
+          }
+        } catch (fulfillError) {
+          console.error("Failed to fulfill order in Shopify:", fulfillError);
+          // Continue - status was still updated
+        }
+      }
+
+      console.log(`Synced status "${newStatus}" to Shopify for order ${pickup.shopifyOrderNumber}`);
+    } catch (syncError) {
+      console.error("Failed to sync status to Shopify:", syncError);
+      // Continue - SSMA status was updated
+    }
+
     // If marking as READY, send notification
     if (newStatus === "READY") {
       try {
@@ -114,7 +277,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       }
     }
 
-    return json({ success: true, status: newStatus });
+    return json({ success: true, status: newStatus, message: `Status updated to ${newStatus}` });
   }
 
   if (action === "updateNotes") {
@@ -138,17 +301,95 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
   }
 
+  if (action === "cancelAndRefund") {
+    const { admin } = await authenticate.admin(request);
+
+    const reason = formData.get("reason") as CancellationReason;
+    const staffNote = formData.get("staffNote") as string;
+    const restockInventory = formData.get("restockInventory") === "true";
+    const notifyCustomer = formData.get("notifyCustomer") === "true";
+
+    if (!reason) {
+      return json({ error: "Cancellation reason is required" }, { status: 400 });
+    }
+
+    // Get the pickup with subscription info
+    const pickupWithSub = await prisma.pickupSchedule.findFirst({
+      where: { shop, id: orderId },
+      include: { subscriptionPickup: true },
+    });
+
+    if (!pickupWithSub) {
+      return json({ error: "Order not found" }, { status: 404 });
+    }
+
+    // Cancel and refund in Shopify
+    const result = await cancelOrderWithRefund(admin, {
+      orderId: pickupWithSub.shopifyOrderId,
+      reason,
+      staffNote,
+      restockInventory,
+      notifyCustomer,
+    });
+
+    if (!result.success) {
+      return json({ error: result.error || "Failed to cancel order" }, { status: 500 });
+    }
+
+    // Update SSMA pickup status
+    await prisma.pickupSchedule.update({
+      where: { id: orderId },
+      data: {
+        pickupStatus: "CANCELLED",
+        notes: pickupWithSub.notes
+          ? `${pickupWithSub.notes}\n\nCancelled: ${reason}${staffNote ? ` - ${staffNote}` : ""}`
+          : `Cancelled: ${reason}${staffNote ? ` - ${staffNote}` : ""}`,
+      },
+    });
+
+    // If linked to a subscription, also cancel it
+    if (pickupWithSub.subscriptionPickupId) {
+      await prisma.subscriptionPickup.update({
+        where: { id: pickupWithSub.subscriptionPickupId },
+        data: { status: "CANCELLED" },
+      });
+    }
+
+    // Delete Google Calendar event
+    try {
+      await deletePickupEvent(shop, orderId);
+    } catch (error) {
+      console.error("Failed to delete Google Calendar event:", error);
+    }
+
+    const refundMessage = result.refundAmount
+      ? ` Refunded $${result.refundAmount} ${result.currencyCode}.`
+      : "";
+
+    return json({
+      success: true,
+      message: `Order cancelled successfully.${refundMessage}`,
+    });
+  }
+
   return json({ error: "Unknown action" }, { status: 400 });
 };
 
 export default function OrderDetail() {
-  const { pickup } = useLoaderData<typeof loader>();
+  const { pickup, refundableAmount, cancellationReasons } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const isLoading = navigation.state === "submitting";
 
   const [notes, setNotes] = useState(pickup.notes || "");
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
+
+  // Cancel modal state
+  const [cancelReason, setCancelReason] = useState<string>("CUSTOMER");
+  const [cancelStaffNote, setCancelStaffNote] = useState("");
+  const [restockInventory, setRestockInventory] = useState(true);
+  const [notifyCustomer, setNotifyCustomer] = useState(true);
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -206,9 +447,15 @@ export default function OrderDetail() {
   }, [submit]);
 
   const handleConfirmCancel = useCallback(() => {
-    handleStatusChange("CANCELLED");
+    const formData = new FormData();
+    formData.append("_action", "cancelAndRefund");
+    formData.append("reason", cancelReason);
+    formData.append("staffNote", cancelStaffNote);
+    formData.append("restockInventory", restockInventory.toString());
+    formData.append("notifyCustomer", notifyCustomer.toString());
+    submit(formData, { method: "post" });
     setCancelModalOpen(false);
-  }, [handleStatusChange]);
+  }, [submit, cancelReason, cancelStaffNote, restockInventory, notifyCustomer]);
 
   // Order items table
   const itemRows = pickup.orderItems.map((item) => [
@@ -248,6 +495,22 @@ export default function OrderDetail() {
       <TitleBar title={`Order ${pickup.shopifyOrderNumber}`} />
 
       <Layout>
+        {/* Action Result Messages */}
+        {actionData && "success" in actionData && actionData.success && (
+          <Layout.Section>
+            <Banner tone="success" onDismiss={() => {}}>
+              {actionData.message || "Action completed successfully."}
+            </Banner>
+          </Layout.Section>
+        )}
+        {actionData && "error" in actionData && (
+          <Layout.Section>
+            <Banner tone="critical" onDismiss={() => {}}>
+              {actionData.error}
+            </Banner>
+          </Layout.Section>
+        )}
+
         {/* Main Content */}
         <Layout.Section>
           <BlockStack gap="400">
@@ -504,15 +767,16 @@ export default function OrderDetail() {
         </Layout.Section>
       </Layout>
 
-      {/* Cancel Confirmation Modal */}
+      {/* Cancel and Refund Modal */}
       <Modal
         open={cancelModalOpen}
         onClose={() => setCancelModalOpen(false)}
-        title="Cancel Order"
+        title={`Cancel order ${pickup.shopifyOrderNumber}?`}
         primaryAction={{
           content: "Cancel Order",
           destructive: true,
           onAction: handleConfirmCancel,
+          loading: isLoading,
         }}
         secondaryActions={[
           {
@@ -522,9 +786,60 @@ export default function OrderDetail() {
         ]}
       >
         <Modal.Section>
-          <Text as="p">
-            Are you sure you want to cancel this order? This action cannot be undone.
-          </Text>
+          <BlockStack gap="400">
+            {/* Refund Info */}
+            {refundableAmount && parseFloat(refundableAmount.amount) > 0 && (
+              <Banner tone="info">
+                <Text as="p">
+                  A full refund of <strong>${refundableAmount.amount} {refundableAmount.currencyCode}</strong> will be issued to the original payment method.
+                </Text>
+              </Banner>
+            )}
+
+            {/* Linked Subscription Warning */}
+            {pickup.subscriptionPickup && (
+              <Banner tone="warning">
+                <Text as="p">
+                  This order is linked to a subscription. Cancelling will also cancel the subscription.
+                </Text>
+              </Banner>
+            )}
+
+            {/* Reason for cancellation */}
+            <Select
+              label="Reason for cancellation"
+              options={cancellationReasons.map((r) => ({
+                label: r.label,
+                value: r.value,
+              }))}
+              value={cancelReason}
+              onChange={setCancelReason}
+            />
+
+            {/* Staff note */}
+            <TextField
+              label="Staff note"
+              value={cancelStaffNote}
+              onChange={setCancelStaffNote}
+              multiline={2}
+              autoComplete="off"
+              helpText="Only you and other staff can see this note."
+            />
+
+            {/* Options */}
+            <BlockStack gap="200">
+              <Checkbox
+                label="Restock inventory"
+                checked={restockInventory}
+                onChange={setRestockInventory}
+              />
+              <Checkbox
+                label="Send a notification to the customer"
+                checked={notifyCustomer}
+                onChange={setNotifyCustomer}
+              />
+            </BlockStack>
+          </BlockStack>
         </Modal.Section>
       </Modal>
     </Page>
