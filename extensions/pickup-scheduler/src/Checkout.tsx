@@ -55,8 +55,10 @@ const ATTR_PICKUP_TIME = "Pickup Time Slot";
 const ATTR_PICKUP_LOCATION_ID = "Pickup Location ID";
 const ATTR_PICKUP_LOCATION_NAME = "Pickup Location";
 
-// Main extension - renders after delivery address section
-export default reactExtension("purchase.checkout.delivery-address.render-after", () => (
+// Main extension - renders after contact information section
+// Using this target instead of delivery-address because products with
+// requires_shipping=false may skip the delivery address section entirely
+export default reactExtension("purchase.checkout.contact.render-after", () => (
   <PickupScheduler />
 ));
 

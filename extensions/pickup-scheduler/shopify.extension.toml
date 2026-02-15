@@ -11,7 +11,9 @@ handle = "pickup-scheduler"
 
 [[extensions.targeting]]
 module = "./src/Checkout.tsx"
-target = "purchase.checkout.delivery-address.render-after"
+# Using contact.render-after instead of delivery-address.render-after
+# because products with requires_shipping=false skip the delivery address section
+target = "purchase.checkout.contact.render-after"
 
 [extensions.capabilities]
 api_access = true
