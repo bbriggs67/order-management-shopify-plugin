@@ -13,10 +13,18 @@ export interface SellingPlanDetail {
   productCount: number;
 }
 
+export interface SellingPlanProduct {
+  id: string;
+  title: string;
+  imageUrl?: string;
+  imageAlt?: string;
+}
+
 export interface SellingPlanGroupDetail {
   id: string;
   name: string;
   productCount: number;
+  products: SellingPlanProduct[];
   plans: SellingPlanDetail[];
 }
 

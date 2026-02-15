@@ -76,12 +76,14 @@ export type {
   SellingPlanDetail,
   SellingPlanGroupDetail,
   SellingPlanConfig,
+  SellingPlanProduct,
 } from "../types/selling-plans";
 
 // Import types for internal use
 import type {
   SellingPlanDetail,
   SellingPlanGroupDetail,
+  SellingPlanProduct,
 } from "../types/selling-plans";
 
 export interface AdditionalPlanInfo {
@@ -143,6 +145,18 @@ const ALL_SELLING_PLAN_GROUPS_QUERY = `
           id
           name
           productCount
+          products(first: 50) {
+            edges {
+              node {
+                id
+                title
+                featuredImage {
+                  url
+                  altText
+                }
+              }
+            }
+          }
           sellingPlans(first: 20) {
             edges {
               node {
@@ -654,6 +668,19 @@ export async function getAllSellingPlanGroups(
 
   return data.sellingPlanGroups.edges.map((groupEdge: any) => {
     const group = groupEdge.node;
+
+    // Parse products
+    const products: SellingPlanProduct[] = (group.products?.edges || []).map((productEdge: any) => {
+      const product = productEdge.node;
+      return {
+        id: product.id,
+        title: product.title,
+        imageUrl: product.featuredImage?.url,
+        imageAlt: product.featuredImage?.altText,
+      };
+    });
+
+    // Parse plans
     const plans: SellingPlanDetail[] = group.sellingPlans.edges.map((planEdge: any) => {
       const plan = planEdge.node;
       const billingPolicy = plan.billingPolicy || {};
@@ -687,6 +714,7 @@ export async function getAllSellingPlanGroups(
       id: group.id,
       name: group.name,
       productCount: group.productCount || 0,
+      products,
       plans,
     };
   });

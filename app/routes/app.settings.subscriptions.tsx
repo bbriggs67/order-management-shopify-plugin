@@ -18,14 +18,19 @@ import {
   FormLayout,
   Modal,
   Select,
+  Thumbnail,
+  Icon,
+  Collapsible,
 } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
+import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { ImageIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import {
   ensureSellingPlanGroup,
   getSellingPlanConfig,
   addProductsToSellingPlanGroup,
+  removeProductsFromSellingPlanGroup,
   getAllSellingPlanGroups,
   addSellingPlanToGroup,
   deleteSellingPlan,
@@ -97,6 +102,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       id: sellingPlanConfig.groupId,
       name: sellingPlanConfig.groupName || "Subscribe & Save",
       productCount: 0, // Unknown without API access
+      products: [], // Empty when using local config
       plans,
     }];
   }
@@ -169,14 +175,79 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       case "add_products": {
         const productIdsStr = formData.get("productIds") as string;
+        const groupId = formData.get("groupId") as string;
         if (!productIdsStr) {
           return json({ error: "No product IDs provided" }, { status: 400 });
         }
-        const productIds = productIdsStr.split(",").map((id) => id.trim());
-        await addProductsToSellingPlanGroup(shop, admin, productIds);
+        const productIds = productIdsStr.split(",").map((id) => id.trim()).filter(Boolean);
+
+        // If a specific group is specified, use direct GraphQL call
+        if (groupId) {
+          const response = await admin.graphql(`
+            mutation addProductsToSellingPlanGroup($id: ID!, $productIds: [ID!]!) {
+              sellingPlanGroupAddProducts(id: $id, productIds: $productIds) {
+                sellingPlanGroup {
+                  id
+                }
+                userErrors {
+                  field
+                  message
+                }
+              }
+            }
+          `, {
+            variables: { id: groupId, productIds },
+          });
+
+          const data = await response.json();
+          if (data.data?.sellingPlanGroupAddProducts?.userErrors?.length > 0) {
+            const errors = data.data.sellingPlanGroupAddProducts.userErrors
+              .map((e: { message: string }) => e.message)
+              .join(", ");
+            return json({ error: errors }, { status: 400 });
+          }
+        } else {
+          await addProductsToSellingPlanGroup(shop, admin, productIds);
+        }
+
         return json({
           success: true,
-          message: `Added ${productIds.length} product(s) to Subscribe & Save`,
+          message: `Added ${productIds.length} product(s) to subscription plan`,
+        });
+      }
+
+      case "remove_product": {
+        const productId = formData.get("productId") as string;
+        const groupId = formData.get("groupId") as string;
+        if (!productId || !groupId) {
+          return json({ error: "Missing product or group ID" }, { status: 400 });
+        }
+
+        const response = await admin.graphql(`
+          mutation removeProductFromSellingPlanGroup($id: ID!, $productIds: [ID!]!) {
+            sellingPlanGroupRemoveProducts(id: $id, productIds: $productIds) {
+              removedProductIds
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `, {
+          variables: { id: groupId, productIds: [productId] },
+        });
+
+        const data = await response.json();
+        if (data.data?.sellingPlanGroupRemoveProducts?.userErrors?.length > 0) {
+          const errors = data.data.sellingPlanGroupRemoveProducts.userErrors
+            .map((e: { message: string }) => e.message)
+            .join(", ");
+          return json({ error: errors }, { status: 400 });
+        }
+
+        return json({
+          success: true,
+          message: "Product removed from subscription plan",
         });
       }
 
@@ -552,9 +623,9 @@ export default function SubscriptionsSettings() {
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
+  const shopify = useAppBridge();
   const isLoading = navigation.state !== "idle";
 
-  const [productIds, setProductIds] = useState("");
   const [copied, setCopied] = useState(false);
 
   // Add Plan Modal State
@@ -572,6 +643,48 @@ export default function SubscriptionsSettings() {
   // Manual sync state
   const [contractId, setContractId] = useState("");
 
+  // Product management state
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  // Toggle product list visibility for a group
+  const toggleGroupProducts = useCallback((groupId: string) => {
+    setExpandedGroups((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(groupId)) {
+        newSet.delete(groupId);
+      } else {
+        newSet.add(groupId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // Open Shopify Resource Picker to select products
+  const handleOpenProductPicker = useCallback(async (groupId: string) => {
+    try {
+      const selected = await shopify.resourcePicker({
+        type: "product",
+        multiple: true,
+        selectionIds: [], // Don't preselect - we want to add new products
+        filter: {
+          variants: false,
+        },
+      });
+
+      if (selected && selected.length > 0) {
+        const productIds = selected.map((product: { id: string }) => product.id).join(",");
+        submit({ intent: "add_products", productIds, groupId }, { method: "post" });
+      }
+    } catch (err) {
+      console.error("Resource picker error:", err);
+    }
+  }, [shopify, submit]);
+
+  // Remove a product from a selling plan group
+  const handleRemoveProduct = useCallback((groupId: string, productId: string) => {
+    submit({ intent: "remove_product", groupId, productId }, { method: "post" });
+  }, [submit]);
+
   const handleCopyUrl = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(customerPortalUrl);
@@ -584,12 +697,6 @@ export default function SubscriptionsSettings() {
 
   const handleCreateSellingPlans = () => {
     submit({ intent: "create_selling_plans" }, { method: "post" });
-  };
-
-  const handleAddProducts = () => {
-    if (!productIds.trim()) return;
-    submit({ intent: "add_products", productIds }, { method: "post" });
-    setProductIds("");
   };
 
   const handleRetryBilling = (subscriptionId: string) => {
@@ -706,7 +813,7 @@ export default function SubscriptionsSettings() {
                   Subscription Plans
                 </Text>
                 {sellingPlanGroups.length > 0 ? (
-                  <Badge tone="success">{sellingPlanGroups.length} group(s)</Badge>
+                  <Badge tone="success">{`${sellingPlanGroups.length} group(s)`}</Badge>
                 ) : (
                   <Badge tone="attention">Not Configured</Badge>
                 )}
@@ -756,16 +863,25 @@ export default function SubscriptionsSettings() {
                               {group.productCount} product(s)
                             </Text>
                           </BlockStack>
-                          <Button
-                            size="slim"
-                            onClick={() => handleOpenAddPlanModal(group.id)}
-                          >
-                            Add Plan
-                          </Button>
+                          <InlineStack gap="200">
+                            <Button
+                              size="slim"
+                              onClick={() => handleOpenProductPicker(group.id)}
+                            >
+                              Add Products
+                            </Button>
+                            <Button
+                              size="slim"
+                              onClick={() => handleOpenAddPlanModal(group.id)}
+                            >
+                              Add Plan
+                            </Button>
+                          </InlineStack>
                         </InlineStack>
 
                         <Divider />
 
+                        {/* Selling Plans */}
                         {group.plans.length === 0 ? (
                           <Text as="p" tone="subdued">
                             No plans in this group.
@@ -791,6 +907,75 @@ export default function SubscriptionsSettings() {
                             ])}
                           />
                         )}
+
+                        <Divider />
+
+                        {/* Products Section */}
+                        <BlockStack gap="200">
+                          <InlineStack align="space-between" blockAlign="center">
+                            <Button
+                              variant="plain"
+                              onClick={() => toggleGroupProducts(group.id)}
+                              icon={expandedGroups.has(group.id) ? ChevronUpIcon : ChevronDownIcon}
+                            >
+                              {expandedGroups.has(group.id) ? "Hide" : "Show"} Products ({group.products?.length || 0})
+                            </Button>
+                          </InlineStack>
+
+                          <Collapsible
+                            open={expandedGroups.has(group.id)}
+                            id={`products-${group.id}`}
+                          >
+                            <Box paddingBlockStart="200">
+                              {!group.products || group.products.length === 0 ? (
+                                <Banner tone="info">
+                                  No products in this group yet. Click "Add Products" to browse and add products.
+                                </Banner>
+                              ) : (
+                                <BlockStack gap="200">
+                                  {group.products.map((product) => (
+                                    <Box
+                                      key={product.id}
+                                      padding="200"
+                                      background="bg-surface"
+                                      borderRadius="100"
+                                    >
+                                      <InlineStack align="space-between" blockAlign="center" gap="300">
+                                        <InlineStack gap="300" blockAlign="center">
+                                          {product.imageUrl ? (
+                                            <Thumbnail
+                                              source={product.imageUrl}
+                                              alt={product.imageAlt || product.title}
+                                              size="small"
+                                            />
+                                          ) : (
+                                            <Box
+                                              background="bg-surface-secondary"
+                                              padding="200"
+                                              borderRadius="100"
+                                            >
+                                              <Icon source={ImageIcon} tone="subdued" />
+                                            </Box>
+                                          )}
+                                          <Text as="span" variant="bodyMd">
+                                            {product.title}
+                                          </Text>
+                                        </InlineStack>
+                                        <Button
+                                          size="slim"
+                                          tone="critical"
+                                          icon={DeleteIcon}
+                                          onClick={() => handleRemoveProduct(group.id, product.id)}
+                                          accessibilityLabel={`Remove ${product.title}`}
+                                        />
+                                      </InlineStack>
+                                    </Box>
+                                  ))}
+                                </BlockStack>
+                              )}
+                            </Box>
+                          </Collapsible>
+                        </BlockStack>
                       </BlockStack>
                     </Box>
                   ))}
@@ -800,39 +985,6 @@ export default function SubscriptionsSettings() {
           </Card>
         </Layout.Section>
 
-        {/* Add Products to Selling Plan Group */}
-        {sellingPlanConfig && (
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">
-                  Add Products to Subscribe & Save
-                </Text>
-                <Text as="p" tone="subdued">
-                  Enter Shopify Product IDs (GIDs) to add them to the Subscribe & Save
-                  selling plan group. Separate multiple IDs with commas.
-                </Text>
-                <FormLayout>
-                  <TextField
-                    label="Product IDs"
-                    value={productIds}
-                    onChange={setProductIds}
-                    placeholder="gid://shopify/Product/123456789, gid://shopify/Product/987654321"
-                    autoComplete="off"
-                    helpText="Find Product IDs in your Shopify admin URL or via the API"
-                  />
-                  <Button
-                    onClick={handleAddProducts}
-                    disabled={!productIds.trim()}
-                    loading={isLoading}
-                  >
-                    Add Products
-                  </Button>
-                </FormLayout>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        )}
 
         {/* Customer Subscription Management URL */}
         <Layout.Section>
