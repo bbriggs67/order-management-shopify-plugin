@@ -178,15 +178,41 @@ export default function WebhookDebug() {
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
+              <Text as="h2" variant="headingMd">Test Webhook Endpoint</Text>
+              <Text as="p" tone="subdued">
+                Use these links to verify the webhook endpoints are reachable:
+              </Text>
+              <BlockStack gap="100">
+                <Text as="p">
+                  <a href={`${appUrl}/webhooks/health`} target="_blank" rel="noopener noreferrer">
+                    {appUrl}/webhooks/health
+                  </a>
+                  {" "}- Should return JSON with status "healthy"
+                </Text>
+                <Text as="p">
+                  <a href={`${appUrl}/webhooks/debug`} target="_blank" rel="noopener noreferrer">
+                    {appUrl}/webhooks/debug
+                  </a>
+                  {" "}- Debug endpoint for testing
+                </Text>
+              </BlockStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="300">
               <Text as="h2" variant="headingMd">Troubleshooting</Text>
               <Text as="p" tone="subdued">
                 If webhooks show as registered but orders aren't syncing:
               </Text>
               <BlockStack gap="100">
                 <Text as="p">1. Check that the Callback URL matches the App URL above</Text>
-                <Text as="p">2. Verify Railway deployment is active and healthy</Text>
-                <Text as="p">3. Check Shopify Partners Dashboard → Apps → Susies Sourdough Manager → Insights → Webhook metrics</Text>
-                <Text as="p">4. Look for failed deliveries or error codes in the webhook metrics</Text>
+                <Text as="p">2. Click the health check links above to verify endpoints are reachable</Text>
+                <Text as="p">3. Verify Railway deployment is active and healthy</Text>
+                <Text as="p">4. Check Shopify Partners Dashboard → Apps → Susies Sourdough Manager → Insights → Webhook metrics</Text>
+                <Text as="p">5. Look for failed deliveries or error codes in the webhook metrics</Text>
               </BlockStack>
             </BlockStack>
           </Card>
