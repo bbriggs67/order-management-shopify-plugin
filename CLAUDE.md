@@ -157,6 +157,135 @@ npx prisma migrate deploy                      # Production (Railway runs this)
 
 > **Instructions**: Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-15 - Webhook Bug Fixes, Migration Tools, and Code Cleanup
+
+**Context:**
+Testing revealed that subscription orders weren't being properly synced to SSMA. Investigation discovered multiple bugs and also that testing was being performed on the wrong theme/checkout system.
+
+**Root Cause Analysis:**
+1. **Theme Configuration Issue**: The live store has TWO checkout systems:
+   - **Dawn theme (live)**: Uses Bird pickup scheduler + Shopify native subscriptions
+   - **TEST theme**: Uses SSMA pickup scheduler + SSMA subscription backend
+   - Orders placed through checkout were using Bird/Shopify systems, not SSMA
+   - Theme must be published to test SSMA's checkout extension properly
+
+2. **Webhook Attribute Parsing Bug (Real Bug - Fixed)**:
+   - Shopify REST API webhook payloads use `"name"` for note_attributes, NOT `"key"`
+   - Code was looking for `a.key` instead of `a.name`
+   - This caused all pickup attributes (date, time, location) to be missed
+
+3. **Date Parsing Bug (Real Bug - Fixed)**:
+   - Checkout extension formats dates as "Wednesday, February 25" (without year)
+   - Webhook handler couldn't parse this format
+   - Added year inference logic with past-date detection
+
+**Bug Fixes Applied:**
+
+1. **`app/routes/webhooks.orders.create.tsx`**:
+   - Changed `OrderAttribute` interface to use `name` instead of `key`
+   - Updated `getAttr()` to look for `a.name === key`
+   - Added robust date parsing for multiple formats:
+     - "Friday, January 17 (2025-01-17)" - ISO in parentheses
+     - "2025-01-17" - plain ISO
+     - "Wednesday, February 25" - human readable (infers year)
+   - Added extensive logging for debugging
+
+2. **`app/routes/webhooks.orders.updated.tsx`**:
+   - Same attribute name fix (`a.name` instead of `a.key`)
+   - Same date parsing improvements
+
+3. **Checkout Extension Target Changed**:
+   - Changed from `purchase.checkout.delivery-address.render-after` to `purchase.checkout.contact.render-after`
+   - Reason: Products with `requires_shipping=false` may skip delivery address section entirely
+   - Files: `extensions/pickup-scheduler/shopify.extension.toml`, `extensions/pickup-scheduler/src/Checkout.tsx`
+
+**New Features Added:**
+
+1. **Migration Service** (`app/services/migration.server.ts`):
+   - Import existing orders from Shopify into SSMA
+   - Import active subscription contracts
+   - Support for both Bird and SSMA attribute formats
+   - Dry-run mode for preview before actual import
+   - Google Calendar event creation for imported orders
+   - Skip duplicates (safe to run multiple times)
+
+2. **Migration Admin Page** (`app/routes/app.settings.migration.tsx`):
+   - Visual status showing Shopify vs SSMA data counts
+   - Configurable import options (orders, subscriptions, calendar events)
+   - Dry-run toggle for preview
+   - Detailed results showing each imported/skipped item
+
+3. **Webhook Debug Page Enhancements** (`app/routes/app.debug.webhooks.tsx`):
+   - Session status display
+   - Recent webhook events from database
+   - "View Payload" button to inspect full webhook data
+   - Helps troubleshoot why webhooks aren't syncing
+
+4. **Settings Page Updates** (`app/routes/app.settings._index.tsx`):
+   - Added "Administration" section
+   - Link to Data Migration tool
+   - Link to Webhook Debug page
+
+**Files Created:**
+- `app/services/migration.server.ts` - Migration service
+- `app/routes/app.settings.migration.tsx` - Migration admin UI
+
+**Files Modified:**
+- `app/routes/webhooks.orders.create.tsx` - Attribute parsing fix, date parsing
+- `app/routes/webhooks.orders.updated.tsx` - Same fixes
+- `app/routes/app.debug.webhooks.tsx` - Enhanced debugging
+- `app/routes/app.settings._index.tsx` - Added admin links
+- `extensions/pickup-scheduler/shopify.extension.toml` - Target change
+- `extensions/pickup-scheduler/src/Checkout.tsx` - Target change
+
+---
+
+## Migration Plan for Production Rollout
+
+### Prerequisites
+1. All code changes deployed to Railway
+2. Checkout extension deployed: `npx shopify app deploy --config shopify.app.susies-sourdough-manager.toml`
+
+### Step 1: Test Theme Swap (Early Morning)
+1. Choose low-traffic time (6-7 AM)
+2. In Shopify Admin → Online Store → Themes
+3. Click "Publish" on "TEST - DO NOT PUBLISH" theme
+4. Dawn theme will move to Theme library (instant rollback available)
+
+### Step 2: Place Test Order
+1. Go to store as customer (incognito)
+2. Add subscription product to cart
+3. Complete checkout with pickup date/time selection
+4. Verify in SSMA:
+   - Order appears on Orders page
+   - Subscription appears on Subscriptions page
+   - Calendar shows the pickup event
+
+### Step 3: Check Webhook Debug
+1. Go to SSMA → Settings → Webhook Debug
+2. Verify webhook received with populated `note_attributes`
+3. If attributes are empty, there's still an issue with the checkout extension
+
+### Step 4: Run Migration (If Test Passes)
+1. Go to SSMA → Settings → Data Migration
+2. Run with "Dry Run" enabled first
+3. Review what would be imported
+4. Uncheck "Dry Run" and run actual migration
+5. Verify all active orders/subscriptions appear in SSMA
+
+### Step 5: Verify Google Calendar
+1. Check Google Calendar for imported events
+2. Ensure colors are correct (blue=SCHEDULED, green=READY)
+3. Verify event details (customer name, order number, items)
+
+### Rollback Plan
+If issues occur:
+1. Go to Themes → Dawn → Publish (instant rollback)
+2. Clear any test data from SSMA database if needed
+3. Investigate and fix before trying again
+
+---
+
 ### 2026-02-14 - Duplicate Widget Root Cause Identified
 
 **Context:**

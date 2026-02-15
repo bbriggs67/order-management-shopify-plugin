@@ -18,6 +18,8 @@ import {
   NotificationIcon,
   SettingsIcon,
   RefreshIcon,
+  ImportIcon,
+  StatusActiveIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -126,6 +128,28 @@ export default function SettingsIndex() {
               description="Configure SMS and email notifications for customers"
               href="/app/settings/notifications"
               icon={NotificationIcon}
+            />
+          </BlockStack>
+        </Layout.Section>
+
+        <Layout.Section>
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingLg">
+              Administration
+            </Text>
+
+            <SettingsCard
+              title="Data Migration"
+              description="Import existing orders and subscriptions from Shopify into SSMA"
+              href="/app/settings/migration"
+              icon={ImportIcon}
+            />
+
+            <SettingsCard
+              title="Webhook Debug"
+              description="Monitor webhook health and troubleshoot sync issues"
+              href="/app/debug/webhooks"
+              icon={StatusActiveIcon}
             />
           </BlockStack>
         </Layout.Section>
