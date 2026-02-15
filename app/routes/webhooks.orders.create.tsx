@@ -60,9 +60,14 @@ interface OrderWebhookPayload {
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
+  console.log("=== ORDERS/CREATE WEBHOOK RECEIVED ===");
+  console.log("Timestamp:", new Date().toISOString());
+  console.log("Shopify Topic Header:", request.headers.get("x-shopify-topic"));
+  console.log("Shopify Shop Header:", request.headers.get("x-shopify-shop-domain"));
+
   const { shop, topic, payload } = await authenticate.webhook(request);
 
-  console.log(`Received webhook: ${topic} for shop: ${shop}`);
+  console.log(`Authenticated webhook: ${topic} for shop: ${shop}`);
 
   if (!payload || typeof payload !== "object") {
     console.error("Invalid webhook payload");
