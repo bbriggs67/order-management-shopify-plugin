@@ -555,6 +555,180 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  // Sync status from Shopify - update SSMA subscriptions with current Shopify contract status
+  if (intent === "sync_status") {
+    try {
+      const { session } = await authenticate.admin(request);
+      const shop = session.shop;
+
+      // Get all subscriptions in SSMA
+      const ssmaSubscriptions = await prisma.subscriptionPickup.findMany({
+        where: { shop },
+      });
+
+      if (ssmaSubscriptions.length === 0) {
+        return json({ success: true, message: "No subscriptions to sync" });
+      }
+
+      // Query Shopify for ALL contracts (not just active) to get current status
+      const contractsResponse = await admin.graphql(`
+        query getAllContracts {
+          subscriptionContracts(first: 100) {
+            nodes {
+              id
+              status
+            }
+          }
+        }
+      `);
+
+      const contractsData = await contractsResponse.json();
+      const contracts = contractsData.data?.subscriptionContracts?.nodes || [];
+
+      // Create a map of contract ID -> status
+      const statusMap = new Map<string, string>();
+      for (const contract of contracts) {
+        statusMap.set(contract.id, contract.status);
+      }
+
+      let updated = 0;
+      let cancelled = 0;
+      const errors: string[] = [];
+
+      for (const subscription of ssmaSubscriptions) {
+        const shopifyStatus = statusMap.get(subscription.shopifyContractId);
+
+        if (shopifyStatus && shopifyStatus !== subscription.status) {
+          try {
+            // Map Shopify status to SSMA status
+            let newStatus: "ACTIVE" | "PAUSED" | "CANCELLED" = "ACTIVE";
+            if (shopifyStatus === "CANCELLED") {
+              newStatus = "CANCELLED";
+              cancelled++;
+            } else if (shopifyStatus === "PAUSED") {
+              newStatus = "PAUSED";
+            }
+
+            await prisma.subscriptionPickup.update({
+              where: { id: subscription.id },
+              data: { status: newStatus },
+            });
+            updated++;
+          } catch (err) {
+            errors.push(`Subscription ${subscription.id}: ${err instanceof Error ? err.message : "Unknown error"}`);
+          }
+        }
+      }
+
+      return json({
+        success: true,
+        message: `Synced status for ${updated} subscriptions (${cancelled} marked as cancelled)`,
+        updated,
+        cancelled,
+        errors,
+      });
+    } catch (error) {
+      console.error("Error syncing status:", error);
+      return json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  }
+
+  // Generate multiple future pickup schedules for active subscriptions
+  if (intent === "generate_future_pickups") {
+    try {
+      const { createPickupEvent } = await import("../services/google-calendar.server");
+      const { session } = await authenticate.admin(request);
+      const shop = session.shop;
+
+      // Get weeks parameter (default to 4 weeks ahead)
+      const weeksAhead = parseInt(formData.get("weeks") as string) || 4;
+
+      // Find all active subscriptions
+      const subscriptions = await prisma.subscriptionPickup.findMany({
+        where: {
+          shop,
+          status: "ACTIVE",
+        },
+      });
+
+      let pickupsCreated = 0;
+      let alreadyExist = 0;
+      const errors: string[] = [];
+
+      for (const subscription of subscriptions) {
+        if (!subscription.nextPickupDate) continue;
+
+        // Generate pickup dates for the next X weeks
+        const frequency = subscription.frequency === "BIWEEKLY" ? 14 : subscription.frequency === "TRIWEEKLY" ? 21 : 7;
+        let currentDate = new Date(subscription.nextPickupDate);
+
+        for (let week = 0; week < weeksAhead; week++) {
+          const pickupDate = new Date(currentDate);
+          pickupDate.setDate(pickupDate.getDate() + (week * frequency));
+
+          // Check if pickup already exists for this date
+          const existingPickup = await prisma.pickupSchedule.findFirst({
+            where: {
+              shop,
+              subscriptionPickupId: subscription.id,
+              pickupDate: {
+                gte: new Date(pickupDate.setHours(0, 0, 0, 0)),
+                lt: new Date(pickupDate.setHours(23, 59, 59, 999)),
+              },
+            },
+          });
+
+          if (existingPickup) {
+            alreadyExist++;
+            continue;
+          }
+
+          try {
+            // Reset the date (it was modified by setHours)
+            const cleanDate = new Date(subscription.nextPickupDate!);
+            cleanDate.setDate(cleanDate.getDate() + (week * frequency));
+
+            const pickupSchedule = await prisma.pickupSchedule.create({
+              data: {
+                shop,
+                shopifyOrderId: `subscription-${subscription.id}-${cleanDate.getTime()}`,
+                shopifyOrderNumber: `SUB-${subscription.id.slice(-6).toUpperCase()}`,
+                customerName: subscription.customerName,
+                customerEmail: subscription.customerEmail,
+                customerPhone: subscription.customerPhone,
+                pickupDate: cleanDate,
+                pickupTimeSlot: subscription.preferredTimeSlot,
+                pickupStatus: "SCHEDULED",
+                subscriptionPickupId: subscription.id,
+              },
+            });
+            pickupsCreated++;
+
+            // Try to create Google Calendar event
+            try {
+              await createPickupEvent(shop, pickupSchedule.id);
+            } catch (calError) {
+              console.error("Failed to create calendar event:", calError);
+            }
+          } catch (err) {
+            errors.push(`Week ${week} for ${subscription.customerName}: ${err instanceof Error ? err.message : "Unknown error"}`);
+          }
+        }
+      }
+
+      return json({
+        success: true,
+        message: `Created ${pickupsCreated} future pickup schedules (${alreadyExist} already existed)`,
+        pickupsCreated,
+        alreadyExist,
+        errors,
+      });
+    } catch (error) {
+      console.error("Error generating future pickups:", error);
+      return json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  }
+
   // Clear all test data (subscriptions, pickup schedules, webhook events)
   if (intent === "clear_test_data") {
     try {
@@ -847,6 +1021,27 @@ export default function SubscriptionDebugPage() {
                     loading={isLoading}
                   >
                     Sync Contracts to SSMA
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      const formData = new FormData();
+                      formData.append("intent", "sync_status");
+                      submit(formData, { method: "post" });
+                    }}
+                    loading={isLoading}
+                  >
+                    Sync Status from Shopify
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      const formData = new FormData();
+                      formData.append("intent", "generate_future_pickups");
+                      formData.append("weeks", "4");
+                      submit(formData, { method: "post" });
+                    }}
+                    loading={isLoading}
+                  >
+                    Generate 4 Weeks of Pickups
                   </Button>
                   <Button
                     onClick={() => {
