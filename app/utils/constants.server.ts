@@ -28,8 +28,8 @@ export function getDayName(dayOfWeek: number): string {
 // Billing Constants
 // ============================================
 
-/** Default billing lead time in hours (3.5 days before pickup) */
-export const DEFAULT_BILLING_LEAD_HOURS = 84;
+/** Default billing lead time in hours (2 days before pickup) */
+export const DEFAULT_BILLING_LEAD_HOURS = 48;
 
 /** Minimum billing lead time in hours (1 hour before pickup) */
 export const MIN_BILLING_LEAD_HOURS = 1;
@@ -57,6 +57,7 @@ export const DAYS_IN_BIWEEKLY = 14;
 export const SUBSCRIPTION_FREQUENCIES = {
   WEEKLY: "WEEKLY",
   BIWEEKLY: "BIWEEKLY",
+  TRIWEEKLY: "TRIWEEKLY",
 } as const;
 
 export type SubscriptionFrequency = keyof typeof SUBSCRIPTION_FREQUENCIES;
@@ -114,7 +115,7 @@ export const DEFAULT_PICKUP_DAYS = [2, 3, 5, 6] as const;
 export const VALID_DAY_RANGE = { min: 0, max: 6 } as const;
 
 /** Valid frequency values */
-export const VALID_FREQUENCIES = ["WEEKLY", "BIWEEKLY"] as const;
+export const VALID_FREQUENCIES = ["WEEKLY", "BIWEEKLY", "TRIWEEKLY"] as const;
 
 /**
  * Validate that a day number is a valid day of week (0-6)

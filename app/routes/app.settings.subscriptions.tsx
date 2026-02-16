@@ -24,7 +24,7 @@ import {
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { ImageIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { authenticate } from "../shopify.server";
 import {
   ensureSellingPlanGroup,
@@ -46,10 +46,24 @@ import { formatDatePacific } from "../utils/timezone.server";
 import { createSubscriptionFromContract } from "../services/subscription.server";
 import prisma from "../db.server";
 import { checkWebhookHealth, registerAllWebhooks } from "../services/webhook-registration.server";
+import {
+  getSubscriptionPlans,
+  ensureDefaultPlans,
+  createSubscriptionPlan,
+  updateSubscriptionPlan,
+  deleteSubscriptionPlan as deleteSSMAPlan,
+} from "../services/subscription-plans.server";
+import type { SubscriptionPlanRecord } from "../services/subscription-plans.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
+
+  // Ensure SSMA default subscription plans exist
+  await ensureDefaultPlans(shop);
+
+  // Get all SSMA subscription plans
+  const subscriptionPlans = await getSubscriptionPlans(shop);
 
   // Get selling plan configuration from our database
   const sellingPlanConfig = await getSellingPlanConfig(shop);
@@ -155,6 +169,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     shop,
+    subscriptionPlans,
     sellingPlanConfig,
     sellingPlanGroups,
     usingLocalConfig,
@@ -724,6 +739,57 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
       }
 
+      case "create_ssma_plan": {
+        const name = formData.get("name") as string;
+        const interval = formData.get("interval") as string;
+        const intervalCount = parseInt(formData.get("intervalCount") as string, 10);
+        const discountPercent = parseFloat(formData.get("discountPercent") as string);
+        const discountCode = (formData.get("discountCode") as string) || null;
+        const billingLeadHours = parseInt(formData.get("billingLeadHours") as string, 10);
+        const isActive = formData.get("isActive") === "true";
+
+        if (!name || !interval || isNaN(intervalCount) || isNaN(discountPercent) || isNaN(billingLeadHours)) {
+          return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const plan = await createSubscriptionPlan(shop, {
+          name, interval, intervalCount, discountPercent, discountCode, billingLeadHours, isActive,
+        });
+
+        return json({ success: true, message: `Created plan: ${plan.name}` });
+      }
+
+      case "update_ssma_plan": {
+        const planId = formData.get("planId") as string;
+        const name = formData.get("name") as string;
+        const interval = formData.get("interval") as string;
+        const intervalCount = parseInt(formData.get("intervalCount") as string, 10);
+        const discountPercent = parseFloat(formData.get("discountPercent") as string);
+        const discountCode = (formData.get("discountCode") as string) || null;
+        const billingLeadHours = parseInt(formData.get("billingLeadHours") as string, 10);
+        const isActive = formData.get("isActive") === "true";
+
+        if (!planId || !name || !interval || isNaN(intervalCount) || isNaN(discountPercent) || isNaN(billingLeadHours)) {
+          return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const plan = await updateSubscriptionPlan(shop, planId, {
+          name, interval, intervalCount, discountPercent, discountCode, billingLeadHours, isActive,
+        });
+
+        return json({ success: true, message: `Updated plan: ${plan.name}` });
+      }
+
+      case "delete_ssma_plan": {
+        const planId = formData.get("planId") as string;
+        if (!planId) {
+          return json({ error: "Missing plan ID" }, { status: 400 });
+        }
+
+        await deleteSSMAPlan(shop, planId);
+        return json({ success: true, message: "Subscription plan deleted" });
+      }
+
       case "register_webhooks": {
         const result = await registerAllWebhooks(admin);
 
@@ -757,7 +823,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SubscriptionsSettings() {
-  const { sellingPlanConfig, sellingPlanGroups, usingLocalConfig, failedBillings, upcomingBillings, customerPortalUrl, webhookHealth } = useLoaderData<typeof loader>();
+  const { subscriptionPlans, sellingPlanConfig, sellingPlanGroups, usingLocalConfig, failedBillings, upcomingBillings, customerPortalUrl, webhookHealth } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -766,7 +832,7 @@ export default function SubscriptionsSettings() {
 
   const [copied, setCopied] = useState(false);
 
-  // Add Plan Modal State
+  // Shopify Selling Plan - Add Plan Modal State (legacy)
   const [addPlanModalOpen, setAddPlanModalOpen] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [newPlanName, setNewPlanName] = useState("");
@@ -774,9 +840,24 @@ export default function SubscriptionsSettings() {
   const [newPlanIntervalCount, setNewPlanIntervalCount] = useState("1");
   const [newPlanDiscount, setNewPlanDiscount] = useState("5");
 
-  // Delete confirmation state
+  // Shopify Selling Plan - Delete confirmation state (legacy)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [planToDelete, setPlanToDelete] = useState<{ groupId: string; planId: string; name: string } | null>(null);
+
+  // SSMA Plan modal state
+  const [ssmaPlanModalOpen, setSSMAPlanModalOpen] = useState(false);
+  const [editingSSMAPlan, setEditingSSMAPlan] = useState<typeof subscriptionPlans[0] | null>(null);
+  const [ssmaPlanName, setSSMAPlanName] = useState("");
+  const [ssmaPlanInterval, setSSMAPlanInterval] = useState("WEEK");
+  const [ssmaPlanIntervalCount, setSSMAPlanIntervalCount] = useState("1");
+  const [ssmaPlanDiscount, setSSMAPlanDiscount] = useState("10");
+  const [ssmaPlanDiscountCode, setSSMAPlanDiscountCode] = useState("");
+  const [ssmaPlanBillingLeadHours, setSSMAPlanBillingLeadHours] = useState("48");
+  const [ssmaPlanIsActive, setSSMAPlanIsActive] = useState(true);
+
+  // SSMA Plan delete confirmation
+  const [ssmaDeleteConfirmOpen, setSSMADeleteConfirmOpen] = useState(false);
+  const [ssmaPlanToDelete, setSSMAPlanToDelete] = useState<{ id: string; name: string } | null>(null);
 
   // Manual sync state
   const [contractId, setContractId] = useState("");
@@ -886,6 +967,73 @@ export default function SubscriptionsSettings() {
     setDeleteConfirmOpen(false);
     setPlanToDelete(null);
   };
+
+  // SSMA Plan handlers
+  const openSSMAPlanModal = useCallback((plan?: typeof subscriptionPlans[0]) => {
+    if (plan) {
+      setEditingSSMAPlan(plan);
+      setSSMAPlanName(plan.name);
+      setSSMAPlanInterval(plan.interval);
+      setSSMAPlanIntervalCount(String(plan.intervalCount));
+      setSSMAPlanDiscount(String(plan.discountPercent));
+      setSSMAPlanDiscountCode(plan.discountCode || "");
+      setSSMAPlanBillingLeadHours(String(plan.billingLeadHours));
+      setSSMAPlanIsActive(plan.isActive);
+    } else {
+      setEditingSSMAPlan(null);
+      setSSMAPlanName("");
+      setSSMAPlanInterval("WEEK");
+      setSSMAPlanIntervalCount("1");
+      setSSMAPlanDiscount("10");
+      setSSMAPlanDiscountCode("");
+      setSSMAPlanBillingLeadHours("48");
+      setSSMAPlanIsActive(true);
+    }
+    setSSMAPlanModalOpen(true);
+  }, []);
+
+  const handleSaveSSMAPlan = useCallback(() => {
+    const data: Record<string, string> = {
+      name: ssmaPlanName,
+      interval: ssmaPlanInterval,
+      intervalCount: ssmaPlanIntervalCount,
+      discountPercent: ssmaPlanDiscount,
+      discountCode: ssmaPlanDiscountCode,
+      billingLeadHours: ssmaPlanBillingLeadHours,
+      isActive: ssmaPlanIsActive ? "true" : "false",
+    };
+
+    if (editingSSMAPlan) {
+      data.intent = "update_ssma_plan";
+      data.planId = editingSSMAPlan.id;
+    } else {
+      data.intent = "create_ssma_plan";
+    }
+
+    submit(data, { method: "post" });
+    setSSMAPlanModalOpen(false);
+  }, [editingSSMAPlan, ssmaPlanName, ssmaPlanInterval, ssmaPlanIntervalCount, ssmaPlanDiscount, ssmaPlanDiscountCode, ssmaPlanBillingLeadHours, ssmaPlanIsActive, submit]);
+
+  const handleDeleteSSMAPlan = useCallback((plan: typeof subscriptionPlans[0]) => {
+    setSSMAPlanToDelete({ id: plan.id, name: plan.name });
+    setSSMADeleteConfirmOpen(true);
+  }, []);
+
+  const confirmDeleteSSMAPlan = useCallback(() => {
+    if (ssmaPlanToDelete) {
+      submit({ intent: "delete_ssma_plan", planId: ssmaPlanToDelete.id }, { method: "post" });
+    }
+    setSSMADeleteConfirmOpen(false);
+    setSSMAPlanToDelete(null);
+  }, [ssmaPlanToDelete, submit]);
+
+  // Close SSMA modals on successful action
+  useEffect(() => {
+    if (actionData && "success" in actionData && actionData.success) {
+      setSSMAPlanModalOpen(false);
+      setSSMADeleteConfirmOpen(false);
+    }
+  }, [actionData]);
 
   const handleManualSync = () => {
     if (!contractId.trim()) return;
@@ -1099,6 +1247,64 @@ export default function SubscriptionsSettings() {
                   </Text>
                 </BlockStack>
               </BlockStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* SSMA Subscription Plans */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">
+                  Subscription Plans
+                </Text>
+                <Button size="slim" onClick={() => openSSMAPlanModal()}>
+                  Add Plan
+                </Button>
+              </InlineStack>
+
+              <Text as="p" tone="subdued">
+                Configure the subscription frequencies and discounts offered to customers.
+                These plans are used by the cart widget and control billing lead times.
+              </Text>
+
+              {subscriptionPlans.length === 0 ? (
+                <Banner tone="info">
+                  No subscription plans configured. Click "Add Plan" to create one.
+                </Banner>
+              ) : (
+                <DataTable
+                  columnContentTypes={["text", "text", "numeric", "text", "numeric", "text", "text"]}
+                  headings={["Plan Name", "Frequency", "Discount", "Discount Code", "Billing Lead", "Status", "Actions"]}
+                  rows={subscriptionPlans.map((plan) => [
+                    plan.name,
+                    plan.interval === "WEEK"
+                      ? plan.intervalCount === 1
+                        ? "Every week"
+                        : `Every ${plan.intervalCount} weeks`
+                      : plan.intervalCount === 1
+                        ? "Every month"
+                        : `Every ${plan.intervalCount} months`,
+                    `${plan.discountPercent}%`,
+                    plan.discountCode || "—",
+                    `${plan.billingLeadHours}h`,
+                    plan.isActive ? (
+                      <Badge key={`status-${plan.id}`} tone="success">Active</Badge>
+                    ) : (
+                      <Badge key={`status-${plan.id}`}>Inactive</Badge>
+                    ),
+                    <InlineStack key={`actions-${plan.id}`} gap="200">
+                      <Button size="slim" onClick={() => openSSMAPlanModal(plan)}>
+                        Edit
+                      </Button>
+                      <Button size="slim" tone="critical" onClick={() => handleDeleteSSMAPlan(plan)}>
+                        Delete
+                      </Button>
+                    </InlineStack>,
+                  ])}
+                />
+              )}
             </BlockStack>
           </Card>
         </Layout.Section>
@@ -1410,7 +1616,7 @@ export default function SubscriptionsSettings() {
             Billing Management
           </Text>
           <Text as="p" tone="subdued">
-            Subscriptions are billed 84 hours (3.5 days) before the scheduled pickup time.
+            Subscriptions are billed based on each plan's billing lead time (default 48 hours before pickup).
           </Text>
         </Layout.Section>
 
@@ -1504,12 +1710,12 @@ export default function SubscriptionsSettings() {
                 </Text>
                 <Text as="p">
                   <strong>2. Recurring Billing:</strong> For subsequent deliveries,
-                  customers are automatically charged 84 hours (3.5 days) before their
-                  scheduled pickup time.
+                  customers are automatically charged based on the plan's billing lead time
+                  (configurable per plan, default 48 hours before pickup).
                 </Text>
                 <Text as="p">
                   <strong>3. Example:</strong> If a customer has a Saturday 12:00 PM
-                  pickup, they will be billed Tuesday around midnight (84 hours before).
+                  pickup with 48h lead time, they will be billed Thursday at noon.
                 </Text>
                 <Text as="p">
                   <strong>4. Failures:</strong> If billing fails, we retry up to 3 times.
@@ -1585,7 +1791,7 @@ export default function SubscriptionsSettings() {
         </Modal.Section>
       </Modal>
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Confirmation Modal (Shopify Selling Plans) */}
       <Modal
         open={deleteConfirmOpen}
         onClose={() => setDeleteConfirmOpen(false)}
@@ -1610,6 +1816,127 @@ export default function SubscriptionsSettings() {
             </Text>
             <Banner tone="warning">
               Existing subscribers on this plan may be affected. Make sure to migrate them to a different plan first.
+            </Banner>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* SSMA Plan Create/Edit Modal */}
+      <Modal
+        open={ssmaPlanModalOpen}
+        onClose={() => setSSMAPlanModalOpen(false)}
+        title={editingSSMAPlan ? "Edit Subscription Plan" : "Add Subscription Plan"}
+        primaryAction={{
+          content: editingSSMAPlan ? "Save Changes" : "Create Plan",
+          onAction: handleSaveSSMAPlan,
+          loading: isLoading,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => setSSMAPlanModalOpen(false),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <TextField
+              label="Plan Name"
+              value={ssmaPlanName}
+              onChange={setSSMAPlanName}
+              placeholder="e.g., Weekly Delivery (10% off)"
+              autoComplete="off"
+            />
+            <FormLayout.Group>
+              <Select
+                label="Delivery Interval"
+                options={[
+                  { label: "Week(s)", value: "WEEK" },
+                  { label: "Month(s)", value: "MONTH" },
+                ]}
+                value={ssmaPlanInterval}
+                onChange={setSSMAPlanInterval}
+              />
+              <TextField
+                label="Every X intervals"
+                type="number"
+                value={ssmaPlanIntervalCount}
+                onChange={setSSMAPlanIntervalCount}
+                min={1}
+                max={52}
+                autoComplete="off"
+                helpText={`Deliver every ${ssmaPlanIntervalCount} ${ssmaPlanInterval.toLowerCase()}(s)`}
+              />
+            </FormLayout.Group>
+            <FormLayout.Group>
+              <TextField
+                label="Discount Percentage"
+                type="number"
+                value={ssmaPlanDiscount}
+                onChange={setSSMAPlanDiscount}
+                min={0}
+                max={100}
+                suffix="%"
+                autoComplete="off"
+              />
+              <TextField
+                label="Discount Code"
+                value={ssmaPlanDiscountCode}
+                onChange={setSSMAPlanDiscountCode}
+                placeholder="e.g., SUBSCRIBE-WEEKLY-10"
+                autoComplete="off"
+                helpText="Shopify discount code applied automatically by cart widget"
+              />
+            </FormLayout.Group>
+            <TextField
+              label="Billing Lead Time (hours)"
+              type="number"
+              value={ssmaPlanBillingLeadHours}
+              onChange={setSSMAPlanBillingLeadHours}
+              min={1}
+              max={168}
+              suffix="hours"
+              autoComplete="off"
+              helpText="How many hours before pickup to charge the customer"
+            />
+            <Select
+              label="Status"
+              options={[
+                { label: "Active", value: "true" },
+                { label: "Inactive", value: "false" },
+              ]}
+              value={ssmaPlanIsActive ? "true" : "false"}
+              onChange={(val) => setSSMAPlanIsActive(val === "true")}
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* SSMA Plan Delete Confirmation Modal */}
+      <Modal
+        open={ssmaDeleteConfirmOpen}
+        onClose={() => setSSMADeleteConfirmOpen(false)}
+        title="Delete Subscription Plan"
+        primaryAction={{
+          content: "Delete Plan",
+          destructive: true,
+          onAction: confirmDeleteSSMAPlan,
+          loading: isLoading,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => setSSMADeleteConfirmOpen(false),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p">
+              Are you sure you want to delete <strong>"{ssmaPlanToDelete?.name}"</strong>?
+            </Text>
+            <Banner tone="warning">
+              Existing subscribers using this plan will not be affected, but new customers will no longer see this option.
             </Banner>
           </BlockStack>
         </Modal.Section>

@@ -416,6 +416,30 @@ model SellingPlan {
 }
 
 // ============================================
+// SSMA SUBSCRIPTION PLANS (Managed by SSMA, not tied to Shopify Selling Plans)
+// ============================================
+
+model SubscriptionPlan {
+  id               String   @id @default(cuid())
+  shop             String
+  name             String   // Display name, e.g., "Weekly Delivery (10% off)"
+  interval         String   // "WEEK" or "MONTH"
+  intervalCount    Int      // 1 = every week, 2 = every 2 weeks, etc.
+  discountPercent  Float    // Discount percentage (e.g., 10.0 for 10%)
+  discountCode     String?  // Shopify discount code name, e.g., "SUBSCRIBE-WEEKLY-10"
+  billingLeadHours Int      @default(48) // Hours before pickup to charge customer
+  isActive         Boolean  @default(true)
+  sortOrder        Int      @default(0) // Controls display order in cart widget
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, interval, intervalCount])
+  @@index([shop])
+  @@index([shop, isActive])
+}
+
+// ============================================
 // NOTIFICATION SETTINGS
 // ============================================
 

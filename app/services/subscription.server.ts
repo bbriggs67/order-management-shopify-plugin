@@ -340,13 +340,15 @@ export async function createSubscriptionFromOrder(
   frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY",
   preferredDay: number,
   preferredTimeSlot: string,
-  productTitle: string
+  productTitle: string,
+  discountPercentOverride?: number,
+  billingLeadHoursOverride?: number
 ): Promise<string> {
   // Check if we already have a subscription for this order
   const existingSubscription = await prisma.subscriptionPickup.findFirst({
     where: {
       shop,
-      shopifyContractId: orderId, // Using orderId as contract ID since we don't have the actual contract
+      shopifyContractId: orderId,
     },
   });
 
@@ -355,34 +357,40 @@ export async function createSubscriptionFromOrder(
     return existingSubscription.id;
   }
 
-  // Determine discount based on frequency (matching selling plan discounts)
+  // Use provided discount or fall back to defaults
   let discountPercent: number;
-  switch (frequency) {
-    case "WEEKLY":
-      discountPercent = 10;
-      break;
-    case "BIWEEKLY":
-      discountPercent = 5;
-      break;
-    case "TRIWEEKLY":
-      discountPercent = 2.5;
-      break;
-    default:
-      discountPercent = 5;
+  if (discountPercentOverride !== undefined) {
+    discountPercent = discountPercentOverride;
+  } else {
+    switch (frequency) {
+      case "WEEKLY":
+        discountPercent = 10;
+        break;
+      case "BIWEEKLY":
+        discountPercent = 5;
+        break;
+      case "TRIWEEKLY":
+        discountPercent = 2.5;
+        break;
+      default:
+        discountPercent = 5;
+    }
   }
+
+  const billingLeadHours = billingLeadHoursOverride ?? 48;
 
   const nextPickupDate = calculateNextPickupDateFromToday(preferredDay, frequency);
 
   // Extract time slot start for billing calculation
   const preferredTimeSlotStart = extractTimeSlotStart(preferredTimeSlot);
 
-  // Calculate billing date (uses default 84 hours for new subscriptions)
-  const nextBillingDate = calculateBillingDate(nextPickupDate, preferredTimeSlotStart);
+  // Calculate billing date using plan-specified lead hours
+  const nextBillingDate = calculateBillingDate(nextPickupDate, preferredTimeSlotStart, billingLeadHours);
 
   const subscription = await prisma.subscriptionPickup.create({
     data: {
       shop,
-      shopifyContractId: orderId, // Using order ID since we don't have the contract ID
+      shopifyContractId: orderId,
       shopifyOrderId: orderId,
       shopifyOrderNumber: orderNumber,
       customerName,
@@ -393,6 +401,7 @@ export async function createSubscriptionFromOrder(
       preferredTimeSlotStart,
       frequency,
       discountPercent,
+      billingLeadHours,
       nextPickupDate,
       nextBillingDate,
       status: "ACTIVE",
@@ -414,30 +423,39 @@ export async function createSubscriptionFromContract(
   customerPhone: string | null,
   frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY",
   preferredDay: number,
-  preferredTimeSlot: string
+  preferredTimeSlot: string,
+  discountPercentOverride?: number,
+  billingLeadHoursOverride?: number
 ): Promise<string> {
-  // Determine discount based on frequency (matching selling plan discounts)
+  // Use provided discount or fall back to defaults
   let discountPercent: number;
-  switch (frequency) {
-    case "WEEKLY":
-      discountPercent = 10;
-      break;
-    case "BIWEEKLY":
-      discountPercent = 5;
-      break;
-    case "TRIWEEKLY":
-      discountPercent = 2.5;
-      break;
-    default:
-      discountPercent = 5;
+  if (discountPercentOverride !== undefined) {
+    discountPercent = discountPercentOverride;
+  } else {
+    switch (frequency) {
+      case "WEEKLY":
+        discountPercent = 10;
+        break;
+      case "BIWEEKLY":
+        discountPercent = 5;
+        break;
+      case "TRIWEEKLY":
+        discountPercent = 2.5;
+        break;
+      default:
+        discountPercent = 5;
+    }
   }
+
+  const billingLeadHours = billingLeadHoursOverride ?? 48;
+
   const nextPickupDate = calculateNextPickupDateFromToday(preferredDay, frequency);
 
   // Extract time slot start for billing calculation
   const preferredTimeSlotStart = extractTimeSlotStart(preferredTimeSlot);
 
-  // Calculate billing date (uses default 84 hours for new subscriptions)
-  const nextBillingDate = calculateBillingDate(nextPickupDate, preferredTimeSlotStart);
+  // Calculate billing date using plan-specified lead hours
+  const nextBillingDate = calculateBillingDate(nextPickupDate, preferredTimeSlotStart, billingLeadHours);
 
   const subscription = await prisma.subscriptionPickup.create({
     data: {
@@ -451,6 +469,7 @@ export async function createSubscriptionFromContract(
       preferredTimeSlotStart,
       frequency,
       discountPercent,
+      billingLeadHours,
       nextPickupDate,
       nextBillingDate,
       status: "ACTIVE",

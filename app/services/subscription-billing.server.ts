@@ -12,23 +12,17 @@ import {
   formatDateISOPacific,
 } from "../utils/timezone.server";
 import { updatePickupEventDateTime } from "./google-calendar.server";
+import {
+  DEFAULT_BILLING_LEAD_HOURS,
+  MIN_BILLING_LEAD_HOURS,
+  MAX_BILLING_LEAD_HOURS,
+  MAX_BILLING_FAILURES,
+} from "../utils/constants.server";
 
 // Type for the admin GraphQL client returned by authenticate.admin()
 interface AdminClient {
   graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
 }
-
-// ============================================
-// Constants
-// ============================================
-
-// Default billing lead time (3.5 days before pickup)
-const DEFAULT_BILLING_LEAD_HOURS = 84;
-// Minimum: 1 hour before pickup
-const MIN_BILLING_LEAD_HOURS = 1;
-// Maximum: 168 hours (7 days) before pickup
-const MAX_BILLING_LEAD_HOURS = 168;
-const MAX_BILLING_FAILURES = 3;
 
 // ============================================
 // Types
