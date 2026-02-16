@@ -1,85 +1,140 @@
 /**
- * SSMA Subscription Plans Service
- * Manages SSMA-owned subscription plans (not tied to Shopify Selling Plans)
+ * SSMA Subscription Plan Groups Service
+ *
+ * Manages plan groups, frequencies, and product associations.
+ * A group (e.g., "Subscribe & Save - Porch Pick Up") contains multiple
+ * frequency options and has products associated with it.
  */
 
 import prisma from "../db.server";
-import { formatFrequency } from "../utils/formatting";
 
 // ============================================
 // Types
 // ============================================
 
-export interface SubscriptionPlanInput {
+export interface PlanGroupInput {
+  name: string;
+  billingLeadHours: number;
+  isActive: boolean;
+}
+
+export interface PlanFrequencyInput {
   name: string;
   interval: string;
   intervalCount: number;
   discountPercent: number;
   discountCode?: string | null;
-  billingLeadHours: number;
   isActive: boolean;
   sortOrder?: number;
 }
 
-export interface SubscriptionPlanRecord {
-  id: string;
-  shop: string;
-  name: string;
-  interval: string;
-  intervalCount: number;
-  discountPercent: number;
-  discountCode: string | null;
-  billingLeadHours: number;
-  isActive: boolean;
-  sortOrder: number;
-  createdAt: Date;
-  updatedAt: Date;
+export interface PlanProductInput {
+  shopifyProductId: string;
+  title: string;
+  imageUrl?: string | null;
 }
 
+// Prisma-inferred types with relations
+export type PlanGroupRecord = Awaited<ReturnType<typeof getPlanGroups>>[number];
+export type PlanFrequencyRecord = PlanGroupRecord["frequencies"][number];
+export type PlanProductRecord = PlanGroupRecord["products"][number];
+
 // ============================================
-// CRUD Functions
+// Plan Group CRUD
 // ============================================
 
-/** Get all subscription plans for a shop */
-export async function getSubscriptionPlans(shop: string): Promise<SubscriptionPlanRecord[]> {
-  return prisma.subscriptionPlan.findMany({
+/** Get all plan groups for a shop (with frequencies and products) */
+export async function getPlanGroups(shop: string) {
+  return prisma.subscriptionPlanGroup.findMany({
     where: { shop },
+    include: {
+      frequencies: { orderBy: { sortOrder: "asc" } },
+      products: { orderBy: { title: "asc" } },
+    },
     orderBy: { sortOrder: "asc" },
   });
 }
 
-/** Get only active subscription plans for a shop (for widget/API) */
-export async function getActiveSubscriptionPlans(shop: string): Promise<SubscriptionPlanRecord[]> {
-  return prisma.subscriptionPlan.findMany({
+/** Get active plan groups with active frequencies only (for API/widget) */
+export async function getActivePlanGroups(shop: string) {
+  return prisma.subscriptionPlanGroup.findMany({
     where: { shop, isActive: true },
+    include: {
+      frequencies: {
+        where: { isActive: true },
+        orderBy: { sortOrder: "asc" },
+      },
+      products: true,
+    },
     orderBy: { sortOrder: "asc" },
   });
 }
 
-/** Get a single plan by ID */
-export async function getSubscriptionPlan(shop: string, planId: string): Promise<SubscriptionPlanRecord | null> {
-  return prisma.subscriptionPlan.findFirst({
-    where: { id: planId, shop },
+/** Create a new plan group */
+export async function createPlanGroup(shop: string, input: PlanGroupInput) {
+  validateGroupInput(input);
+  return prisma.subscriptionPlanGroup.create({
+    data: {
+      shop,
+      name: input.name,
+      billingLeadHours: input.billingLeadHours,
+      isActive: input.isActive,
+    },
+    include: {
+      frequencies: { orderBy: { sortOrder: "asc" } },
+      products: { orderBy: { title: "asc" } },
+    },
   });
 }
 
-/** Create a new subscription plan */
-export async function createSubscriptionPlan(
-  shop: string,
-  input: SubscriptionPlanInput
-): Promise<SubscriptionPlanRecord> {
-  validatePlanInput(input);
+/** Update a plan group */
+export async function updatePlanGroup(shop: string, groupId: string, input: Partial<PlanGroupInput>) {
+  await verifyGroupOwnership(shop, groupId);
+  if (input.name !== undefined || input.billingLeadHours !== undefined) {
+    validateGroupInput({
+      name: input.name ?? "placeholder",
+      billingLeadHours: input.billingLeadHours ?? 48,
+      isActive: input.isActive ?? true,
+    });
+  }
+  return prisma.subscriptionPlanGroup.update({
+    where: { id: groupId },
+    data: {
+      ...(input.name !== undefined && { name: input.name }),
+      ...(input.billingLeadHours !== undefined && { billingLeadHours: input.billingLeadHours }),
+      ...(input.isActive !== undefined && { isActive: input.isActive }),
+    },
+    include: {
+      frequencies: { orderBy: { sortOrder: "asc" } },
+      products: { orderBy: { title: "asc" } },
+    },
+  });
+}
+
+/** Delete a plan group (cascades to frequencies and products) */
+export async function deletePlanGroup(shop: string, groupId: string): Promise<void> {
+  await verifyGroupOwnership(shop, groupId);
+  await prisma.subscriptionPlanGroup.delete({ where: { id: groupId } });
+}
+
+// ============================================
+// Frequency CRUD
+// ============================================
+
+/** Add a frequency to a group */
+export async function addFrequency(shop: string, groupId: string, input: PlanFrequencyInput) {
+  await verifyGroupOwnership(shop, groupId);
+  validateFrequencyInput(input);
 
   try {
-    return await prisma.subscriptionPlan.create({
+    return await prisma.subscriptionPlanFrequency.create({
       data: {
-        shop,
+        groupId,
         name: input.name,
         interval: input.interval,
         intervalCount: input.intervalCount,
         discountPercent: input.discountPercent,
         discountCode: input.discountCode ?? null,
-        billingLeadHours: input.billingLeadHours,
         isActive: input.isActive,
         sortOrder: input.sortOrder ?? 0,
       },
@@ -87,139 +142,182 @@ export async function createSubscriptionPlan(
   } catch (error: unknown) {
     if (isPrismaUniqueConstraintError(error)) {
       throw new Error(
-        `A plan with ${formatFrequency(input.interval, input.intervalCount)} delivery already exists for this shop. Delete it first or edit the existing plan.`
+        `A frequency with that interval already exists in this plan group. Use a different interval/count.`
       );
     }
     throw error;
   }
 }
 
-/** Update an existing subscription plan */
-export async function updateSubscriptionPlan(
-  shop: string,
-  planId: string,
-  input: Partial<SubscriptionPlanInput>
-): Promise<SubscriptionPlanRecord> {
-  // Verify plan belongs to this shop
-  const existing = await prisma.subscriptionPlan.findFirst({
-    where: { id: planId, shop },
+/** Update a frequency */
+export async function updateFrequency(shop: string, frequencyId: string, input: Partial<PlanFrequencyInput>) {
+  const existing = await prisma.subscriptionPlanFrequency.findFirst({
+    where: { id: frequencyId },
+    include: { group: { select: { shop: true } } },
   });
-  if (!existing) {
-    throw new Error("Subscription plan not found");
+  if (!existing || existing.group.shop !== shop) {
+    throw new Error("Frequency not found");
   }
 
-  // Validate any provided fields
   if (input.interval !== undefined || input.intervalCount !== undefined) {
-    validatePlanInput({
+    validateFrequencyInput({
       name: input.name ?? existing.name,
       interval: input.interval ?? existing.interval,
       intervalCount: input.intervalCount ?? existing.intervalCount,
       discountPercent: input.discountPercent ?? existing.discountPercent,
-      billingLeadHours: input.billingLeadHours ?? existing.billingLeadHours,
       isActive: input.isActive ?? existing.isActive,
     });
   }
 
   try {
-    return await prisma.subscriptionPlan.update({
-      where: { id: planId },
+    return await prisma.subscriptionPlanFrequency.update({
+      where: { id: frequencyId },
       data: {
         ...(input.name !== undefined && { name: input.name }),
         ...(input.interval !== undefined && { interval: input.interval }),
         ...(input.intervalCount !== undefined && { intervalCount: input.intervalCount }),
         ...(input.discountPercent !== undefined && { discountPercent: input.discountPercent }),
         ...(input.discountCode !== undefined && { discountCode: input.discountCode ?? null }),
-        ...(input.billingLeadHours !== undefined && { billingLeadHours: input.billingLeadHours }),
         ...(input.isActive !== undefined && { isActive: input.isActive }),
         ...(input.sortOrder !== undefined && { sortOrder: input.sortOrder }),
       },
     });
   } catch (error: unknown) {
     if (isPrismaUniqueConstraintError(error)) {
-      throw new Error(
-        `A plan with that delivery frequency already exists for this shop. Choose a different interval/count.`
-      );
+      throw new Error(`A frequency with that interval already exists in this plan group.`);
     }
     throw error;
   }
 }
 
-/** Delete a subscription plan */
-export async function deleteSubscriptionPlan(shop: string, planId: string): Promise<void> {
-  const existing = await prisma.subscriptionPlan.findFirst({
-    where: { id: planId, shop },
+/** Delete a frequency */
+export async function deleteFrequency(shop: string, frequencyId: string): Promise<void> {
+  const existing = await prisma.subscriptionPlanFrequency.findFirst({
+    where: { id: frequencyId },
+    include: { group: { select: { shop: true } } },
   });
-  if (!existing) {
-    throw new Error("Subscription plan not found");
+  if (!existing || existing.group.shop !== shop) {
+    throw new Error("Frequency not found");
   }
-
-  await prisma.subscriptionPlan.delete({
-    where: { id: planId },
-  });
+  await prisma.subscriptionPlanFrequency.delete({ where: { id: frequencyId } });
 }
 
-/** Find a plan matching a frequency (for webhook lookups) */
-export async function findPlanByFrequency(
+// ============================================
+// Product CRUD
+// ============================================
+
+/** Add products to a group (from resource picker results) */
+export async function addProductsToGroup(
+  shop: string,
+  groupId: string,
+  products: PlanProductInput[]
+): Promise<number> {
+  await verifyGroupOwnership(shop, groupId);
+
+  const result = await prisma.subscriptionPlanProduct.createMany({
+    data: products.map((p) => ({
+      groupId,
+      shopifyProductId: p.shopifyProductId,
+      title: p.title,
+      imageUrl: p.imageUrl ?? null,
+    })),
+    skipDuplicates: true,
+  });
+
+  return result.count;
+}
+
+/** Remove a product from a group */
+export async function removeProductFromGroup(
+  shop: string,
+  groupId: string,
+  productRecordId: string
+): Promise<void> {
+  await verifyGroupOwnership(shop, groupId);
+  const existing = await prisma.subscriptionPlanProduct.findFirst({
+    where: { id: productRecordId, groupId },
+  });
+  if (!existing) {
+    throw new Error("Product not found in this plan group");
+  }
+  await prisma.subscriptionPlanProduct.delete({ where: { id: productRecordId } });
+}
+
+// ============================================
+// Lookup Functions (for webhooks / subscription creation)
+// ============================================
+
+/** Find a frequency by interval (for webhook lookups) - returns parent group billingLeadHours */
+export async function findFrequencyByInterval(
   shop: string,
   interval: string,
   intervalCount: number
-): Promise<SubscriptionPlanRecord | null> {
-  return prisma.subscriptionPlan.findFirst({
-    where: { shop, interval, intervalCount },
+) {
+  return prisma.subscriptionPlanFrequency.findFirst({
+    where: {
+      group: { shop },
+      interval,
+      intervalCount,
+    },
+    include: { group: { select: { billingLeadHours: true } } },
   });
 }
 
-/** Find a plan matching the legacy frequency label (WEEKLY/BIWEEKLY/TRIWEEKLY) */
-export async function findPlanByFrequencyLabel(
-  shop: string,
-  frequencyLabel: string
-): Promise<SubscriptionPlanRecord | null> {
+/** Find a frequency by legacy label (WEEKLY/BIWEEKLY/TRIWEEKLY) */
+export async function findFrequencyByLabel(shop: string, frequencyLabel: string) {
   const mapping = mapFrequencyLabelToInterval(frequencyLabel);
   if (!mapping) return null;
-  return findPlanByFrequency(shop, mapping.interval, mapping.intervalCount);
+  return findFrequencyByInterval(shop, mapping.interval, mapping.intervalCount);
 }
 
-/** Ensure default plans exist (called on settings page load) */
-export async function ensureDefaultPlans(shop: string): Promise<void> {
-  const existingCount = await prisma.subscriptionPlan.count({ where: { shop } });
+// ============================================
+// Default Seeding
+// ============================================
+
+/** Ensure default plan groups exist (called on settings page load) */
+export async function ensureDefaultPlanGroups(shop: string): Promise<void> {
+  const existingCount = await prisma.subscriptionPlanGroup.count({ where: { shop } });
   if (existingCount > 0) return;
 
-  const defaults = [
-    {
-      name: "Weekly Delivery (10% off)",
-      interval: "WEEK",
-      intervalCount: 1,
-      discountPercent: 10.0,
-      discountCode: "SUBSCRIBE-WEEKLY-10",
+  await prisma.subscriptionPlanGroup.create({
+    data: {
+      shop,
+      name: "Subscribe & Save - Porch Pick Up",
       billingLeadHours: 48,
       isActive: true,
       sortOrder: 0,
+      frequencies: {
+        create: [
+          {
+            name: "Weekly Delivery (10% off)",
+            interval: "WEEK",
+            intervalCount: 1,
+            discountPercent: 10.0,
+            discountCode: "SUBSCRIBE-WEEKLY-10",
+            isActive: true,
+            sortOrder: 0,
+          },
+          {
+            name: "Bi-Weekly Delivery (5% off)",
+            interval: "WEEK",
+            intervalCount: 2,
+            discountPercent: 5.0,
+            discountCode: "SUBSCRIBE-BIWEEKLY-5",
+            isActive: true,
+            sortOrder: 1,
+          },
+          {
+            name: "Tri-Weekly Delivery (2.5% off)",
+            interval: "WEEK",
+            intervalCount: 3,
+            discountPercent: 2.5,
+            discountCode: "SUBSCRIBE-TRIWEEKLY-3",
+            isActive: true,
+            sortOrder: 2,
+          },
+        ],
+      },
     },
-    {
-      name: "Bi-Weekly Delivery (5% off)",
-      interval: "WEEK",
-      intervalCount: 2,
-      discountPercent: 5.0,
-      discountCode: "SUBSCRIBE-BIWEEKLY-5",
-      billingLeadHours: 48,
-      isActive: true,
-      sortOrder: 1,
-    },
-    {
-      name: "Tri-Weekly Delivery (2.5% off)",
-      interval: "WEEK",
-      intervalCount: 3,
-      discountPercent: 2.5,
-      discountCode: "SUBSCRIBE-TRIWEEKLY-3",
-      billingLeadHours: 48,
-      isActive: true,
-      sortOrder: 2,
-    },
-  ];
-
-  await prisma.subscriptionPlan.createMany({
-    data: defaults.map((plan) => ({ shop, ...plan })),
-    skipDuplicates: true,
   });
 }
 
@@ -227,9 +325,18 @@ export async function ensureDefaultPlans(shop: string): Promise<void> {
 // Helpers
 // ============================================
 
-function validatePlanInput(input: SubscriptionPlanInput): void {
+function validateGroupInput(input: PlanGroupInput): void {
   if (!input.name || input.name.trim().length === 0) {
-    throw new Error("Plan name is required");
+    throw new Error("Plan group name is required");
+  }
+  if (input.billingLeadHours < 1 || input.billingLeadHours > 168) {
+    throw new Error("Billing lead time must be between 1 and 168 hours");
+  }
+}
+
+function validateFrequencyInput(input: PlanFrequencyInput): void {
+  if (!input.name || input.name.trim().length === 0) {
+    throw new Error("Frequency name is required");
   }
   if (!["WEEK", "MONTH"].includes(input.interval)) {
     throw new Error("Interval must be WEEK or MONTH");
@@ -240,8 +347,14 @@ function validatePlanInput(input: SubscriptionPlanInput): void {
   if (input.discountPercent < 0 || input.discountPercent > 100) {
     throw new Error("Discount percentage must be between 0 and 100");
   }
-  if (input.billingLeadHours < 1 || input.billingLeadHours > 168) {
-    throw new Error("Billing lead time must be between 1 and 168 hours");
+}
+
+async function verifyGroupOwnership(shop: string, groupId: string): Promise<void> {
+  const group = await prisma.subscriptionPlanGroup.findFirst({
+    where: { id: groupId, shop },
+  });
+  if (!group) {
+    throw new Error("Plan group not found");
   }
 }
 

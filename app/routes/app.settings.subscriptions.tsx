@@ -47,23 +47,28 @@ import { createSubscriptionFromContract } from "../services/subscription.server"
 import prisma from "../db.server";
 import { checkWebhookHealth, registerAllWebhooks } from "../services/webhook-registration.server";
 import {
-  getSubscriptionPlans,
-  ensureDefaultPlans,
-  createSubscriptionPlan,
-  updateSubscriptionPlan,
-  deleteSubscriptionPlan as deleteSSMAPlan,
+  getPlanGroups,
+  ensureDefaultPlanGroups,
+  createPlanGroup,
+  updatePlanGroup,
+  deletePlanGroup,
+  addFrequency,
+  updateFrequency,
+  deleteFrequency,
+  addProductsToGroup,
+  removeProductFromGroup,
 } from "../services/subscription-plans.server";
-import type { SubscriptionPlanRecord } from "../services/subscription-plans.server";
+import type { PlanProductInput } from "../services/subscription-plans.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
 
-  // Ensure SSMA default subscription plans exist
-  await ensureDefaultPlans(shop);
+  // Ensure SSMA default plan groups exist
+  await ensureDefaultPlanGroups(shop);
 
-  // Get all SSMA subscription plans
-  const subscriptionPlans = await getSubscriptionPlans(shop);
+  // Get all SSMA plan groups
+  const planGroups = await getPlanGroups(shop);
 
   // Get selling plan configuration from our database
   const sellingPlanConfig = await getSellingPlanConfig(shop);
@@ -169,7 +174,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     shop,
-    subscriptionPlans,
+    planGroups,
     sellingPlanConfig,
     sellingPlanGroups,
     usingLocalConfig,
@@ -739,55 +744,92 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
       }
 
-      case "create_ssma_plan": {
+      case "create_plan_group": {
+        const name = formData.get("name") as string;
+        const billingLeadHours = parseInt(formData.get("billingLeadHours") as string, 10);
+        const isActive = formData.get("isActive") === "true";
+        if (!name || isNaN(billingLeadHours)) {
+          return json({ error: "Missing required fields" }, { status: 400 });
+        }
+        const group = await createPlanGroup(shop, { name, billingLeadHours, isActive });
+        return json({ success: true, message: `Created plan group: ${group.name}` });
+      }
+
+      case "update_plan_group": {
+        const groupId = formData.get("groupId") as string;
+        const name = formData.get("name") as string;
+        const billingLeadHours = parseInt(formData.get("billingLeadHours") as string, 10);
+        const isActive = formData.get("isActive") === "true";
+        if (!groupId || !name || isNaN(billingLeadHours)) {
+          return json({ error: "Missing required fields" }, { status: 400 });
+        }
+        const group = await updatePlanGroup(shop, groupId, { name, billingLeadHours, isActive });
+        return json({ success: true, message: `Updated plan group: ${group.name}` });
+      }
+
+      case "delete_plan_group": {
+        const groupId = formData.get("groupId") as string;
+        if (!groupId) return json({ error: "Missing group ID" }, { status: 400 });
+        await deletePlanGroup(shop, groupId);
+        return json({ success: true, message: "Plan group deleted" });
+      }
+
+      case "add_frequency": {
+        const groupId = formData.get("groupId") as string;
         const name = formData.get("name") as string;
         const interval = formData.get("interval") as string;
         const intervalCount = parseInt(formData.get("intervalCount") as string, 10);
         const discountPercent = parseFloat(formData.get("discountPercent") as string);
         const discountCode = (formData.get("discountCode") as string) || null;
-        const billingLeadHours = parseInt(formData.get("billingLeadHours") as string, 10);
         const isActive = formData.get("isActive") === "true";
-
-        if (!name || !interval || isNaN(intervalCount) || isNaN(discountPercent) || isNaN(billingLeadHours)) {
+        if (!groupId || !name || !interval || isNaN(intervalCount) || isNaN(discountPercent)) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
-
-        const plan = await createSubscriptionPlan(shop, {
-          name, interval, intervalCount, discountPercent, discountCode, billingLeadHours, isActive,
-        });
-
-        return json({ success: true, message: `Created plan: ${plan.name}` });
+        const freq = await addFrequency(shop, groupId, { name, interval, intervalCount, discountPercent, discountCode, isActive });
+        return json({ success: true, message: `Added frequency: ${freq.name}` });
       }
 
-      case "update_ssma_plan": {
-        const planId = formData.get("planId") as string;
+      case "update_frequency": {
+        const frequencyId = formData.get("frequencyId") as string;
         const name = formData.get("name") as string;
         const interval = formData.get("interval") as string;
         const intervalCount = parseInt(formData.get("intervalCount") as string, 10);
         const discountPercent = parseFloat(formData.get("discountPercent") as string);
         const discountCode = (formData.get("discountCode") as string) || null;
-        const billingLeadHours = parseInt(formData.get("billingLeadHours") as string, 10);
         const isActive = formData.get("isActive") === "true";
-
-        if (!planId || !name || !interval || isNaN(intervalCount) || isNaN(discountPercent) || isNaN(billingLeadHours)) {
+        if (!frequencyId || !name || !interval || isNaN(intervalCount) || isNaN(discountPercent)) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
-
-        const plan = await updateSubscriptionPlan(shop, planId, {
-          name, interval, intervalCount, discountPercent, discountCode, billingLeadHours, isActive,
-        });
-
-        return json({ success: true, message: `Updated plan: ${plan.name}` });
+        const freq = await updateFrequency(shop, frequencyId, { name, interval, intervalCount, discountPercent, discountCode, isActive });
+        return json({ success: true, message: `Updated frequency: ${freq.name}` });
       }
 
-      case "delete_ssma_plan": {
-        const planId = formData.get("planId") as string;
-        if (!planId) {
-          return json({ error: "Missing plan ID" }, { status: 400 });
-        }
+      case "delete_frequency": {
+        const frequencyId = formData.get("frequencyId") as string;
+        if (!frequencyId) return json({ error: "Missing frequency ID" }, { status: 400 });
+        await deleteFrequency(shop, frequencyId);
+        return json({ success: true, message: "Frequency deleted" });
+      }
 
-        await deleteSSMAPlan(shop, planId);
-        return json({ success: true, message: "Subscription plan deleted" });
+      case "add_group_products": {
+        const groupId = formData.get("groupId") as string;
+        const productsJson = formData.get("products") as string;
+        if (!groupId || !productsJson) {
+          return json({ error: "Missing fields" }, { status: 400 });
+        }
+        const products: PlanProductInput[] = JSON.parse(productsJson);
+        const count = await addProductsToGroup(shop, groupId, products);
+        return json({ success: true, message: `Added ${count} product(s) to plan group` });
+      }
+
+      case "remove_group_product": {
+        const groupId = formData.get("groupId") as string;
+        const productRecordId = formData.get("productRecordId") as string;
+        if (!groupId || !productRecordId) {
+          return json({ error: "Missing fields" }, { status: 400 });
+        }
+        await removeProductFromGroup(shop, groupId, productRecordId);
+        return json({ success: true, message: "Product removed from plan group" });
       }
 
       case "register_webhooks": {
@@ -823,7 +865,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SubscriptionsSettings() {
-  const { subscriptionPlans, sellingPlanConfig, sellingPlanGroups, usingLocalConfig, failedBillings, upcomingBillings, customerPortalUrl, webhookHealth } = useLoaderData<typeof loader>();
+  const { planGroups, sellingPlanConfig, sellingPlanGroups, usingLocalConfig, failedBillings, upcomingBillings, customerPortalUrl, webhookHealth } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -844,28 +886,40 @@ export default function SubscriptionsSettings() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [planToDelete, setPlanToDelete] = useState<{ groupId: string; planId: string; name: string } | null>(null);
 
-  // SSMA Plan modal state
-  const [ssmaPlanModalOpen, setSSMAPlanModalOpen] = useState(false);
-  const [editingSSMAPlan, setEditingSSMAPlan] = useState<typeof subscriptionPlans[0] | null>(null);
-  const [ssmaPlanName, setSSMAPlanName] = useState("");
-  const [ssmaPlanInterval, setSSMAPlanInterval] = useState("WEEK");
-  const [ssmaPlanIntervalCount, setSSMAPlanIntervalCount] = useState("1");
-  const [ssmaPlanDiscount, setSSMAPlanDiscount] = useState("10");
-  const [ssmaPlanDiscountCode, setSSMAPlanDiscountCode] = useState("");
-  const [ssmaPlanBillingLeadHours, setSSMAPlanBillingLeadHours] = useState("48");
-  const [ssmaPlanIsActive, setSSMAPlanIsActive] = useState(true);
+  // Plan Group modal state
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<typeof planGroups[0] | null>(null);
+  const [groupName, setGroupName] = useState("Subscribe & Save - Porch Pick Up");
+  const [groupBillingLeadHours, setGroupBillingLeadHours] = useState("48");
+  const [groupIsActive, setGroupIsActive] = useState(true);
 
-  // SSMA Plan delete confirmation
-  const [ssmaDeleteConfirmOpen, setSSMADeleteConfirmOpen] = useState(false);
-  const [ssmaPlanToDelete, setSSMAPlanToDelete] = useState<{ id: string; name: string } | null>(null);
+  // Frequency modal state
+  const [freqModalOpen, setFreqModalOpen] = useState(false);
+  const [freqGroupId, setFreqGroupId] = useState("");
+  const [editingFreq, setEditingFreq] = useState<typeof planGroups[0]["frequencies"][0] | null>(null);
+  const [freqName, setFreqName] = useState("");
+  const [freqInterval, setFreqInterval] = useState("WEEK");
+  const [freqIntervalCount, setFreqIntervalCount] = useState("1");
+  const [freqDiscount, setFreqDiscount] = useState("10");
+  const [freqDiscountCode, setFreqDiscountCode] = useState("");
+  const [freqIsActive, setFreqIsActive] = useState(true);
+
+  // Delete confirmation states
+  const [deleteGroupConfirmOpen, setDeleteGroupConfirmOpen] = useState(false);
+  const [groupToDelete, setGroupToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [deleteFreqConfirmOpen, setDeleteFreqConfirmOpen] = useState(false);
+  const [freqToDelete, setFreqToDelete] = useState<{ id: string; name: string } | null>(null);
+
+  // Expanded groups for product lists (reuse existing pattern)
+  const [expandedPlanGroups, setExpandedPlanGroups] = useState<Set<string>>(new Set());
 
   // Manual sync state
   const [contractId, setContractId] = useState("");
 
-  // Product management state
+  // Product management state (for Shopify selling plan groups)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
-  // Toggle product list visibility for a group
+  // Toggle product list visibility for a Shopify selling plan group
   const toggleGroupProducts = useCallback((groupId: string) => {
     setExpandedGroups((prev) => {
       const newSet = new Set(prev);
@@ -878,7 +932,7 @@ export default function SubscriptionsSettings() {
     });
   }, []);
 
-  // Open Shopify Resource Picker to select products
+  // Open Shopify Resource Picker to select products (for Shopify selling plan groups)
   const handleOpenProductPicker = useCallback(async (groupId: string) => {
     try {
       const selected = await shopify.resourcePicker({
@@ -968,70 +1022,155 @@ export default function SubscriptionsSettings() {
     setPlanToDelete(null);
   };
 
-  // SSMA Plan handlers
-  const openSSMAPlanModal = useCallback((plan?: typeof subscriptionPlans[0]) => {
-    if (plan) {
-      setEditingSSMAPlan(plan);
-      setSSMAPlanName(plan.name);
-      setSSMAPlanInterval(plan.interval);
-      setSSMAPlanIntervalCount(String(plan.intervalCount));
-      setSSMAPlanDiscount(String(plan.discountPercent));
-      setSSMAPlanDiscountCode(plan.discountCode || "");
-      setSSMAPlanBillingLeadHours(String(plan.billingLeadHours));
-      setSSMAPlanIsActive(plan.isActive);
+  // Plan Group handlers
+  const openGroupModal = useCallback((group?: typeof planGroups[0]) => {
+    if (group) {
+      setEditingGroup(group);
+      setGroupName(group.name);
+      setGroupBillingLeadHours(String(group.billingLeadHours));
+      setGroupIsActive(group.isActive);
     } else {
-      setEditingSSMAPlan(null);
-      setSSMAPlanName("");
-      setSSMAPlanInterval("WEEK");
-      setSSMAPlanIntervalCount("1");
-      setSSMAPlanDiscount("10");
-      setSSMAPlanDiscountCode("");
-      setSSMAPlanBillingLeadHours("48");
-      setSSMAPlanIsActive(true);
+      setEditingGroup(null);
+      setGroupName("Subscribe & Save - Porch Pick Up");
+      setGroupBillingLeadHours("48");
+      setGroupIsActive(true);
     }
-    setSSMAPlanModalOpen(true);
+    setGroupModalOpen(true);
   }, []);
 
-  const handleSaveSSMAPlan = useCallback(() => {
+  const handleSaveGroup = useCallback(() => {
     const data: Record<string, string> = {
-      name: ssmaPlanName,
-      interval: ssmaPlanInterval,
-      intervalCount: ssmaPlanIntervalCount,
-      discountPercent: ssmaPlanDiscount,
-      discountCode: ssmaPlanDiscountCode,
-      billingLeadHours: ssmaPlanBillingLeadHours,
-      isActive: ssmaPlanIsActive ? "true" : "false",
+      name: groupName,
+      billingLeadHours: groupBillingLeadHours,
+      isActive: groupIsActive ? "true" : "false",
     };
-
-    if (editingSSMAPlan) {
-      data.intent = "update_ssma_plan";
-      data.planId = editingSSMAPlan.id;
+    if (editingGroup) {
+      data.intent = "update_plan_group";
+      data.groupId = editingGroup.id;
     } else {
-      data.intent = "create_ssma_plan";
+      data.intent = "create_plan_group";
     }
-
     submit(data, { method: "post" });
-    setSSMAPlanModalOpen(false);
-  }, [editingSSMAPlan, ssmaPlanName, ssmaPlanInterval, ssmaPlanIntervalCount, ssmaPlanDiscount, ssmaPlanDiscountCode, ssmaPlanBillingLeadHours, ssmaPlanIsActive, submit]);
+    setGroupModalOpen(false);
+  }, [editingGroup, groupName, groupBillingLeadHours, groupIsActive, submit]);
 
-  const handleDeleteSSMAPlan = useCallback((plan: typeof subscriptionPlans[0]) => {
-    setSSMAPlanToDelete({ id: plan.id, name: plan.name });
-    setSSMADeleteConfirmOpen(true);
+  const handleDeleteGroup = useCallback((group: typeof planGroups[0]) => {
+    setGroupToDelete({ id: group.id, name: group.name });
+    setDeleteGroupConfirmOpen(true);
   }, []);
 
-  const confirmDeleteSSMAPlan = useCallback(() => {
-    if (ssmaPlanToDelete) {
-      submit({ intent: "delete_ssma_plan", planId: ssmaPlanToDelete.id }, { method: "post" });
+  const confirmDeleteGroup = useCallback(() => {
+    if (groupToDelete) {
+      submit({ intent: "delete_plan_group", groupId: groupToDelete.id }, { method: "post" });
     }
-    setSSMADeleteConfirmOpen(false);
-    setSSMAPlanToDelete(null);
-  }, [ssmaPlanToDelete, submit]);
+    setDeleteGroupConfirmOpen(false);
+    setGroupToDelete(null);
+  }, [groupToDelete, submit]);
 
-  // Close SSMA modals on successful action
+  // Frequency handlers
+  const openFreqModal = useCallback((groupId: string, freq?: typeof planGroups[0]["frequencies"][0]) => {
+    setFreqGroupId(groupId);
+    if (freq) {
+      setEditingFreq(freq);
+      setFreqName(freq.name);
+      setFreqInterval(freq.interval);
+      setFreqIntervalCount(String(freq.intervalCount));
+      setFreqDiscount(String(freq.discountPercent));
+      setFreqDiscountCode(freq.discountCode || "");
+      setFreqIsActive(freq.isActive);
+    } else {
+      setEditingFreq(null);
+      setFreqName("");
+      setFreqInterval("WEEK");
+      setFreqIntervalCount("1");
+      setFreqDiscount("5");
+      setFreqDiscountCode("");
+      setFreqIsActive(true);
+    }
+    setFreqModalOpen(true);
+  }, []);
+
+  const handleSaveFreq = useCallback(() => {
+    const data: Record<string, string> = {
+      name: freqName,
+      interval: freqInterval,
+      intervalCount: freqIntervalCount,
+      discountPercent: freqDiscount,
+      discountCode: freqDiscountCode,
+      isActive: freqIsActive ? "true" : "false",
+    };
+    if (editingFreq) {
+      data.intent = "update_frequency";
+      data.frequencyId = editingFreq.id;
+    } else {
+      data.intent = "add_frequency";
+      data.groupId = freqGroupId;
+    }
+    submit(data, { method: "post" });
+    setFreqModalOpen(false);
+  }, [editingFreq, freqGroupId, freqName, freqInterval, freqIntervalCount, freqDiscount, freqDiscountCode, freqIsActive, submit]);
+
+  const handleDeleteFreq = useCallback((freq: typeof planGroups[0]["frequencies"][0]) => {
+    setFreqToDelete({ id: freq.id, name: freq.name });
+    setDeleteFreqConfirmOpen(true);
+  }, []);
+
+  const confirmDeleteFreq = useCallback(() => {
+    if (freqToDelete) {
+      submit({ intent: "delete_frequency", frequencyId: freqToDelete.id }, { method: "post" });
+    }
+    setDeleteFreqConfirmOpen(false);
+    setFreqToDelete(null);
+  }, [freqToDelete, submit]);
+
+  // Product handlers for SSMA plan groups
+  const handleOpenProductPickerForGroup = useCallback(async (groupId: string) => {
+    try {
+      const selected = await shopify.resourcePicker({
+        type: "product",
+        multiple: true,
+        selectionIds: [],
+        filter: { variants: false },
+      });
+      if (selected && selected.length > 0) {
+        const products = selected.map((p: { id: string; title: string; images?: Array<{ originalSrc?: string }> }) => ({
+          shopifyProductId: p.id,
+          title: p.title,
+          imageUrl: p.images?.[0]?.originalSrc || null,
+        }));
+        submit(
+          { intent: "add_group_products", groupId, products: JSON.stringify(products) },
+          { method: "post" }
+        );
+      }
+    } catch (err) {
+      console.error("Resource picker error:", err);
+    }
+  }, [shopify, submit]);
+
+  const handleRemoveGroupProduct = useCallback((groupId: string, productRecordId: string) => {
+    submit({ intent: "remove_group_product", groupId, productRecordId }, { method: "post" });
+  }, [submit]);
+
+  const togglePlanGroupProducts = useCallback((groupId: string) => {
+    setExpandedPlanGroups((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(groupId)) {
+        newSet.delete(groupId);
+      } else {
+        newSet.add(groupId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // Close modals on successful action
   useEffect(() => {
     if (actionData && "success" in actionData && actionData.success) {
-      setSSMAPlanModalOpen(false);
-      setSSMADeleteConfirmOpen(false);
+      setGroupModalOpen(false);
+      setFreqModalOpen(false);
+      setDeleteGroupConfirmOpen(false);
+      setDeleteFreqConfirmOpen(false);
     }
   }, [actionData]);
 
@@ -1177,7 +1316,7 @@ export default function SubscriptionsSettings() {
 
                 <Box padding="300" background="bg-surface-secondary" borderRadius="200">
                   <BlockStack gap="300">
-                    <InlineStack gap="300" blockAlignment="center">
+                    <InlineStack gap="300" blockAlign="center">
                       <Badge tone="success">✓</Badge>
                       <BlockStack gap="100">
                         <Text as="p" fontWeight="semibold">Cart Widget Deployed</Text>
@@ -1187,7 +1326,7 @@ export default function SubscriptionsSettings() {
                       </BlockStack>
                     </InlineStack>
 
-                    <InlineStack gap="300" blockAlignment="center">
+                    <InlineStack gap="300" blockAlign="center">
                       <Badge tone="success">✓</Badge>
                       <BlockStack gap="100">
                         <Text as="p" fontWeight="semibold">Checkout Extension Active</Text>
@@ -1197,7 +1336,7 @@ export default function SubscriptionsSettings() {
                       </BlockStack>
                     </InlineStack>
 
-                    <InlineStack gap="300" blockAlignment="center">
+                    <InlineStack gap="300" blockAlign="center">
                       <Badge tone="success">✓</Badge>
                       <BlockStack gap="100">
                         <Text as="p" fontWeight="semibold">Order Webhook Processing</Text>
@@ -1251,59 +1390,179 @@ export default function SubscriptionsSettings() {
           </Card>
         </Layout.Section>
 
-        {/* SSMA Subscription Plans */}
+        {/* SSMA Subscription Plan Groups */}
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">
-                  Subscription Plans
+                  Subscription Plan Groups
                 </Text>
-                <Button size="slim" onClick={() => openSSMAPlanModal()}>
-                  Add Plan
+                <Button size="slim" onClick={() => openGroupModal()}>
+                  Add Plan Group
                 </Button>
               </InlineStack>
 
               <Text as="p" tone="subdued">
-                Configure the subscription frequencies and discounts offered to customers.
-                These plans are used by the cart widget and control billing lead times.
+                Each plan group contains delivery frequency options and associated products.
+                Different products can belong to different groups with different frequency options.
               </Text>
 
-              {subscriptionPlans.length === 0 ? (
+              {planGroups.length === 0 ? (
                 <Banner tone="info">
-                  No subscription plans configured. Click "Add Plan" to create one.
+                  No plan groups configured. Click "Add Plan Group" to create one.
                 </Banner>
               ) : (
-                <DataTable
-                  columnContentTypes={["text", "text", "numeric", "text", "numeric", "text", "text"]}
-                  headings={["Plan Name", "Frequency", "Discount", "Discount Code", "Billing Lead", "Status", "Actions"]}
-                  rows={subscriptionPlans.map((plan) => [
-                    plan.name,
-                    plan.interval === "WEEK"
-                      ? plan.intervalCount === 1
-                        ? "Every week"
-                        : `Every ${plan.intervalCount} weeks`
-                      : plan.intervalCount === 1
-                        ? "Every month"
-                        : `Every ${plan.intervalCount} months`,
-                    `${plan.discountPercent}%`,
-                    plan.discountCode || "—",
-                    `${plan.billingLeadHours}h`,
-                    plan.isActive ? (
-                      <Badge key={`status-${plan.id}`} tone="success">Active</Badge>
-                    ) : (
-                      <Badge key={`status-${plan.id}`}>Inactive</Badge>
-                    ),
-                    <InlineStack key={`actions-${plan.id}`} gap="200">
-                      <Button size="slim" onClick={() => openSSMAPlanModal(plan)}>
-                        Edit
-                      </Button>
-                      <Button size="slim" tone="critical" onClick={() => handleDeleteSSMAPlan(plan)}>
-                        Delete
-                      </Button>
-                    </InlineStack>,
-                  ])}
-                />
+                <BlockStack gap="400">
+                  {planGroups.map((group) => (
+                    <Box
+                      key={group.id}
+                      padding="400"
+                      background="bg-surface-secondary"
+                      borderRadius="200"
+                    >
+                      <BlockStack gap="300">
+                        {/* Group Header */}
+                        <InlineStack align="space-between" blockAlign="center">
+                          <BlockStack gap="100">
+                            <InlineStack gap="200" blockAlign="center">
+                              <Text as="h3" variant="headingSm">
+                                {group.name}
+                              </Text>
+                              {group.isActive ? (
+                                <Badge tone="success">Active</Badge>
+                              ) : (
+                                <Badge>Inactive</Badge>
+                              )}
+                              <Badge tone="info">{`${group.billingLeadHours}h billing lead`}</Badge>
+                            </InlineStack>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {group.frequencies.length} frequency option(s) · {group.products.length} product(s)
+                            </Text>
+                          </BlockStack>
+                          <InlineStack gap="200">
+                            <Button size="slim" onClick={() => openFreqModal(group.id)}>
+                              Add Frequency
+                            </Button>
+                            <Button size="slim" onClick={() => handleOpenProductPickerForGroup(group.id)}>
+                              Add Products
+                            </Button>
+                            <Button size="slim" onClick={() => openGroupModal(group)}>
+                              Edit
+                            </Button>
+                            <Button size="slim" tone="critical" onClick={() => handleDeleteGroup(group)}>
+                              Delete
+                            </Button>
+                          </InlineStack>
+                        </InlineStack>
+
+                        <Divider />
+
+                        {/* Frequencies */}
+                        {group.frequencies.length === 0 ? (
+                          <Text as="p" tone="subdued">
+                            No frequency options. Click "Add Frequency" to create one.
+                          </Text>
+                        ) : (
+                          <DataTable
+                            columnContentTypes={["text", "text", "numeric", "text", "text", "text"]}
+                            headings={["Name", "Frequency", "Discount", "Discount Code", "Status", "Actions"]}
+                            rows={group.frequencies.map((freq) => [
+                              freq.name,
+                              freq.interval === "WEEK"
+                                ? freq.intervalCount === 1 ? "Every week" : `Every ${freq.intervalCount} weeks`
+                                : freq.intervalCount === 1 ? "Every month" : `Every ${freq.intervalCount} months`,
+                              `${freq.discountPercent}%`,
+                              freq.discountCode || "—",
+                              freq.isActive ? (
+                                <Badge key={`fs-${freq.id}`} tone="success">Active</Badge>
+                              ) : (
+                                <Badge key={`fs-${freq.id}`}>Inactive</Badge>
+                              ),
+                              <InlineStack key={`fa-${freq.id}`} gap="200">
+                                <Button size="slim" onClick={() => openFreqModal(group.id, freq)}>
+                                  Edit
+                                </Button>
+                                <Button size="slim" tone="critical" onClick={() => handleDeleteFreq(freq)}>
+                                  Delete
+                                </Button>
+                              </InlineStack>,
+                            ])}
+                          />
+                        )}
+
+                        <Divider />
+
+                        {/* Products */}
+                        <BlockStack gap="200">
+                          <InlineStack align="space-between" blockAlign="center">
+                            <Button
+                              variant="plain"
+                              onClick={() => togglePlanGroupProducts(group.id)}
+                              icon={expandedPlanGroups.has(group.id) ? ChevronUpIcon : ChevronDownIcon}
+                            >
+                              {`${expandedPlanGroups.has(group.id) ? "Hide" : "Show"} Products (${group.products.length})`}
+                            </Button>
+                          </InlineStack>
+
+                          <Collapsible
+                            open={expandedPlanGroups.has(group.id)}
+                            id={`plan-products-${group.id}`}
+                          >
+                            <Box paddingBlockStart="200">
+                              {group.products.length === 0 ? (
+                                <Banner tone="info">
+                                  No products in this group. Click "Add Products" to browse and add products.
+                                </Banner>
+                              ) : (
+                                <BlockStack gap="200">
+                                  {group.products.map((product) => (
+                                    <Box
+                                      key={product.id}
+                                      padding="200"
+                                      background="bg-surface"
+                                      borderRadius="100"
+                                    >
+                                      <InlineStack align="space-between" blockAlign="center" gap="300">
+                                        <InlineStack gap="300" blockAlign="center">
+                                          {product.imageUrl ? (
+                                            <Thumbnail
+                                              source={product.imageUrl}
+                                              alt={product.title}
+                                              size="small"
+                                            />
+                                          ) : (
+                                            <Box
+                                              background="bg-surface-secondary"
+                                              padding="200"
+                                              borderRadius="100"
+                                            >
+                                              <Icon source={ImageIcon} tone="subdued" />
+                                            </Box>
+                                          )}
+                                          <Text as="span" variant="bodyMd">
+                                            {product.title}
+                                          </Text>
+                                        </InlineStack>
+                                        <Button
+                                          size="slim"
+                                          tone="critical"
+                                          icon={DeleteIcon}
+                                          onClick={() => handleRemoveGroupProduct(group.id, product.id)}
+                                          accessibilityLabel={`Remove ${product.title}`}
+                                        />
+                                      </InlineStack>
+                                    </Box>
+                                  ))}
+                                </BlockStack>
+                              )}
+                            </Box>
+                          </Collapsible>
+                        </BlockStack>
+                      </BlockStack>
+                    </Box>
+                  ))}
+                </BlockStack>
               )}
             </BlockStack>
           </Card>
@@ -1453,7 +1712,7 @@ export default function SubscriptionsSettings() {
                               onClick={() => toggleGroupProducts(group.id)}
                               icon={expandedGroups.has(group.id) ? ChevronUpIcon : ChevronDownIcon}
                             >
-                              {expandedGroups.has(group.id) ? "Hide" : "Show"} Products ({group.products?.length || 0})
+                              {`${expandedGroups.has(group.id) ? "Hide" : "Show"} Products (${group.products?.length || 0})`}
                             </Button>
                           </InlineStack>
 
@@ -1727,7 +1986,7 @@ export default function SubscriptionsSettings() {
         </Layout.Section>
       </Layout>
 
-      {/* Add Plan Modal */}
+      {/* Add Plan Modal (Shopify Selling Plans) */}
       <Modal
         open={addPlanModalOpen}
         onClose={() => setAddPlanModalOpen(false)}
@@ -1821,29 +2080,75 @@ export default function SubscriptionsSettings() {
         </Modal.Section>
       </Modal>
 
-      {/* SSMA Plan Create/Edit Modal */}
+      {/* Plan Group Create/Edit Modal */}
       <Modal
-        open={ssmaPlanModalOpen}
-        onClose={() => setSSMAPlanModalOpen(false)}
-        title={editingSSMAPlan ? "Edit Subscription Plan" : "Add Subscription Plan"}
+        open={groupModalOpen}
+        onClose={() => setGroupModalOpen(false)}
+        title={editingGroup ? "Edit Plan Group" : "Add Plan Group"}
         primaryAction={{
-          content: editingSSMAPlan ? "Save Changes" : "Create Plan",
-          onAction: handleSaveSSMAPlan,
+          content: editingGroup ? "Save Changes" : "Create Group",
+          onAction: handleSaveGroup,
           loading: isLoading,
         }}
-        secondaryActions={[
-          {
-            content: "Cancel",
-            onAction: () => setSSMAPlanModalOpen(false),
-          },
-        ]}
+        secondaryActions={[{
+          content: "Cancel",
+          onAction: () => setGroupModalOpen(false),
+        }]}
       >
         <Modal.Section>
           <BlockStack gap="400">
             <TextField
-              label="Plan Name"
-              value={ssmaPlanName}
-              onChange={setSSMAPlanName}
+              label="Plan Group Name"
+              value={groupName}
+              onChange={setGroupName}
+              placeholder="e.g., Subscribe & Save - Porch Pick Up"
+              autoComplete="off"
+            />
+            <TextField
+              label="Billing Lead Time (hours)"
+              type="number"
+              value={groupBillingLeadHours}
+              onChange={setGroupBillingLeadHours}
+              min={1}
+              max={168}
+              suffix="hours"
+              autoComplete="off"
+              helpText="How many hours before pickup to charge customers in this plan group"
+            />
+            <Select
+              label="Status"
+              options={[
+                { label: "Active", value: "true" },
+                { label: "Inactive", value: "false" },
+              ]}
+              value={groupIsActive ? "true" : "false"}
+              onChange={(val) => setGroupIsActive(val === "true")}
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Frequency Create/Edit Modal */}
+      <Modal
+        open={freqModalOpen}
+        onClose={() => setFreqModalOpen(false)}
+        title={editingFreq ? "Edit Frequency" : "Add Frequency"}
+        primaryAction={{
+          content: editingFreq ? "Save Changes" : "Add Frequency",
+          onAction: handleSaveFreq,
+          loading: isLoading,
+        }}
+        secondaryActions={[{
+          content: "Cancel",
+          onAction: () => setFreqModalOpen(false),
+        }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <TextField
+              label="Frequency Name"
+              value={freqName}
+              onChange={setFreqName}
               placeholder="e.g., Weekly Delivery (10% off)"
               autoComplete="off"
             />
@@ -1854,26 +2159,26 @@ export default function SubscriptionsSettings() {
                   { label: "Week(s)", value: "WEEK" },
                   { label: "Month(s)", value: "MONTH" },
                 ]}
-                value={ssmaPlanInterval}
-                onChange={setSSMAPlanInterval}
+                value={freqInterval}
+                onChange={setFreqInterval}
               />
               <TextField
                 label="Every X intervals"
                 type="number"
-                value={ssmaPlanIntervalCount}
-                onChange={setSSMAPlanIntervalCount}
+                value={freqIntervalCount}
+                onChange={setFreqIntervalCount}
                 min={1}
                 max={52}
                 autoComplete="off"
-                helpText={`Deliver every ${ssmaPlanIntervalCount} ${ssmaPlanInterval.toLowerCase()}(s)`}
+                helpText={`Deliver every ${freqIntervalCount} ${freqInterval.toLowerCase()}(s)`}
               />
             </FormLayout.Group>
             <FormLayout.Group>
               <TextField
                 label="Discount Percentage"
                 type="number"
-                value={ssmaPlanDiscount}
-                onChange={setSSMAPlanDiscount}
+                value={freqDiscount}
+                onChange={setFreqDiscount}
                 min={0}
                 max={100}
                 suffix="%"
@@ -1881,62 +2186,77 @@ export default function SubscriptionsSettings() {
               />
               <TextField
                 label="Discount Code"
-                value={ssmaPlanDiscountCode}
-                onChange={setSSMAPlanDiscountCode}
+                value={freqDiscountCode}
+                onChange={setFreqDiscountCode}
                 placeholder="e.g., SUBSCRIBE-WEEKLY-10"
                 autoComplete="off"
-                helpText="Shopify discount code applied automatically by cart widget"
+                helpText="Shopify discount code applied by cart widget"
               />
             </FormLayout.Group>
-            <TextField
-              label="Billing Lead Time (hours)"
-              type="number"
-              value={ssmaPlanBillingLeadHours}
-              onChange={setSSMAPlanBillingLeadHours}
-              min={1}
-              max={168}
-              suffix="hours"
-              autoComplete="off"
-              helpText="How many hours before pickup to charge the customer"
-            />
             <Select
               label="Status"
               options={[
                 { label: "Active", value: "true" },
                 { label: "Inactive", value: "false" },
               ]}
-              value={ssmaPlanIsActive ? "true" : "false"}
-              onChange={(val) => setSSMAPlanIsActive(val === "true")}
+              value={freqIsActive ? "true" : "false"}
+              onChange={(val) => setFreqIsActive(val === "true")}
             />
           </BlockStack>
         </Modal.Section>
       </Modal>
 
-      {/* SSMA Plan Delete Confirmation Modal */}
+      {/* Delete Plan Group Confirmation */}
       <Modal
-        open={ssmaDeleteConfirmOpen}
-        onClose={() => setSSMADeleteConfirmOpen(false)}
-        title="Delete Subscription Plan"
+        open={deleteGroupConfirmOpen}
+        onClose={() => setDeleteGroupConfirmOpen(false)}
+        title="Delete Plan Group"
         primaryAction={{
-          content: "Delete Plan",
+          content: "Delete Group",
           destructive: true,
-          onAction: confirmDeleteSSMAPlan,
+          onAction: confirmDeleteGroup,
           loading: isLoading,
         }}
-        secondaryActions={[
-          {
-            content: "Cancel",
-            onAction: () => setSSMADeleteConfirmOpen(false),
-          },
-        ]}
+        secondaryActions={[{
+          content: "Cancel",
+          onAction: () => setDeleteGroupConfirmOpen(false),
+        }]}
       >
         <Modal.Section>
           <BlockStack gap="300">
             <Text as="p">
-              Are you sure you want to delete <strong>"{ssmaPlanToDelete?.name}"</strong>?
+              Are you sure you want to delete <strong>"{groupToDelete?.name}"</strong>?
             </Text>
             <Banner tone="warning">
-              Existing subscribers using this plan will not be affected, but new customers will no longer see this option.
+              This will also delete all frequency options and product associations in this group. Existing subscribers will not be affected.
+            </Banner>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Delete Frequency Confirmation */}
+      <Modal
+        open={deleteFreqConfirmOpen}
+        onClose={() => setDeleteFreqConfirmOpen(false)}
+        title="Delete Frequency"
+        primaryAction={{
+          content: "Delete Frequency",
+          destructive: true,
+          onAction: confirmDeleteFreq,
+          loading: isLoading,
+        }}
+        secondaryActions={[{
+          content: "Cancel",
+          onAction: () => setDeleteFreqConfirmOpen(false),
+        }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p">
+              Are you sure you want to delete <strong>"{freqToDelete?.name}"</strong>?
+            </Text>
+            <Banner tone="warning">
+              New customers will no longer see this frequency option. Existing subscribers are not affected.
             </Banner>
           </BlockStack>
         </Modal.Section>

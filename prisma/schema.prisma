@@ -416,27 +416,61 @@ model SellingPlan {
 }
 
 // ============================================
-// SSMA SUBSCRIPTION PLANS (Managed by SSMA, not tied to Shopify Selling Plans)
+// SSMA SUBSCRIPTION PLAN GROUPS
+// A group (e.g., "Subscribe & Save - Porch Pick Up") contains
+// multiple frequency options and has products associated with it.
 // ============================================
 
-model SubscriptionPlan {
+model SubscriptionPlanGroup {
   id               String   @id @default(cuid())
   shop             String
-  name             String   // Display name, e.g., "Weekly Delivery (10% off)"
-  interval         String   // "WEEK" or "MONTH"
-  intervalCount    Int      // 1 = every week, 2 = every 2 weeks, etc.
-  discountPercent  Float    // Discount percentage (e.g., 10.0 for 10%)
-  discountCode     String?  // Shopify discount code name, e.g., "SUBSCRIBE-WEEKLY-10"
+  name             String   // e.g., "Subscribe & Save - Porch Pick Up"
   billingLeadHours Int      @default(48) // Hours before pickup to charge customer
   isActive         Boolean  @default(true)
-  sortOrder        Int      @default(0) // Controls display order in cart widget
+  sortOrder        Int      @default(0)
+
+  frequencies SubscriptionPlanFrequency[]
+  products    SubscriptionPlanProduct[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([shop, interval, intervalCount])
   @@index([shop])
   @@index([shop, isActive])
+}
+
+model SubscriptionPlanFrequency {
+  id              String  @id @default(cuid())
+  groupId         String
+  group           SubscriptionPlanGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name            String  // "Weekly Delivery (10% off)"
+  interval        String  // "WEEK" or "MONTH"
+  intervalCount   Int     // 1 = every week, 2 = every 2 weeks, etc.
+  discountPercent Float   // Discount percentage (e.g., 10.0 for 10%)
+  discountCode    String? // Shopify discount code, e.g., "SUBSCRIBE-WEEKLY-10"
+  isActive        Boolean @default(true)
+  sortOrder       Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([groupId, interval, intervalCount])
+  @@index([groupId])
+}
+
+model SubscriptionPlanProduct {
+  id               String  @id @default(cuid())
+  groupId          String
+  group            SubscriptionPlanGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  shopifyProductId String  // "gid://shopify/Product/12345"
+  title            String  // Cached product title
+  imageUrl         String? // Cached product image URL
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([groupId, shopifyProductId])
+  @@index([groupId])
 }
 
 // ============================================
