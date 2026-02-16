@@ -583,37 +583,61 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       `);
 
       const contractsData = await contractsResponse.json();
+      console.log("All contracts from Shopify:", JSON.stringify(contractsData, null, 2));
       const contracts = contractsData.data?.subscriptionContracts?.nodes || [];
 
       // Create a map of contract ID -> status
       const statusMap = new Map<string, string>();
       for (const contract of contracts) {
         statusMap.set(contract.id, contract.status);
+        console.log(`Contract ${contract.id} has status: ${contract.status}`);
       }
 
       let updated = 0;
       let cancelled = 0;
+      let notFound = 0;
       const errors: string[] = [];
 
       for (const subscription of ssmaSubscriptions) {
         const shopifyStatus = statusMap.get(subscription.shopifyContractId);
+        console.log(`SSMA subscription ${subscription.id} (contract: ${subscription.shopifyContractId}) - SSMA status: ${subscription.status}, Shopify status: ${shopifyStatus || "NOT FOUND"}`);
 
-        if (shopifyStatus && shopifyStatus !== subscription.status) {
+        if (!shopifyStatus) {
+          // Contract not found in Shopify - might have been deleted, mark as cancelled
+          notFound++;
           try {
-            // Map Shopify status to SSMA status
-            let newStatus: "ACTIVE" | "PAUSED" | "CANCELLED" = "ACTIVE";
-            if (shopifyStatus === "CANCELLED") {
-              newStatus = "CANCELLED";
-              cancelled++;
-            } else if (shopifyStatus === "PAUSED") {
-              newStatus = "PAUSED";
-            }
+            await prisma.subscriptionPickup.update({
+              where: { id: subscription.id },
+              data: { status: "CANCELLED" },
+            });
+            cancelled++;
+            updated++;
+          } catch (err) {
+            errors.push(`Subscription ${subscription.id}: ${err instanceof Error ? err.message : "Unknown error"}`);
+          }
+          continue;
+        }
 
+        // Map Shopify status to SSMA status and always update if different
+        let newStatus: "ACTIVE" | "PAUSED" | "CANCELLED" = "ACTIVE";
+        if (shopifyStatus === "CANCELLED") {
+          newStatus = "CANCELLED";
+        } else if (shopifyStatus === "PAUSED") {
+          newStatus = "PAUSED";
+        }
+
+        // Only update if status is different
+        if (newStatus !== subscription.status) {
+          try {
             await prisma.subscriptionPickup.update({
               where: { id: subscription.id },
               data: { status: newStatus },
             });
+            if (newStatus === "CANCELLED") {
+              cancelled++;
+            }
             updated++;
+            console.log(`Updated subscription ${subscription.id} from ${subscription.status} to ${newStatus}`);
           } catch (err) {
             errors.push(`Subscription ${subscription.id}: ${err instanceof Error ? err.message : "Unknown error"}`);
           }
@@ -622,9 +646,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       return json({
         success: true,
-        message: `Synced status for ${updated} subscriptions (${cancelled} marked as cancelled)`,
+        message: `Synced status for ${updated} subscriptions (${cancelled} marked as cancelled, ${notFound} contracts not found in Shopify)`,
         updated,
         cancelled,
+        notFound,
         errors,
       });
     } catch (error) {
