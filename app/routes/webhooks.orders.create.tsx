@@ -11,6 +11,11 @@ const ATTR_PICKUP_DATE = "Pickup Date";
 const ATTR_PICKUP_TIME = "Pickup Time Slot";
 const ATTR_PICKUP_LOCATION_ID = "Pickup Location ID";
 
+// Subscription attribute keys (set by cart page widget)
+const ATTR_SUBSCRIPTION_ENABLED = "Subscription Enabled";
+const ATTR_SUBSCRIPTION_FREQUENCY = "Subscription Frequency";
+const ATTR_SUBSCRIPTION_PREFERRED_DAY = "Subscription Preferred Day";
+
 interface OrderAttribute {
   name: string;  // Shopify REST API uses "name", not "key"
   value: string;
@@ -143,9 +148,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const pickupTimeSlot = getAttr(ATTR_PICKUP_TIME);
   const pickupLocationId = getAttr(ATTR_PICKUP_LOCATION_ID);
 
-  console.log(`Extracted pickup info - Date: ${pickupDateRaw}, Time: ${pickupTimeSlot}, Location: ${pickupLocationId}`);
+  // NEW: Check for SSMA-owned subscription via cart attributes (primary method)
+  const subscriptionEnabledAttr = getAttr(ATTR_SUBSCRIPTION_ENABLED);
+  const subscriptionFrequencyAttr = getAttr(ATTR_SUBSCRIPTION_FREQUENCY);
+  const subscriptionPreferredDayAttr = getAttr(ATTR_SUBSCRIPTION_PREFERRED_DAY);
 
-  // Check if this is a subscription order from REST payload first
+  const isSSMASubscription = subscriptionEnabledAttr === "true" && subscriptionFrequencyAttr;
+
+  console.log(`Extracted pickup info - Date: ${pickupDateRaw}, Time: ${pickupTimeSlot}, Location: ${pickupLocationId}`);
+  console.log(`SSMA Subscription attributes - Enabled: ${subscriptionEnabledAttr}, Frequency: ${subscriptionFrequencyAttr}, PreferredDay: ${subscriptionPreferredDayAttr}`);
+
+  // LEGACY: Check if this is a subscription order from REST payload (for backward compatibility with Shopify selling plans)
   let subscriptionLineItem = order.line_items.find(
     (item) => item.selling_plan_allocation?.selling_plan
   );
@@ -217,9 +230,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   // If no pickup date/time AND not a subscription, skip processing
+  const isSubscriptionOrderEarly = isSSMASubscription || subscriptionLineItem;
+
   if (!pickupDateRaw || !pickupTimeSlot) {
     // Even without pickup info, create subscription record if this is a subscription order
-    if (subscriptionLineItem) {
+    if (isSubscriptionOrderEarly) {
       console.log(`Order ${order.name} is a subscription order but has no pickup info - creating subscription record only`);
 
       try {
@@ -236,23 +251,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           order.phone ||
           null;
 
-        const sellingPlanName = subscriptionLineItem.selling_plan_allocation?.selling_plan.name || "";
-        console.log(`Detected subscription with selling plan: ${sellingPlanName}`);
-
-        // Determine frequency from selling plan name
         let frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY" = "WEEKLY";
-        if (sellingPlanName.toLowerCase().includes("every 2 weeks") ||
-            sellingPlanName.toLowerCase().includes("bi-weekly") ||
-            sellingPlanName.toLowerCase().includes("biweekly")) {
-          frequency = "BIWEEKLY";
-        } else if (sellingPlanName.toLowerCase().includes("every 3 weeks") ||
-                   sellingPlanName.toLowerCase().includes("tri-weekly") ||
-                   sellingPlanName.toLowerCase().includes("triweekly")) {
-          frequency = "TRIWEEKLY";
-        }
+        let preferredDay: number;
+        let productTitle: string;
 
-        // Default preferred day to current day if no pickup date
-        const preferredDay = new Date().getDay();
+        if (isSSMASubscription) {
+          // NEW: Use SSMA cart attributes
+          console.log(`Detected SSMA subscription: ${subscriptionFrequencyAttr}`);
+          frequency = subscriptionFrequencyAttr as "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY";
+          preferredDay = subscriptionPreferredDayAttr
+            ? parseInt(subscriptionPreferredDayAttr, 10)
+            : new Date().getDay();
+          productTitle = order.line_items[0]?.title || "Subscription";
+        } else if (subscriptionLineItem) {
+          // LEGACY: Use selling plan detection
+          const sellingPlanName = subscriptionLineItem.selling_plan_allocation?.selling_plan.name || "";
+          console.log(`Detected legacy subscription with selling plan: ${sellingPlanName}`);
+
+          if (sellingPlanName.toLowerCase().includes("every 2 weeks") ||
+              sellingPlanName.toLowerCase().includes("bi-weekly") ||
+              sellingPlanName.toLowerCase().includes("biweekly")) {
+            frequency = "BIWEEKLY";
+          } else if (sellingPlanName.toLowerCase().includes("every 3 weeks") ||
+                     sellingPlanName.toLowerCase().includes("tri-weekly") ||
+                     sellingPlanName.toLowerCase().includes("triweekly")) {
+            frequency = "TRIWEEKLY";
+          }
+
+          preferredDay = new Date().getDay();
+          productTitle = subscriptionLineItem.title;
+        } else {
+          throw new Error("Subscription detection inconsistency");
+        }
 
         // Create subscription record
         const subscriptionId = await createSubscriptionFromOrder(
@@ -265,10 +295,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           frequency,
           preferredDay,
           "TBD", // Pickup time slot to be determined
-          subscriptionLineItem.title
+          productTitle
         );
 
-        console.log(`Created subscription ${subscriptionId} from order ${order.name} (no pickup info)`);
+        console.log(`Created subscription ${subscriptionId} from order ${order.name} (no pickup info, method: ${isSSMASubscription ? 'SSMA attributes' : 'selling plan'})`);
       } catch (subError) {
         console.error("Failed to create subscription from order:", subError);
       }
@@ -286,7 +316,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
 
-    return json({ message: subscriptionLineItem ? "Subscription created (no pickup info)" : "No pickup info" });
+    return json({ message: isSubscriptionOrderEarly ? "Subscription created (no pickup info)" : "No pickup info" });
   }
 
   // Parse the pickup date
@@ -390,27 +420,53 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Check if this is a subscription order and create subscription record
-    // Use the subscriptionLineItem we already detected earlier (including GraphQL fallback)
-    // Don't re-check here as it would miss the GraphQL-detected subscriptions
-    if (subscriptionLineItem) {
+    // PRIMARY: Use SSMA cart attributes (new system)
+    // FALLBACK: Use selling plan detection (legacy/backward compatibility)
+    const isSubscriptionOrder = isSSMASubscription || subscriptionLineItem;
+
+    if (isSubscriptionOrder) {
       try {
-        const sellingPlanName = subscriptionLineItem.selling_plan_allocation?.selling_plan.name || "";
-        console.log(`Detected subscription order with selling plan: ${sellingPlanName}`);
-
-        // Determine frequency from selling plan name
         let frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY" = "WEEKLY";
-        if (sellingPlanName.toLowerCase().includes("every 2 weeks") ||
-            sellingPlanName.toLowerCase().includes("bi-weekly") ||
-            sellingPlanName.toLowerCase().includes("biweekly")) {
-          frequency = "BIWEEKLY";
-        } else if (sellingPlanName.toLowerCase().includes("every 3 weeks") ||
-                   sellingPlanName.toLowerCase().includes("tri-weekly") ||
-                   sellingPlanName.toLowerCase().includes("triweekly")) {
-          frequency = "TRIWEEKLY";
-        }
+        let preferredDay: number;
+        let productTitle: string;
 
-        // Get preferred day from pickup date (day of week)
-        const preferredDay = pickupDate.getDay();
+        if (isSSMASubscription) {
+          // NEW: Use SSMA cart attributes (primary method)
+          console.log(`Detected SSMA subscription order via cart attributes: ${subscriptionFrequencyAttr}`);
+
+          frequency = subscriptionFrequencyAttr as "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY";
+
+          // Get preferred day from attribute or fallback to pickup date
+          preferredDay = subscriptionPreferredDayAttr
+            ? parseInt(subscriptionPreferredDayAttr, 10)
+            : pickupDate.getDay();
+
+          // Use first line item title
+          productTitle = order.line_items[0]?.title || "Subscription";
+        } else if (subscriptionLineItem) {
+          // LEGACY: Use selling plan detection (backward compatibility)
+          const sellingPlanName = subscriptionLineItem.selling_plan_allocation?.selling_plan.name || "";
+          console.log(`Detected legacy subscription order with selling plan: ${sellingPlanName}`);
+
+          // Determine frequency from selling plan name
+          if (sellingPlanName.toLowerCase().includes("every 2 weeks") ||
+              sellingPlanName.toLowerCase().includes("bi-weekly") ||
+              sellingPlanName.toLowerCase().includes("biweekly")) {
+            frequency = "BIWEEKLY";
+          } else if (sellingPlanName.toLowerCase().includes("every 3 weeks") ||
+                     sellingPlanName.toLowerCase().includes("tri-weekly") ||
+                     sellingPlanName.toLowerCase().includes("triweekly")) {
+            frequency = "TRIWEEKLY";
+          }
+
+          // Get preferred day from pickup date (day of week)
+          preferredDay = pickupDate.getDay();
+          productTitle = subscriptionLineItem.title;
+        } else {
+          // This shouldn't happen, but handle gracefully
+          console.error("isSubscriptionOrder is true but neither method detected subscription");
+          throw new Error("Subscription detection inconsistency");
+        }
 
         // Create subscription record from order
         const subscriptionId = await createSubscriptionFromOrder(
@@ -423,10 +479,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           frequency,
           preferredDay,
           pickupTimeSlot,
-          subscriptionLineItem.title
+          productTitle
         );
 
-        console.log(`Created subscription ${subscriptionId} from order ${order.name}`);
+        console.log(`Created subscription ${subscriptionId} from order ${order.name} (method: ${isSSMASubscription ? 'SSMA attributes' : 'selling plan'})`);
 
         // Link the pickup schedule to the subscription
         await prisma.pickupSchedule.update({

@@ -1,6 +1,7 @@
 {% comment %}
   Subscribe and Save App Embed
-  Auto-injects subscription options on product pages
+  Auto-injects subscription options on the cart page
+  Works with SSMA (Susie's Sourdough Manager App) via cart attributes
 {% endcomment %}
 
 {% if block.settings.enabled %}
@@ -26,7 +27,7 @@
       "id": "enabled",
       "label": "Enable Subscribe & Save",
       "default": true,
-      "info": "Shows subscription options on product pages"
+      "info": "Shows subscription options on the cart page"
     },
     {
       "type": "range",

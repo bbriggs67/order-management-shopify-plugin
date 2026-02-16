@@ -38,6 +38,7 @@ interface OrderWebhookPayload {
   };
   cancelled_at: string | null;
   closed_at: string | null;
+  financial_status: string; // "paid", "refunded", "partially_refunded", "pending", etc.
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -76,8 +77,44 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         where: { id: pickup.id },
         data: { pickupStatus: "CANCELLED" },
       });
+
+      // Also cancel linked subscription if exists
+      if (pickup.subscriptionPickupId) {
+        await prisma.subscriptionPickup.update({
+          where: { id: pickup.subscriptionPickupId },
+          data: {
+            status: "CANCELLED",
+            pauseReason: "Order cancelled",
+          },
+        });
+        console.log(`Cancelled subscription ${pickup.subscriptionPickupId} due to order cancellation`);
+      }
+
       console.log(`Marked pickup ${pickup.id} as cancelled due to order cancellation`);
       return json({ success: true, action: "cancelled" });
+    }
+
+    // If order was fully refunded, cancel the pickup and subscription
+    if (order.financial_status === "refunded") {
+      await prisma.pickupSchedule.update({
+        where: { id: pickup.id },
+        data: { pickupStatus: "CANCELLED" },
+      });
+
+      // Also cancel linked subscription if exists
+      if (pickup.subscriptionPickupId) {
+        await prisma.subscriptionPickup.update({
+          where: { id: pickup.subscriptionPickupId },
+          data: {
+            status: "CANCELLED",
+            pauseReason: "Order fully refunded",
+          },
+        });
+        console.log(`Cancelled subscription ${pickup.subscriptionPickupId} due to full refund`);
+      }
+
+      console.log(`Marked pickup ${pickup.id} as cancelled due to full refund`);
+      return json({ success: true, action: "refunded" });
     }
 
     // Update customer info if changed

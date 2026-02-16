@@ -55,6 +55,22 @@ const ATTR_PICKUP_TIME = "Pickup Time Slot";
 const ATTR_PICKUP_LOCATION_ID = "Pickup Location ID";
 const ATTR_PICKUP_LOCATION_NAME = "Pickup Location";
 
+// Subscription attribute keys (set by cart page widget)
+const ATTR_SUBSCRIPTION_ENABLED = "Subscription Enabled";
+const ATTR_SUBSCRIPTION_FREQUENCY = "Subscription Frequency";
+const ATTR_SUBSCRIPTION_PREFERRED_DAY = "Subscription Preferred Day";
+
+// Day of week options for subscription preferred day
+const DAY_OPTIONS = [
+  { value: "0", label: "Sunday" },
+  { value: "1", label: "Monday" },
+  { value: "2", label: "Tuesday" },
+  { value: "3", label: "Wednesday" },
+  { value: "4", label: "Thursday" },
+  { value: "5", label: "Friday" },
+  { value: "6", label: "Saturday" },
+];
+
 // Main extension - renders after contact information section
 // Using this target instead of delivery-address because products with
 // requires_shipping=false may skip the delivery address section entirely
@@ -68,11 +84,17 @@ function PickupScheduler() {
   const applyAttributeChange = useApplyAttributeChange();
 
   // Read existing attribute values
-  const [existingDate, existingTime, existingLocationId] = useAttributeValues([
+  const [existingDate, existingTime, existingLocationId, subscriptionEnabled, subscriptionFrequency, existingPreferredDay] = useAttributeValues([
     ATTR_PICKUP_DATE,
     ATTR_PICKUP_TIME,
     ATTR_PICKUP_LOCATION_ID,
+    ATTR_SUBSCRIPTION_ENABLED,
+    ATTR_SUBSCRIPTION_FREQUENCY,
+    ATTR_SUBSCRIPTION_PREFERRED_DAY,
   ]);
+
+  // Check if this is a subscription order
+  const isSubscription = subscriptionEnabled === "true";
 
   // State
   const [loading, setLoading] = useState(true);
@@ -89,6 +111,9 @@ function PickupScheduler() {
     existingLocationId || null
   );
   const [currentWeekStart, setCurrentWeekStart] = useState(0);
+  const [preferredDay, setPreferredDay] = useState<string>(
+    existingPreferredDay || "2" // Default to Tuesday
+  );
 
   // Settings with defaults
   const title = (settings.title as string) || "Select Pickup Date & Time";
@@ -226,6 +251,20 @@ function PickupScheduler() {
     [locations, applyAttributeChange]
   );
 
+  // Save subscription preferred day
+  const handlePreferredDaySelect = useCallback(
+    async (day: string) => {
+      setPreferredDay(day);
+
+      await applyAttributeChange({
+        type: "updateAttribute",
+        key: ATTR_SUBSCRIPTION_PREFERRED_DAY,
+        value: day,
+      });
+    },
+    [applyAttributeChange]
+  );
+
   // Get visible dates (show 7 at a time)
   const visibleDates = availableDates.slice(
     currentWeekStart,
@@ -292,6 +331,35 @@ function PickupScheduler() {
     <BlockStack spacing="base" padding="base">
       <Heading level={2}>{title}</Heading>
       <Text appearance="subdued">{subtitle}</Text>
+
+      {/* Subscription indicator and preferred day selector */}
+      {isSubscription && (
+        <>
+          <Banner status="info">
+            <BlockStack spacing="extraTight">
+              <Text emphasis="bold">🔄 Subscription Order</Text>
+              <Text>
+                This is a {subscriptionFrequency?.toLowerCase()} subscription. Your first pickup will be based on the date you select below. Future pickups will be scheduled automatically on your preferred day.
+              </Text>
+            </BlockStack>
+          </Banner>
+
+          <BlockStack spacing="tight">
+            <Text emphasis="bold">Preferred Pickup Day (for future orders)</Text>
+            <Select
+              label="Select your preferred day"
+              value={preferredDay}
+              onChange={handlePreferredDaySelect}
+              options={DAY_OPTIONS}
+            />
+            <Text appearance="subdued" size="small">
+              Future subscription pickups will be scheduled on this day.
+            </Text>
+          </BlockStack>
+
+          <BlockSpacer spacing="base" />
+        </>
+      )}
 
       <Divider />
 
