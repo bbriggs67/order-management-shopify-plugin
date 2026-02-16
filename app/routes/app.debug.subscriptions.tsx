@@ -227,6 +227,45 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  // Remove product from a selling plan group
+  if (intent === "remove_product_from_group") {
+    const groupId = formData.get("groupId") as string;
+    const productId = formData.get("productId") as string;
+
+    try {
+      const response = await admin.graphql(`
+        mutation removeProductFromGroup($groupId: ID!, $productIds: [ID!]!) {
+          sellingPlanGroupRemoveProducts(id: $groupId, productIds: $productIds) {
+            removedProductIds
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `, {
+        variables: {
+          groupId,
+          productIds: [productId],
+        },
+      });
+
+      const data = await response.json();
+      console.log("Remove product response:", JSON.stringify(data, null, 2));
+
+      if (data.data?.sellingPlanGroupRemoveProducts?.userErrors?.length > 0) {
+        return json({
+          error: data.data.sellingPlanGroupRemoveProducts.userErrors.map((e: any) => e.message).join(", "),
+        });
+      }
+
+      return json({ success: true, message: "Product removed from selling plan group" });
+    } catch (error) {
+      console.error("Error removing product:", error);
+      return json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  }
+
   if (intent === "add_test_product") {
     const groupId = formData.get("groupId") as string;
     const productId = formData.get("productId") as string;
@@ -286,6 +325,21 @@ export default function SubscriptionDebugPage() {
     submit(formData, { method: "post" });
   };
 
+  const handleRemoveProductFromGroup = (groupId: string, productId: string) => {
+    if (!confirm("Remove this product from the selling plan group?")) return;
+    const formData = new FormData();
+    formData.append("intent", "remove_product_from_group");
+    formData.append("groupId", groupId);
+    formData.append("productId", productId);
+    submit(formData, { method: "post" });
+  };
+
+  // Find SSMA's group (should be named "Subscribe & Save" or similar)
+  const ssmaGroup = sellingPlanGroups.find(g =>
+    g.name.toLowerCase().includes("subscribe") ||
+    g.merchantCode === "subscribe-save"
+  );
+
   return (
     <Page
       backAction={{ content: "Settings", url: "/app/settings" }}
@@ -308,24 +362,64 @@ export default function SubscriptionDebugPage() {
                   </InlineStack>
 
                   {testProductInfo.sellingPlanGroups.length > 0 ? (
-                    <BlockStack gap="200">
-                      <Text as="p" tone="success">
+                    <BlockStack gap="300">
+                      <Text as="p">
                         Connected to {testProductInfo.sellingPlanGroups.length} selling plan group(s):
                       </Text>
-                      <List type="bullet">
-                        {testProductInfo.sellingPlanGroups.map((group) => (
-                          <List.Item key={group.id}>
-                            <Text as="span" fontWeight="semibold">{group.name}</Text>
-                            {" "}({group.planCount} plans)
-                          </List.Item>
-                        ))}
-                      </List>
+                      {testProductInfo.sellingPlanGroups.map((group) => {
+                        const isSSMAGroup = ssmaGroup && group.id === ssmaGroup.id;
+                        return (
+                          <Box
+                            key={group.id}
+                            padding="300"
+                            background={isSSMAGroup ? "bg-surface-success" : "bg-surface-warning"}
+                            borderRadius="100"
+                          >
+                            <InlineStack align="space-between" blockAlign="center">
+                              <BlockStack gap="100">
+                                <InlineStack gap="200">
+                                  <Text as="span" fontWeight="semibold">{group.name}</Text>
+                                  <Badge tone={isSSMAGroup ? "success" : "warning"}>
+                                    {isSSMAGroup ? "SSMA Group" : "Other Group"}
+                                  </Badge>
+                                </InlineStack>
+                                <Text as="p" tone="subdued">{group.planCount} plans</Text>
+                              </BlockStack>
+                              {!isSSMAGroup && (
+                                <Button
+                                  variant="primary"
+                                  tone="critical"
+                                  onClick={() => handleRemoveProductFromGroup(group.id, testProductInfo.productId)}
+                                  loading={isLoading}
+                                >
+                                  Remove from this group
+                                </Button>
+                              )}
+                            </InlineStack>
+                          </Box>
+                        );
+                      })}
+
+                      {/* Show warning if connected to wrong group */}
+                      {!testProductInfo.sellingPlanGroups.some(g => ssmaGroup && g.id === ssmaGroup.id) && ssmaGroup && (
+                        <Banner tone="warning">
+                          <BlockStack gap="200">
+                            <Text as="p">
+                              <strong>Issue:</strong> This product is connected to a selling plan group that is NOT SSMA's group.
+                              This is why subscriptions aren't being created in SSMA.
+                            </Text>
+                            <Text as="p">
+                              <strong>Fix:</strong> Click "Remove from this group" above, then add the product to SSMA's "{ssmaGroup.name}" group below.
+                            </Text>
+                          </BlockStack>
+                        </Banner>
+                      )}
                     </BlockStack>
                   ) : (
                     <Banner tone="critical">
                       <p>
                         <strong>Problem Found:</strong> This product is NOT connected to any selling plan group!
-                        This is why subscriptions aren't being created.
+                        This is why subscriptions aren't being created. Add it to SSMA's selling plan group below.
                       </p>
                     </Banner>
                   )}
