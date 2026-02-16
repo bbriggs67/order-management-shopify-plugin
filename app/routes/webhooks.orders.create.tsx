@@ -4,6 +4,7 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { createPickupEvent } from "../services/google-calendar.server";
 import { createSubscriptionFromOrder } from "../services/subscription.server";
+import { unauthenticated } from "../shopify.server";
 
 // Attribute keys that match the checkout extension
 const ATTR_PICKUP_DATE = "Pickup Date";
@@ -30,6 +31,31 @@ interface OrderLineItem {
   variant_title: string;
   quantity: number;
   selling_plan_allocation?: SellingPlanAllocation;
+}
+
+// GraphQL response types for subscription detection
+interface GraphQLSellingPlan {
+  sellingPlan?: {
+    id: string;
+    name: string;
+  };
+}
+
+interface GraphQLLineItem {
+  id: string;
+  title: string;
+  quantity: number;
+  sellingPlanAllocation?: GraphQLSellingPlan;
+}
+
+interface GraphQLOrderResponse {
+  data?: {
+    order?: {
+      lineItems: {
+        nodes: GraphQLLineItem[];
+      };
+    };
+  };
 }
 
 interface OrderWebhookPayload {
