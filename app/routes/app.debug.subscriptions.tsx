@@ -22,6 +22,7 @@ interface SellingPlanInfo {
   id: string;
   name: string;
   options: string;
+  category: string;
   billingPolicy: string;
   deliveryPolicy: string;
 }
@@ -30,6 +31,7 @@ interface SellingPlanGroupInfo {
   id: string;
   name: string;
   merchantCode: string;
+  appId: string | null;
   productCount: number;
   products: Array<{
     id: string;
@@ -63,6 +65,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             name
             merchantCode
             productCount
+            appId
             products(first: 50) {
               nodes {
                 id
@@ -74,6 +77,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                 id
                 name
                 options
+                category
                 billingPolicy {
                   ... on SellingPlanRecurringBillingPolicy {
                     interval
@@ -101,6 +105,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         id: group.id,
         name: group.name,
         merchantCode: group.merchantCode || "N/A",
+        appId: group.appId || null,
         productCount: group.productCount || 0,
         products: group.products?.nodes?.map((p: any) => ({
           id: p.id,
@@ -110,6 +115,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           id: plan.id,
           name: plan.name,
           options: JSON.stringify(plan.options),
+          category: plan.category || "UNKNOWN",
           billingPolicy: plan.billingPolicy?.interval
             ? `Every ${plan.billingPolicy.intervalCount} ${plan.billingPolicy.interval.toLowerCase()}(s)`
             : "N/A",
@@ -465,6 +471,16 @@ export default function SubscriptionDebugPage() {
                           ID: {group.id} | Code: {group.merchantCode}
                         </Text>
 
+                        {/* Show App ID - critical for subscription contract creation */}
+                        <InlineStack gap="200">
+                          <Text as="span" fontWeight="semibold">Owner App:</Text>
+                          {group.appId ? (
+                            <Badge tone="success">{group.appId}</Badge>
+                          ) : (
+                            <Badge tone="critical">No app owner (contracts won't be created!)</Badge>
+                          )}
+                        </InlineStack>
+
                         <Divider />
 
                         <Text as="p" fontWeight="semibold">Selling Plans:</Text>
@@ -472,7 +488,15 @@ export default function SubscriptionDebugPage() {
                           <List type="bullet">
                             {group.sellingPlans.map((plan) => (
                               <List.Item key={plan.id}>
-                                {plan.name} - Billing: {plan.billingPolicy}, Delivery: {plan.deliveryPolicy}
+                                <InlineStack gap="100">
+                                  <Text as="span">{plan.name}</Text>
+                                  <Badge tone={plan.category === "SUBSCRIPTION" ? "success" : "warning"}>
+                                    {plan.category}
+                                  </Badge>
+                                  <Text as="span" tone="subdued">
+                                    Billing: {plan.billingPolicy}, Delivery: {plan.deliveryPolicy}
+                                  </Text>
+                                </InlineStack>
                               </List.Item>
                             ))}
                           </List>
