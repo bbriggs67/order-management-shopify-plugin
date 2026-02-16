@@ -179,7 +179,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.error("Error fetching test product:", error);
   }
 
-  // Query recent subscription contracts
+  // Query recent subscription contracts from Shopify
   let recentContracts: Array<{
     id: string;
     status: string;
@@ -221,11 +221,39 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.error("Error fetching subscription contracts:", error);
   }
 
+  // Query what's actually in SSMA's database
+  const ssmaSubscriptions = await prisma.subscriptionPickup.findMany({
+    where: { shop },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+  });
+
+  const ssmaPickupSchedules = await prisma.pickupSchedule.findMany({
+    where: { shop },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+  });
+
   return json({
     shop,
     sellingPlanGroups,
     testProductInfo,
     recentContracts,
+    ssmaSubscriptions: ssmaSubscriptions.map(s => ({
+      id: s.id,
+      shopifyContractId: s.shopifyContractId,
+      customerName: s.customerName,
+      status: s.status,
+      frequency: s.frequency,
+      nextPickupDate: s.nextPickupDate?.toISOString() || null,
+    })),
+    ssmaPickupSchedules: ssmaPickupSchedules.map(p => ({
+      id: p.id,
+      shopifyOrderNumber: p.shopifyOrderNumber,
+      customerName: p.customerName,
+      pickupDate: p.pickupDate.toISOString(),
+      pickupStatus: p.pickupStatus,
+    })),
   });
 };
 
@@ -566,7 +594,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SubscriptionDebugPage() {
-  const { shop, sellingPlanGroups, testProductInfo, recentContracts } = useLoaderData<typeof loader>();
+  const { shop, sellingPlanGroups, testProductInfo, recentContracts, ssmaSubscriptions, ssmaPickupSchedules } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -862,6 +890,67 @@ export default function SubscriptionDebugPage() {
                   ))}
                 </List>
               )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* SSMA Database Contents */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">SSMA Database Contents</Text>
+
+              <BlockStack gap="200">
+                <Text as="h3" variant="headingSm">Subscriptions in SSMA ({ssmaSubscriptions.length})</Text>
+                {ssmaSubscriptions.length === 0 ? (
+                  <Banner tone="warning">
+                    <p>No subscriptions in SSMA database. Click "Sync Contracts to SSMA" above to import them.</p>
+                  </Banner>
+                ) : (
+                  <List type="bullet">
+                    {ssmaSubscriptions.map((sub: any) => (
+                      <List.Item key={sub.id}>
+                        <InlineStack gap="200">
+                          <Text as="span" fontWeight="semibold">{sub.customerName}</Text>
+                          <Badge tone={sub.status === "ACTIVE" ? "success" : "warning"}>{sub.status}</Badge>
+                          <Text as="span" tone="subdued">{sub.frequency}</Text>
+                          <Text as="span" tone="subdued">
+                            Next: {sub.nextPickupDate ? new Date(sub.nextPickupDate).toLocaleDateString() : "N/A"}
+                          </Text>
+                        </InlineStack>
+                      </List.Item>
+                    ))}
+                  </List>
+                )}
+              </BlockStack>
+
+              <Divider />
+
+              <BlockStack gap="200">
+                <Text as="h3" variant="headingSm">Pickup Schedules in SSMA ({ssmaPickupSchedules.length})</Text>
+                {ssmaPickupSchedules.length === 0 ? (
+                  <Banner tone="warning">
+                    <p>No pickup schedules in SSMA database. These are created when subscriptions are synced or orders come in.</p>
+                  </Banner>
+                ) : (
+                  <List type="bullet">
+                    {ssmaPickupSchedules.map((pickup: any) => (
+                      <List.Item key={pickup.id}>
+                        <InlineStack gap="200">
+                          <Text as="span" fontWeight="semibold">{pickup.customerName}</Text>
+                          <Badge>{pickup.shopifyOrderNumber}</Badge>
+                          <Text as="span" tone="subdued">
+                            {new Date(pickup.pickupDate).toLocaleDateString()}
+                          </Text>
+                          <Badge tone={pickup.pickupStatus === "SCHEDULED" ? "info" : "success"}>
+                            {pickup.pickupStatus}
+                          </Badge>
+                        </InlineStack>
+                      </List.Item>
+                    ))}
+                  </List>
+                )}
+              </BlockStack>
             </BlockStack>
           </Card>
         </Layout.Section>
