@@ -258,6 +258,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const subscriptionId = await createSubscriptionFromOrder(
           shop,
           order.admin_graphql_api_id,
+          order.name, // Order number like "#1847"
           customerName,
           customerEmail,
           customerPhone,
@@ -417,6 +418,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const subscriptionId = await createSubscriptionFromOrder(
           shop,
           order.admin_graphql_api_id,
+          order.name, // Order number like "#1847"
           customerName,
           customerEmail,
           customerPhone,
@@ -434,6 +436,53 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           data: { subscriptionPickupId: subscriptionId },
         });
         console.log(`Linked pickup schedule ${pickupSchedule.id} to subscription ${subscriptionId}`);
+
+        // Generate future pickup schedules (4 weeks ahead) for the subscription
+        try {
+          const subscription = await prisma.subscriptionPickup.findUnique({
+            where: { id: subscriptionId },
+          });
+
+          if (subscription && subscription.nextPickupDate) {
+            const frequencyDays = subscription.frequency === "BIWEEKLY" ? 14 : subscription.frequency === "TRIWEEKLY" ? 21 : 7;
+
+            // Generate 4 weeks of future pickups (starting from week 1, since week 0 is the current order)
+            for (let week = 1; week <= 4; week++) {
+              const futurePickupDate = new Date(pickupDate);
+              futurePickupDate.setDate(futurePickupDate.getDate() + (week * frequencyDays));
+
+              // Create future pickup schedule
+              const futurePickup = await prisma.pickupSchedule.create({
+                data: {
+                  shop,
+                  shopifyOrderId: `subscription-${subscriptionId}-week${week}`,
+                  shopifyOrderNumber: `${order.name}-W${week}`,
+                  customerName,
+                  customerEmail,
+                  customerPhone,
+                  pickupDate: futurePickupDate,
+                  pickupTimeSlot,
+                  pickupStatus: "SCHEDULED",
+                  pickupLocationId: pickupLocationId || undefined,
+                  subscriptionPickupId: subscriptionId,
+                },
+              });
+
+              // Create Google Calendar event for future pickup
+              try {
+                await createPickupEvent(shop, futurePickup.id);
+              } catch (calError) {
+                console.error(`Failed to create calendar event for future pickup week ${week}:`, calError);
+              }
+
+              console.log(`Created future pickup ${futurePickup.id} for week ${week} on ${futurePickupDate.toISOString()}`);
+            }
+            console.log(`Generated 4 weeks of future pickups for subscription ${subscriptionId}`);
+          }
+        } catch (futureError) {
+          console.error("Failed to generate future pickups:", futureError);
+          // Continue even if future pickup generation fails
+        }
       } catch (subError) {
         console.error("Failed to create subscription from order:", subError);
         // Continue even if subscription creation fails - the order is still valid

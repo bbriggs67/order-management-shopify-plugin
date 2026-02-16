@@ -31,6 +31,7 @@ import { getDayName } from "../utils/constants.server";
 interface SubscriptionWithShopifyData {
   id: string;
   shopifyContractId: string;
+  shopifyOrderNumber: string | null;
   customerName: string;
   customerEmail: string | null;
   status: string;
@@ -65,6 +66,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return {
       id: sub.id,
       shopifyContractId: sub.shopifyContractId,
+      shopifyOrderNumber: sub.shopifyOrderNumber || null,
       customerName: sub.customerName,
       customerEmail: sub.customerEmail,
       status: sub.status,

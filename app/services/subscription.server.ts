@@ -333,6 +333,7 @@ function calculateNextPickupDateFromToday(
 export async function createSubscriptionFromOrder(
   shop: string,
   orderId: string,
+  orderNumber: string,
   customerName: string,
   customerEmail: string | null,
   customerPhone: string | null,
@@ -382,6 +383,8 @@ export async function createSubscriptionFromOrder(
     data: {
       shop,
       shopifyContractId: orderId, // Using order ID since we don't have the contract ID
+      shopifyOrderId: orderId,
+      shopifyOrderNumber: orderNumber,
       customerName,
       customerEmail,
       customerPhone,
@@ -396,7 +399,7 @@ export async function createSubscriptionFromOrder(
     },
   });
 
-  console.log(`Created subscription ${subscription.id} from order ${orderId} for product: ${productTitle}`);
+  console.log(`Created subscription ${subscription.id} from order ${orderNumber} (${orderId}) for product: ${productTitle}`);
   return subscription.id;
 }
 

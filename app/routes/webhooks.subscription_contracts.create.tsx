@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { createSubscriptionFromContract } from "../services/subscription.server";
+import { createPickupEvent } from "../services/google-calendar.server";
 
 interface SubscriptionContractPayload {
   admin_graphql_api_id: string;
@@ -103,7 +104,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const preferredDay = preferredDayStr ? parseInt(preferredDayStr, 10) : 2;
 
     // Create the subscription record
-    await createSubscriptionFromContract(
+    const subscriptionId = await createSubscriptionFromContract(
       shop,
       contract.admin_graphql_api_id,
       customerName,
@@ -113,6 +114,51 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       preferredDay,
       preferredTimeSlot
     );
+
+    // Get the subscription to access nextPickupDate
+    const subscription = await prisma.subscriptionPickup.findUnique({
+      where: { id: subscriptionId },
+    });
+
+    // Create initial pickup schedule and 4 weeks of future pickups
+    if (subscription && subscription.nextPickupDate) {
+      const frequencyDays = frequency === "BIWEEKLY" ? 14 : frequency === "TRIWEEKLY" ? 21 : 7;
+
+      // Generate 5 weeks of pickups (week 0 is the first pickup)
+      for (let week = 0; week <= 4; week++) {
+        const pickupDate = new Date(subscription.nextPickupDate);
+        pickupDate.setDate(pickupDate.getDate() + (week * frequencyDays));
+
+        try {
+          const pickupSchedule = await prisma.pickupSchedule.create({
+            data: {
+              shop,
+              shopifyOrderId: `subscription-${subscriptionId}-week${week}`,
+              shopifyOrderNumber: `SUB-${subscriptionId.slice(-6).toUpperCase()}-W${week}`,
+              customerName,
+              customerEmail,
+              customerPhone,
+              pickupDate,
+              pickupTimeSlot: preferredTimeSlot,
+              pickupStatus: "SCHEDULED",
+              subscriptionPickupId: subscriptionId,
+            },
+          });
+
+          // Create Google Calendar event
+          try {
+            await createPickupEvent(shop, pickupSchedule.id);
+          } catch (calError) {
+            console.error(`Failed to create calendar event for week ${week}:`, calError);
+          }
+
+          console.log(`Created pickup ${pickupSchedule.id} for week ${week} on ${pickupDate.toISOString()}`);
+        } catch (pickupError) {
+          console.error(`Failed to create pickup for week ${week}:`, pickupError);
+        }
+      }
+      console.log(`Generated 5 weeks of pickups for subscription ${subscriptionId}`);
+    }
 
     // Log the webhook for idempotency
     await prisma.webhookEvent.create({

@@ -254,6 +254,8 @@ model SubscriptionPickup {
   id                  String    @id @default(cuid())
   shop                String
   shopifyContractId   String // Subscription contract GID
+  shopifyOrderId      String? // Original order GID that created this subscription
+  shopifyOrderNumber  String? // Human-readable order number (e.g., "#1847")
   customerName        String
   customerEmail       String?
   customerPhone       String?
