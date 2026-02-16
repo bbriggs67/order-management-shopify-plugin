@@ -527,6 +527,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  // Clear all test data (subscriptions, pickup schedules, webhook events)
+  if (intent === "clear_test_data") {
+    try {
+      const { session } = await authenticate.admin(request);
+      const shop = session.shop;
+
+      // Delete in correct order due to foreign key constraints
+      // 1. First delete pickup schedules (they reference subscriptions)
+      const deletedPickups = await prisma.pickupSchedule.deleteMany({
+        where: { shop },
+      });
+
+      // 2. Then delete subscriptions
+      const deletedSubscriptions = await prisma.subscriptionPickup.deleteMany({
+        where: { shop },
+      });
+
+      // 3. Delete webhook events
+      const deletedEvents = await prisma.webhookEvent.deleteMany({
+        where: { shop },
+      });
+
+      return json({
+        success: true,
+        message: `Cleared test data: ${deletedSubscriptions.count} subscriptions, ${deletedPickups.count} pickup schedules, ${deletedEvents.count} webhook events`,
+        deletedSubscriptions: deletedSubscriptions.count,
+        deletedPickups: deletedPickups.count,
+        deletedEvents: deletedEvents.count,
+      });
+    } catch (error) {
+      console.error("Error clearing test data:", error);
+      return json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  }
+
   return json({ error: "Unknown action" });
 };
 
@@ -853,6 +888,33 @@ export default function SubscriptionDebugPage() {
                   <strong>Check if subscription contract appears</strong> in the "Recent Contracts" section above.
                 </List.Item>
               </List>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* Clear Test Data */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">Clear Test Data</Text>
+              <Banner tone="warning">
+                <p>
+                  <strong>Warning:</strong> This will delete ALL subscriptions, pickup schedules, and webhook events
+                  from SSMA's database. Use this to clean up test data before migrating real customers.
+                </p>
+              </Banner>
+              <Button
+                tone="critical"
+                onClick={() => {
+                  if (!confirm("Are you sure you want to delete ALL SSMA data? This cannot be undone!")) return;
+                  const formData = new FormData();
+                  formData.append("intent", "clear_test_data");
+                  submit(formData, { method: "post" });
+                }}
+                loading={isLoading}
+              >
+                Clear All Test Data
+              </Button>
             </BlockStack>
           </Card>
         </Layout.Section>

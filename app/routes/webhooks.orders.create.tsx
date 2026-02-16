@@ -145,10 +145,76 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   console.log(`Extracted pickup info - Date: ${pickupDateRaw}, Time: ${pickupTimeSlot}, Location: ${pickupLocationId}`);
 
-  // Check if this is a subscription order
-  const subscriptionLineItem = order.line_items.find(
+  // Check if this is a subscription order from REST payload first
+  let subscriptionLineItem = order.line_items.find(
     (item) => item.selling_plan_allocation?.selling_plan
   );
+
+  // If no selling plan found in REST payload, query GraphQL to check
+  // The REST webhook often doesn't include selling_plan_allocation even for subscription orders
+  let graphqlSellingPlanName: string | null = null;
+  if (!subscriptionLineItem) {
+    try {
+      console.log(`No selling plan in REST payload, querying GraphQL for order ${order.admin_graphql_api_id}`);
+      const { admin } = await unauthenticated.admin(shop);
+
+      const graphqlResponse = await admin.graphql(`
+        query getOrderSellingPlans($orderId: ID!) {
+          order(id: $orderId) {
+            lineItems(first: 50) {
+              nodes {
+                id
+                title
+                quantity
+                sellingPlanAllocation {
+                  sellingPlan {
+                    id
+                    name
+                  }
+                }
+              }
+            }
+          }
+        }
+      `, {
+        variables: {
+          orderId: order.admin_graphql_api_id,
+        },
+      });
+
+      const graphqlData: GraphQLOrderResponse = await graphqlResponse.json();
+      console.log(`GraphQL response for order:`, JSON.stringify(graphqlData, null, 2));
+
+      const graphqlLineItem = graphqlData.data?.order?.lineItems?.nodes?.find(
+        (item) => item.sellingPlanAllocation?.sellingPlan
+      );
+
+      if (graphqlLineItem?.sellingPlanAllocation?.sellingPlan) {
+        console.log(`Found selling plan via GraphQL: ${graphqlLineItem.sellingPlanAllocation.sellingPlan.name}`);
+        graphqlSellingPlanName = graphqlLineItem.sellingPlanAllocation.sellingPlan.name;
+        // Create a synthetic subscriptionLineItem for the rest of the code
+        subscriptionLineItem = {
+          id: graphqlLineItem.id,
+          product_id: 0,
+          variant_id: 0,
+          title: graphqlLineItem.title,
+          variant_title: "",
+          quantity: graphqlLineItem.quantity,
+          selling_plan_allocation: {
+            selling_plan: {
+              id: 0,
+              name: graphqlSellingPlanName,
+            },
+          },
+        };
+      } else {
+        console.log(`No selling plan found via GraphQL either - this is not a subscription order`);
+      }
+    } catch (graphqlError) {
+      console.error(`Failed to query GraphQL for selling plan:`, graphqlError);
+      // Continue without subscription detection if GraphQL fails
+    }
+  }
 
   // If no pickup date/time AND not a subscription, skip processing
   if (!pickupDateRaw || !pickupTimeSlot) {
