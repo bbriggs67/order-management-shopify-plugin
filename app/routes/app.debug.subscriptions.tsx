@@ -319,6 +319,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "sync_contracts") {
     try {
       const { createSubscriptionFromContract } = await import("../services/subscription.server");
+      const { createPickupEvent } = await import("../services/google-calendar.server");
       const { session } = await authenticate.admin(request);
       const shop = session.shop;
 
@@ -355,6 +356,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       let synced = 0;
       let skipped = 0;
+      let pickupsCreated = 0;
       const errors: string[] = [];
 
       for (const contract of contracts) {
@@ -378,18 +380,55 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (intervalCount === 2) frequency = "BIWEEKLY";
           else if (intervalCount === 3) frequency = "TRIWEEKLY";
 
+          const customerName = `${contract.customer?.firstName || ""} ${contract.customer?.lastName || ""}`.trim() || "Unknown";
+          const customerEmail = contract.customer?.email || null;
+          const customerPhone = contract.customer?.phone || null;
+          const preferredTimeSlot = "12:00 PM - 2:00 PM"; // Default time slot
+
           // Create subscription in SSMA
-          await createSubscriptionFromContract(
+          const subscriptionId = await createSubscriptionFromContract(
             shop,
             contract.id,
-            `${contract.customer?.firstName || ""} ${contract.customer?.lastName || ""}`.trim() || "Unknown",
-            contract.customer?.email || null,
-            contract.customer?.phone || null,
+            customerName,
+            customerEmail,
+            customerPhone,
             frequency,
             2, // Default to Tuesday
-            "12:00 PM - 2:00 PM" // Default time slot
+            preferredTimeSlot
           );
           synced++;
+
+          // Now also create the first pickup schedule for this subscription
+          // Get the subscription to get the nextPickupDate
+          const subscription = await prisma.subscriptionPickup.findUnique({
+            where: { id: subscriptionId },
+          });
+
+          if (subscription && subscription.nextPickupDate) {
+            // Create pickup schedule entry
+            const pickupSchedule = await prisma.pickupSchedule.create({
+              data: {
+                shop,
+                shopifyOrderId: `subscription-${subscriptionId}-initial`,
+                shopifyOrderNumber: `SUB-${subscriptionId.slice(-6).toUpperCase()}`,
+                customerName,
+                customerEmail,
+                customerPhone,
+                pickupDate: subscription.nextPickupDate,
+                pickupTimeSlot: preferredTimeSlot,
+                pickupStatus: "SCHEDULED",
+                subscriptionPickupId: subscriptionId,
+              },
+            });
+            pickupsCreated++;
+
+            // Try to create Google Calendar event
+            try {
+              await createPickupEvent(shop, pickupSchedule.id);
+            } catch (calError) {
+              console.error("Failed to create calendar event:", calError);
+            }
+          }
         } catch (err) {
           errors.push(`Contract ${contract.id}: ${err instanceof Error ? err.message : "Unknown error"}`);
         }
@@ -397,13 +436,93 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       return json({
         success: true,
-        message: `Synced ${synced} contracts, skipped ${skipped} (already exist)`,
+        message: `Synced ${synced} contracts (${pickupsCreated} pickup schedules created), skipped ${skipped} (already exist)`,
         synced,
         skipped,
+        pickupsCreated,
         errors,
       });
     } catch (error) {
       console.error("Error syncing contracts:", error);
+      return json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  }
+
+  // Generate pickup schedules for existing subscriptions that don't have one yet
+  if (intent === "generate_pickups") {
+    try {
+      const { createPickupEvent } = await import("../services/google-calendar.server");
+      const { session } = await authenticate.admin(request);
+      const shop = session.shop;
+
+      // Find all active subscriptions that have a nextPickupDate but no corresponding pickup schedule
+      const subscriptions = await prisma.subscriptionPickup.findMany({
+        where: {
+          shop,
+          status: "ACTIVE",
+          nextPickupDate: {
+            not: null,
+          },
+        },
+      });
+
+      let pickupsCreated = 0;
+      let alreadyHavePickup = 0;
+      const errors: string[] = [];
+
+      for (const subscription of subscriptions) {
+        // Check if there's already a pickup schedule for this subscription's next pickup date
+        const existingPickup = await prisma.pickupSchedule.findFirst({
+          where: {
+            shop,
+            subscriptionPickupId: subscription.id,
+            pickupDate: subscription.nextPickupDate!,
+          },
+        });
+
+        if (existingPickup) {
+          alreadyHavePickup++;
+          continue;
+        }
+
+        try {
+          // Create pickup schedule entry
+          const pickupSchedule = await prisma.pickupSchedule.create({
+            data: {
+              shop,
+              shopifyOrderId: `subscription-${subscription.id}-${Date.now()}`,
+              shopifyOrderNumber: `SUB-${subscription.id.slice(-6).toUpperCase()}`,
+              customerName: subscription.customerName,
+              customerEmail: subscription.customerEmail,
+              customerPhone: subscription.customerPhone,
+              pickupDate: subscription.nextPickupDate!,
+              pickupTimeSlot: subscription.preferredTimeSlot,
+              pickupStatus: "SCHEDULED",
+              subscriptionPickupId: subscription.id,
+            },
+          });
+          pickupsCreated++;
+
+          // Try to create Google Calendar event
+          try {
+            await createPickupEvent(shop, pickupSchedule.id);
+          } catch (calError) {
+            console.error("Failed to create calendar event:", calError);
+          }
+        } catch (err) {
+          errors.push(`Subscription ${subscription.id}: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+      }
+
+      return json({
+        success: true,
+        message: `Created ${pickupsCreated} pickup schedules, ${alreadyHavePickup} already had pickups`,
+        pickupsCreated,
+        alreadyHavePickup,
+        errors,
+      });
+    } catch (error) {
+      console.error("Error generating pickups:", error);
       return json({ error: error instanceof Error ? error.message : "Unknown error" });
     }
   }
@@ -654,23 +773,36 @@ export default function SubscriptionDebugPage() {
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">Recent Subscription Contracts in Shopify</Text>
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    const formData = new FormData();
-                    formData.append("intent", "sync_contracts");
-                    submit(formData, { method: "post" });
-                  }}
-                  loading={isLoading}
-                >
-                  Sync Contracts to SSMA
-                </Button>
+                <InlineStack gap="200">
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      const formData = new FormData();
+                      formData.append("intent", "sync_contracts");
+                      submit(formData, { method: "post" });
+                    }}
+                    loading={isLoading}
+                  >
+                    Sync Contracts to SSMA
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      const formData = new FormData();
+                      formData.append("intent", "generate_pickups");
+                      submit(formData, { method: "post" });
+                    }}
+                    loading={isLoading}
+                  >
+                    Generate Pickup Schedules
+                  </Button>
+                </InlineStack>
               </InlineStack>
 
               <Banner tone="info">
                 <p>
                   <strong>Contracts exist but not in SSMA?</strong> Click "Sync Contracts to SSMA" to import
                   all active Shopify subscription contracts into SSMA's subscription management.
+                  Then click "Generate Pickup Schedules" to create calendar entries for each subscription.
                 </p>
               </Banner>
 
