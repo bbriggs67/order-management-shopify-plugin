@@ -145,6 +145,7 @@ const ALL_SELLING_PLAN_GROUPS_QUERY = `
           id
           name
           productCount
+          appId
           products(first: 50) {
             edges {
               node {
@@ -640,6 +641,28 @@ export async function updateSellingPlanDiscounts(
 }
 
 /**
+ * Get the current app's ID from Shopify
+ */
+async function getCurrentAppId(admin: AdminClient): Promise<string | null> {
+  try {
+    const response = await admin.graphql(`
+      query getCurrentApp {
+        currentAppInstallation {
+          app {
+            id
+          }
+        }
+      }
+    `);
+    const jsonResponse = await response.json();
+    return jsonResponse.data?.currentAppInstallation?.app?.id || null;
+  } catch (error) {
+    console.error("Error getting current app ID:", error);
+    return null;
+  }
+}
+
+/**
  * Get all selling plan groups with full details from Shopify
  */
 export async function getAllSellingPlanGroups(
@@ -647,6 +670,11 @@ export async function getAllSellingPlanGroups(
 ): Promise<SellingPlanGroupDetail[]> {
   try {
     console.log("Fetching all selling plan groups from Shopify...");
+
+    // Get current app ID to determine ownership
+    const currentAppId = await getCurrentAppId(admin);
+    console.log("Current app ID:", currentAppId);
+
     const response = await admin.graphql(ALL_SELLING_PLAN_GROUPS_QUERY);
     const jsonResponse = await response.json();
 
@@ -668,6 +696,13 @@ export async function getAllSellingPlanGroups(
 
   return data.sellingPlanGroups.edges.map((groupEdge: any) => {
     const group = groupEdge.node;
+    const appId = group.appId || null;
+
+    // Determine if this app owns the group
+    // A group is owned by current app if appId matches
+    const isOwnedByCurrentApp = currentAppId ? appId === currentAppId : false;
+
+    console.log(`Group "${group.name}" (${group.id}) - appId: ${appId}, isOwnedByCurrentApp: ${isOwnedByCurrentApp}`);
 
     // Parse products
     const products: SellingPlanProduct[] = (group.products?.edges || []).map((productEdge: any) => {
@@ -716,6 +751,8 @@ export async function getAllSellingPlanGroups(
       productCount: group.productCount || 0,
       products,
       plans,
+      appId,
+      isOwnedByCurrentApp,
     };
   });
   } catch (error) {

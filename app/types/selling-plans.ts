@@ -26,6 +26,8 @@ export interface SellingPlanGroupDetail {
   productCount: number;
   products: SellingPlanProduct[];
   plans: SellingPlanDetail[];
+  appId?: string | null; // The app that created this group (null if created by Shopify core)
+  isOwnedByCurrentApp?: boolean; // Whether SSMA owns this group
 }
 
 export interface SellingPlanConfig {

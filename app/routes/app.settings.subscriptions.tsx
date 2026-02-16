@@ -1012,7 +1012,7 @@ export default function SubscriptionsSettings() {
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">
-                  Subscription Plans
+                  Shopify Subscription Plans
                 </Text>
                 {sellingPlanGroups.length > 0 ? (
                   <Badge tone="success">{`${sellingPlanGroups.length} group(s)`}</Badge>
@@ -1022,9 +1022,19 @@ export default function SubscriptionsSettings() {
               </InlineStack>
 
               <Text as="p" tone="subdued">
-                Manage your subscription plans. These plans are synced from Shopify and
-                determine the frequency and discount options available to customers.
+                These are the Shopify selling plan groups in your store. Plans created by other apps
+                (like Shopify Subscriptions) are shown for reference but cannot be modified by SSMA.
               </Text>
+
+              <Banner tone="info">
+                <BlockStack gap="100">
+                  <Text as="p" fontWeight="semibold">Note: SSMA now uses its own subscription system</Text>
+                  <Text as="p">
+                    The new cart-based subscription widget uses cart attributes and discount codes instead of Shopify selling plans.
+                    Existing selling plans from other apps will continue to work alongside the new system.
+                  </Text>
+                </BlockStack>
+              </Banner>
 
               {usingLocalConfig && (
                 <Banner tone="info">
@@ -1058,28 +1068,44 @@ export default function SubscriptionsSettings() {
                       <BlockStack gap="300">
                         <InlineStack align="space-between" blockAlign="center">
                           <BlockStack gap="100">
-                            <Text as="h3" variant="headingSm">
-                              {group.name}
-                            </Text>
+                            <InlineStack gap="200" blockAlign="center">
+                              <Text as="h3" variant="headingSm">
+                                {group.name}
+                              </Text>
+                              {group.isOwnedByCurrentApp ? (
+                                <Badge tone="success">SSMA</Badge>
+                              ) : (
+                                <Badge tone="attention">External App</Badge>
+                              )}
+                            </InlineStack>
                             <Text as="p" variant="bodySm" tone="subdued">
                               {group.productCount} product(s)
                             </Text>
                           </BlockStack>
-                          <InlineStack gap="200">
-                            <Button
-                              size="slim"
-                              onClick={() => handleOpenProductPicker(group.id)}
-                            >
-                              Add Products
-                            </Button>
-                            <Button
-                              size="slim"
-                              onClick={() => handleOpenAddPlanModal(group.id)}
-                            >
-                              Add Plan
-                            </Button>
-                          </InlineStack>
+                          {group.isOwnedByCurrentApp && (
+                            <InlineStack gap="200">
+                              <Button
+                                size="slim"
+                                onClick={() => handleOpenProductPicker(group.id)}
+                              >
+                                Add Products
+                              </Button>
+                              <Button
+                                size="slim"
+                                onClick={() => handleOpenAddPlanModal(group.id)}
+                              >
+                                Add Plan
+                              </Button>
+                            </InlineStack>
+                          )}
                         </InlineStack>
+
+                        {!group.isOwnedByCurrentApp && (
+                          <Banner tone="warning">
+                            This selling plan group was created by another app. SSMA cannot modify or delete these plans.
+                            To manage these plans, use the app that created them (e.g., Shopify Subscriptions).
+                          </Banner>
+                        )}
 
                         <Divider />
 
@@ -1098,14 +1124,18 @@ export default function SubscriptionsSettings() {
                               plan.discountType === "PERCENTAGE"
                                 ? `${plan.discount}% off`
                                 : `$${plan.discount} off`,
-                              <Button
-                                key={plan.id}
-                                size="slim"
-                                tone="critical"
-                                onClick={() => handleDeletePlan(group.id, plan.id, plan.name)}
-                              >
-                                Delete
-                              </Button>,
+                              group.isOwnedByCurrentApp ? (
+                                <Button
+                                  key={plan.id}
+                                  size="slim"
+                                  tone="critical"
+                                  onClick={() => handleDeletePlan(group.id, plan.id, plan.name)}
+                                >
+                                  Delete
+                                </Button>
+                              ) : (
+                                <Text key={plan.id} as="span" tone="subdued">—</Text>
+                              ),
                             ])}
                           />
                         )}
@@ -1131,7 +1161,9 @@ export default function SubscriptionsSettings() {
                             <Box paddingBlockStart="200">
                               {!group.products || group.products.length === 0 ? (
                                 <Banner tone="info">
-                                  No products in this group yet. Click "Add Products" to browse and add products.
+                                  {group.isOwnedByCurrentApp
+                                    ? "No products in this group yet. Click \"Add Products\" to browse and add products."
+                                    : "No products in this group. Products are managed by the app that created this selling plan group."}
                                 </Banner>
                               ) : (
                                 <BlockStack gap="200">
@@ -1163,13 +1195,15 @@ export default function SubscriptionsSettings() {
                                             {product.title}
                                           </Text>
                                         </InlineStack>
-                                        <Button
-                                          size="slim"
-                                          tone="critical"
-                                          icon={DeleteIcon}
-                                          onClick={() => handleRemoveProduct(group.id, product.id)}
-                                          accessibilityLabel={`Remove ${product.title}`}
-                                        />
+                                        {group.isOwnedByCurrentApp && (
+                                          <Button
+                                            size="slim"
+                                            tone="critical"
+                                            icon={DeleteIcon}
+                                            onClick={() => handleRemoveProduct(group.id, product.id)}
+                                            accessibilityLabel={`Remove ${product.title}`}
+                                          />
+                                        )}
                                       </InlineStack>
                                     </Box>
                                   ))}
