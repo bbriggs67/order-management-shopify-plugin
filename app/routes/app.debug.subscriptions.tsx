@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
+import { useLoaderData, useActionData, useSubmit, useNavigation } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -314,11 +314,105 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  // Sync subscription contracts from Shopify to SSMA
+  if (intent === "sync_contracts") {
+    try {
+      const { createSubscriptionFromContract } = await import("../services/subscription.server");
+      const { session } = await authenticate.admin(request);
+      const shop = session.shop;
+
+      // Get all ACTIVE subscription contracts from Shopify
+      const contractsResponse = await admin.graphql(`
+        query getActiveContracts {
+          subscriptionContracts(first: 50, query: "status:ACTIVE") {
+            nodes {
+              id
+              status
+              customer {
+                id
+                firstName
+                lastName
+                email
+                phone
+              }
+              billingPolicy {
+                interval
+                intervalCount
+              }
+              deliveryPolicy {
+                interval
+                intervalCount
+              }
+              nextBillingDate
+            }
+          }
+        }
+      `);
+
+      const contractsData = await contractsResponse.json();
+      const contracts = contractsData.data?.subscriptionContracts?.nodes || [];
+
+      let synced = 0;
+      let skipped = 0;
+      const errors: string[] = [];
+
+      for (const contract of contracts) {
+        // Check if already exists in SSMA
+        const existing = await prisma.subscriptionPickup.findFirst({
+          where: {
+            shop,
+            shopifyContractId: contract.id,
+          },
+        });
+
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
+        try {
+          // Determine frequency from billing policy
+          let frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY" = "WEEKLY";
+          const intervalCount = contract.billingPolicy?.intervalCount || 1;
+          if (intervalCount === 2) frequency = "BIWEEKLY";
+          else if (intervalCount === 3) frequency = "TRIWEEKLY";
+
+          // Create subscription in SSMA
+          await createSubscriptionFromContract(
+            shop,
+            contract.id,
+            `${contract.customer?.firstName || ""} ${contract.customer?.lastName || ""}`.trim() || "Unknown",
+            contract.customer?.email || null,
+            contract.customer?.phone || null,
+            frequency,
+            2, // Default to Tuesday
+            "12:00 PM - 2:00 PM" // Default time slot
+          );
+          synced++;
+        } catch (err) {
+          errors.push(`Contract ${contract.id}: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+      }
+
+      return json({
+        success: true,
+        message: `Synced ${synced} contracts, skipped ${skipped} (already exist)`,
+        synced,
+        skipped,
+        errors,
+      });
+    } catch (error) {
+      console.error("Error syncing contracts:", error);
+      return json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  }
+
   return json({ error: "Unknown action" });
 };
 
 export default function SubscriptionDebugPage() {
   const { shop, sellingPlanGroups, testProductInfo, recentContracts } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const isLoading = navigation.state !== "idle";
@@ -354,6 +448,24 @@ export default function SubscriptionDebugPage() {
       <TitleBar title="Subscription Debug" />
 
       <Layout>
+        {/* Action Result Banner */}
+        {actionData && "message" in actionData && (
+          <Layout.Section>
+            <Banner tone="success" onDismiss={() => {}}>
+              <p>{actionData.message}</p>
+              {"synced" in actionData && (
+                <p>Synced: {actionData.synced}, Skipped: {actionData.skipped}</p>
+              )}
+            </Banner>
+          </Layout.Section>
+        )}
+        {actionData && "error" in actionData && (
+          <Layout.Section>
+            <Banner tone="critical" onDismiss={() => {}}>
+              <p>Error: {actionData.error}</p>
+            </Banner>
+          </Layout.Section>
+        )}
         {/* TEST Product Status */}
         <Layout.Section>
           <Card>
@@ -539,10 +651,30 @@ export default function SubscriptionDebugPage() {
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">Recent Subscription Contracts in Shopify</Text>
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">Recent Subscription Contracts in Shopify</Text>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    const formData = new FormData();
+                    formData.append("intent", "sync_contracts");
+                    submit(formData, { method: "post" });
+                  }}
+                  loading={isLoading}
+                >
+                  Sync Contracts to SSMA
+                </Button>
+              </InlineStack>
+
+              <Banner tone="info">
+                <p>
+                  <strong>Contracts exist but not in SSMA?</strong> Click "Sync Contracts to SSMA" to import
+                  all active Shopify subscription contracts into SSMA's subscription management.
+                </p>
+              </Banner>
 
               {recentContracts.length === 0 ? (
-                <Banner tone="info">
+                <Banner tone="warning">
                   <p>No subscription contracts found in Shopify. When customers purchase subscription products, contracts will appear here.</p>
                 </Banner>
               ) : (
