@@ -1006,6 +1006,103 @@ export default function SubscriptionsSettings() {
           </Layout.Section>
         )}
 
+        {/* SSMA Subscription System (Cart-Based) */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">
+                  SSMA Subscription System
+                </Text>
+                <Badge tone="info">Cart-Based</Badge>
+              </InlineStack>
+
+              <Text as="p" tone="subdued">
+                SSMA uses a cart-attribute-based subscription system that works independently from Shopify's selling plans.
+                Customers select their subscription frequency on the cart page, and discounts are applied via automatic discount codes.
+              </Text>
+
+              <Divider />
+
+              <BlockStack gap="300">
+                <Text as="h3" variant="headingSm">Setup Checklist</Text>
+
+                <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+                  <BlockStack gap="300">
+                    <InlineStack gap="300" blockAlignment="center">
+                      <Badge tone="success">✓</Badge>
+                      <BlockStack gap="100">
+                        <Text as="p" fontWeight="semibold">Cart Widget Deployed</Text>
+                        <Text as="p" tone="subdued" variant="bodySm">
+                          The Subscribe & Save widget is active on your cart page via theme app embed.
+                        </Text>
+                      </BlockStack>
+                    </InlineStack>
+
+                    <InlineStack gap="300" blockAlignment="center">
+                      <Badge tone="success">✓</Badge>
+                      <BlockStack gap="100">
+                        <Text as="p" fontWeight="semibold">Checkout Extension Active</Text>
+                        <Text as="p" tone="subdued" variant="bodySm">
+                          The pickup scheduler extension reads subscription attributes and shows preferred day selector.
+                        </Text>
+                      </BlockStack>
+                    </InlineStack>
+
+                    <InlineStack gap="300" blockAlignment="center">
+                      <Badge tone="success">✓</Badge>
+                      <BlockStack gap="100">
+                        <Text as="p" fontWeight="semibold">Order Webhook Processing</Text>
+                        <Text as="p" tone="subdued" variant="bodySm">
+                          Orders with subscription cart attributes are automatically detected and processed.
+                        </Text>
+                      </BlockStack>
+                    </InlineStack>
+                  </BlockStack>
+                </Box>
+
+                <Banner tone="warning" title="Action Required: Create Discount Codes">
+                  <BlockStack gap="200">
+                    <Text as="p">
+                      You need to create the following discount codes in Shopify Admin → Discounts for the subscription discounts to work:
+                    </Text>
+                    <Box padding="200" background="bg-surface" borderRadius="100">
+                      <BlockStack gap="100">
+                        <Text as="p" variant="bodyMd"><strong>SUBSCRIBE-WEEKLY-10</strong> — 10% off entire order</Text>
+                        <Text as="p" variant="bodyMd"><strong>SUBSCRIBE-BIWEEKLY-5</strong> — 5% off entire order</Text>
+                        <Text as="p" variant="bodyMd"><strong>SUBSCRIBE-TRIWEEKLY-3</strong> — 2.5% off entire order</Text>
+                      </BlockStack>
+                    </Box>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      These codes are automatically applied by the cart widget when customers select a subscription frequency.
+                    </Text>
+                  </BlockStack>
+                </Banner>
+              </BlockStack>
+
+              <Divider />
+
+              <BlockStack gap="200">
+                <Text as="h3" variant="headingSm">How It Works</Text>
+                <BlockStack gap="100">
+                  <Text as="p" variant="bodySm">
+                    1. <strong>Cart Page:</strong> Customer selects "Subscribe and Save" and chooses frequency (weekly, bi-weekly, or tri-weekly).
+                  </Text>
+                  <Text as="p" variant="bodySm">
+                    2. <strong>Discount Applied:</strong> The widget automatically applies the corresponding discount code to their cart.
+                  </Text>
+                  <Text as="p" variant="bodySm">
+                    3. <strong>Checkout:</strong> Customer selects their first pickup date and preferred day for future pickups.
+                  </Text>
+                  <Text as="p" variant="bodySm">
+                    4. <strong>Order Created:</strong> SSMA detects the subscription attributes and creates the subscription record with future pickups.
+                  </Text>
+                </BlockStack>
+              </BlockStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
         {/* Subscription Plans from Shopify */}
         <Layout.Section>
           <Card>
