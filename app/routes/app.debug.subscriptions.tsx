@@ -789,6 +789,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  // Reset selling plan config - deletes local config so SSMA can create a fresh group
+  if (intent === "reset_selling_plan_config") {
+    try {
+      const { session } = await authenticate.admin(request);
+      const shop = session.shop;
+
+      // Delete the local selling plan config
+      const deleted = await prisma.sellingPlanConfig.deleteMany({
+        where: { shop },
+      });
+
+      // Also delete any additional selling plans stored locally
+      await prisma.sellingPlan.deleteMany({
+        where: {
+          config: {
+            shop,
+          },
+        },
+      });
+
+      return json({
+        success: true,
+        message: deleted.count > 0
+          ? "Reset selling plan config. Go to Settings → Subscriptions to create a new selling plan group."
+          : "No selling plan config found to reset.",
+      });
+    } catch (error) {
+      console.error("Error resetting selling plan config:", error);
+      return json({ error: error instanceof Error ? error.message : "Unknown error" });
+    }
+  }
+
   return json({ error: "Unknown action" });
 };
 
@@ -1212,18 +1244,31 @@ export default function SubscriptionDebugPage() {
                   from SSMA's database. Use this to clean up test data before migrating real customers.
                 </p>
               </Banner>
-              <Button
-                tone="critical"
-                onClick={() => {
-                  if (!confirm("Are you sure you want to delete ALL SSMA data? This cannot be undone!")) return;
-                  const formData = new FormData();
-                  formData.append("intent", "clear_test_data");
-                  submit(formData, { method: "post" });
-                }}
-                loading={isLoading}
-              >
-                Clear All Test Data
-              </Button>
+              <InlineStack gap="200">
+                <Button
+                  tone="critical"
+                  onClick={() => {
+                    if (!confirm("Are you sure you want to delete ALL SSMA data? This cannot be undone!")) return;
+                    const formData = new FormData();
+                    formData.append("intent", "clear_test_data");
+                    submit(formData, { method: "post" });
+                  }}
+                  loading={isLoading}
+                >
+                  Clear All Test Data
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (!confirm("Reset selling plan config? You will need to recreate the selling plan group in Settings → Subscriptions.")) return;
+                    const formData = new FormData();
+                    formData.append("intent", "reset_selling_plan_config");
+                    submit(formData, { method: "post" });
+                  }}
+                  loading={isLoading}
+                >
+                  Reset Selling Plan Config
+                </Button>
+              </InlineStack>
             </BlockStack>
           </Card>
         </Layout.Section>
