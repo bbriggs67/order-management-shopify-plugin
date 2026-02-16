@@ -72,18 +72,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Get selling plan configuration from our database
   const sellingPlanConfig = await getSellingPlanConfig(shop);
-  console.log("Selling plan config from database:", sellingPlanConfig);
 
   // Get ALL selling plan groups from Shopify (includes plans created outside our app)
   let sellingPlanGroups = await getAllSellingPlanGroups(admin);
-  console.log("Selling plan groups from Shopify:", sellingPlanGroups.length, "groups found");
 
   // If Shopify returns no groups but we have a local config, create a synthetic entry
   // This handles the case where we can CREATE selling plans but can't READ them back
   // (possibly due to eventual consistency or permission quirks)
   let usingLocalConfig = false;
   if (sellingPlanGroups.length === 0 && sellingPlanConfig) {
-    console.log("No groups from Shopify but local config exists, using local config");
     usingLocalConfig = true;
 
     // Build plans array from default plans + additional plans
@@ -430,7 +427,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             return json({ error: `Order "${orderInput}" not found` }, { status: 404 });
           }
 
-          console.log("Order data for manual sync:", JSON.stringify(order, null, 2));
+          // Debug: uncomment to troubleshoot manual sync
+          // console.log("Order data for manual sync:", JSON.stringify(order, null, 2));
 
           // Check if this order has a selling plan (subscription) on line items
           const hasSellingPlan = order.lineItems?.nodes?.some((item: { sellingPlan: { sellingPlanId: string } | null }) => item.sellingPlan?.sellingPlanId);

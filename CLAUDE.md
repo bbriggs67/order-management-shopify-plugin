@@ -45,7 +45,7 @@ prisma/schema.prisma     → Database schema
 | Service | Purpose |
 |---------|---------|
 | `subscription.server.ts` | Core subscription CRUD + pickup generation |
-| `subscription-plans.server.ts` | SSMA-owned subscription plan management |
+| `subscription-plans.server.ts` | SSMA plan groups, frequencies & product CRUD |
 | `subscription-billing.server.ts` | Billing lead time calculation + attempts |
 | `selling-plans.server.ts` | Shopify Selling Plan Groups integration |
 | `pickup-availability.server.ts` | Available dates/times calculation |
@@ -82,9 +82,21 @@ npx prisma generate                             # Regenerate client
 - **COD + subscriptions incompatible**: Disabled COD. Shopify requires auto-chargeable payment methods for subscriptions.
 - **Shopify Functions**: Payment customization functions require Shopify Plus ($399/mo). Not available on Basic plan.
 
-## Current Work In Progress
+## SSMA Subscription Plan Groups (v2)
 
-- **SSMA Subscription Plans**: New `SubscriptionPlan` model replacing dependency on Shopify Selling Plans. Backend CRUD complete, settings page UI partially done (needs plan list rendering + modals).
+Group-based subscription model (replaces flat `SubscriptionPlan`):
+- `SubscriptionPlanGroup` → contains name, billingLeadHours, isActive
+- `SubscriptionPlanFrequency` → child of group (interval, discount, discount code)
+- `SubscriptionPlanProduct` → child of group (shopifyProductId, title, imageUrl)
+- API: `/api/selling-plans?shop=...` returns both `groups` (v2) and flat `plans` (backward compat)
+- Settings UI: Group cards with frequency DataTable + collapsible product list with picker
+- Service: `subscription-plans.server.ts` — full CRUD, `ensureDefaultPlanGroups()` seeds on first load
+
+## Polaris Gotchas
+
+- `Badge` does NOT have `tone="subdued"` — use no tone for neutral
+- `InlineStack` uses `blockAlign` not `blockAlignment`
+- Numbers in Badge/Button children must be template literals (`` `${count}` ``)
 
 ## Related Docs
 

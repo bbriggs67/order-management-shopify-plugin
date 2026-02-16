@@ -2,7 +2,53 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
-### 2026-02-16 - Trim CLAUDE.md & SSMA Subscription Plans Feature
+### 2026-02-16 - Subscription Plan Groups v2 (Group → Frequency → Product)
+
+**Context:**
+Restructured SSMA subscription plans from a flat model to a group-based hierarchy.
+Each plan group (e.g., "Subscribe & Save - Porch Pick Up") contains multiple frequency
+options and has products associated with it. Different groups can have different
+frequencies and different product sets.
+
+**Schema Changes (migration: `20260216_subscription_plan_groups`):**
+- New models: `SubscriptionPlanGroup`, `SubscriptionPlanFrequency`, `SubscriptionPlanProduct`
+- Dropped old flat `SubscriptionPlan` table
+- Cascade deletes: removing a group removes its frequencies + products
+- Unique constraints: `[groupId, interval, intervalCount]` on frequency, `[groupId, shopifyProductId]` on product
+
+**Service Layer (`app/services/subscription-plans.server.ts`):**
+- Full CRUD: groups, frequencies, products
+- `ensureDefaultPlanGroups(shop)` seeds one group with 3 frequencies on first load
+- `findFrequencyByInterval()` for webhook lookups (returns parent group's billingLeadHours)
+
+**API (`app/routes/api.selling-plans.tsx`):**
+- Returns `groups` (structured v2 format with productIds) + flat `plans` (backward compat)
+- Source field: `"ssma_v2"` for new format, `"legacy"` for old SellingPlanConfig fallback
+
+**Settings Page (`app/routes/app.settings.subscriptions.tsx`):**
+- Group cards with name/badges, action buttons (Edit, Delete, Add Frequency, Add Products)
+- DataTable of frequencies per group (Name, Frequency, Discount, Code, Status, Actions)
+- Collapsible product list with thumbnails + Shopify Resource Picker integration
+- 4 modals: Group create/edit, Frequency create/edit, Delete group confirm, Delete frequency confirm
+- 8 action intents: create/update/delete_plan_group, add/update/delete_frequency, add_group_products, remove_group_product
+
+**Code Cleanup:**
+- Removed stale console.log calls from loader
+- Fixed Polaris issues: `blockAlignment` → `blockAlign`, Badge number children
+- Cleaned up unused type imports
+
+**Files Modified:**
+- `prisma/schema.prisma`
+- `prisma/migrations/20260216_subscription_plan_groups/migration.sql` (NEW)
+- `app/services/subscription-plans.server.ts`
+- `app/routes/api.selling-plans.tsx`
+- `app/routes/app.settings.subscriptions.tsx`
+- `CLAUDE.md`
+- `CHANGE_HISTORY.md`
+
+---
+
+### 2026-02-16 - Trim CLAUDE.md
 
 **Context:**
 Claude Code "prompt too long" error caused by 825-line CLAUDE.md being loaded into system prompt.
@@ -11,14 +57,6 @@ Claude Code "prompt too long" error caused by 825-line CLAUDE.md being loaded in
 - Trimmed CLAUDE.md from 825 lines to ~93 lines (essential developer context only)
 - Moved change history, test plans, and migration plan references to separate files
 - Created `CHANGE_HISTORY.md` (this file) for detailed change log
-
-**SSMA Subscription Plans (in progress):**
-- New `SubscriptionPlan` Prisma model (SSMA-owned, not tied to Shopify Selling Plans)
-- Service layer: `app/services/subscription-plans.server.ts` (CRUD, validation, defaults)
-- API endpoint updated: `app/routes/api.selling-plans.tsx` (reads SSMA plans first, legacy fallback)
-- Settings page: backend action handlers for create/update/delete plans
-- Subscription service: accepts `discountPercent` and `billingLeadHours` overrides
-- Constants: moved billing constants to shared module, added TRIWEEKLY
 
 ---
 
