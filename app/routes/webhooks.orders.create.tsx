@@ -390,10 +390,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Check if this is a subscription order and create subscription record
-    const subscriptionLineItem = order.line_items.find(
-      (item) => item.selling_plan_allocation?.selling_plan
-    );
-
+    // Use the subscriptionLineItem we already detected earlier (including GraphQL fallback)
+    // Don't re-check here as it would miss the GraphQL-detected subscriptions
     if (subscriptionLineItem) {
       try {
         const sellingPlanName = subscriptionLineItem.selling_plan_allocation?.selling_plan.name || "";
