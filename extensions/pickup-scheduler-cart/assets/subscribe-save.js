@@ -34,6 +34,13 @@
       // Check current cart state for existing subscription attributes
       await this.loadCartState();
 
+      // If Shopify selling plans are already handling subscription on this cart
+      // (customer selected subscription on product page), don't show duplicate widget
+      if (this.hasSellingPlanItems) {
+        console.log('Subscribe & Save: Cart already has selling plan items, skipping widget');
+        return;
+      }
+
       // Fetch plans from API, fall back to theme settings
       const apiPlans = await this.fetchPlans();
       if (apiPlans && apiPlans.length > 0) {
@@ -68,7 +75,13 @@
 
         const data = await response.json();
         console.log('Subscribe & Save: Received plans from API', data);
-        return data;
+
+        // Extract the plans array from the API response
+        if (data && data.enabled && Array.isArray(data.plans)) {
+          return data.plans;
+        }
+
+        return null;
       } catch (e) {
         console.warn('Subscribe & Save: Could not fetch plans from API:', e);
         return null;
@@ -123,9 +136,19 @@
         if (cart.discount_codes && cart.discount_codes.length > 0) {
           this.currentDiscountCode = cart.discount_codes[0].code;
         }
+
+        // Check if any cart items already have a Shopify selling plan
+        // (customer selected subscription on product page via native UI)
+        this.hasSellingPlanItems = false;
+        if (cart.items && cart.items.length > 0) {
+          this.hasSellingPlanItems = cart.items.some(item =>
+            item.selling_plan_allocation != null
+          );
+        }
       } catch (e) {
         console.warn('Could not load cart state:', e);
         this.currentAttributes = {};
+        this.hasSellingPlanItems = false;
       }
     }
 
