@@ -167,9 +167,9 @@ function buildDiscountInput(
 ) {
   const code = freq.discountCode ?? `SSMA-${Date.now()}`;
 
-  // Shopify percentage value is 0.0 - 1.0 (e.g. 10% -> -0.1)
-  // Per the Shopify docs: the value should be negative for discounts
-  const percentage = -(freq.discountPercent / 100);
+  // Shopify percentage value is 0.0 - 1.0 (e.g. 10% -> 0.1)
+  // Per the Shopify docs: positive decimal, NOT negative
+  const percentage = freq.discountPercent / 100;
 
   const items =
     groupProducts.length > 0
@@ -339,6 +339,17 @@ export async function deleteDiscountCode(
 }
 
 /**
+ * Result of syncing discounts for a group.
+ */
+export interface DiscountSyncResult {
+  created: number;
+  updated: number;
+  deleted: number;
+  failed: number;
+  errors: string[];
+}
+
+/**
  * Sync all discount codes for a single plan group.
  *
  * - Active frequencies WITH a discountCode but WITHOUT a shopifyDiscountId -> create
@@ -349,7 +360,9 @@ export async function syncDiscountsForGroup(
   admin: AdminClient,
   shop: string,
   groupId: string,
-): Promise<void> {
+): Promise<DiscountSyncResult> {
+  const result: DiscountSyncResult = { created: 0, updated: 0, deleted: 0, failed: 0, errors: [] };
+
   const group = await prisma.subscriptionPlanGroup.findFirst({
     where: { id: groupId, shop },
     include: {
@@ -360,7 +373,9 @@ export async function syncDiscountsForGroup(
 
   if (!group) {
     console.error(`[shopify-discounts] Group ${groupId} not found for shop ${shop}`);
-    return;
+    result.failed++;
+    result.errors.push(`Group ${groupId} not found`);
+    return result;
   }
 
   const groupProducts: GroupProduct[] = group.products.map((p) => ({
@@ -372,7 +387,7 @@ export async function syncDiscountsForGroup(
       if (freq.isActive && freq.discountCode) {
         if (!freq.shopifyDiscountId) {
           // Create new discount
-          await createDiscountCodeForFrequency(
+          const id = await createDiscountCodeForFrequency(
             admin,
             {
               id: freq.id,
@@ -384,9 +399,15 @@ export async function syncDiscountsForGroup(
             },
             groupProducts,
           );
+          if (id) {
+            result.created++;
+          } else {
+            result.failed++;
+            result.errors.push(`Failed to create discount for "${freq.name}" (${freq.discountCode})`);
+          }
         } else {
           // Update existing discount
-          await updateDiscountCodeForFrequency(
+          const ok = await updateDiscountCodeForFrequency(
             admin,
             freq.shopifyDiscountId,
             {
@@ -396,6 +417,12 @@ export async function syncDiscountsForGroup(
             },
             groupProducts,
           );
+          if (ok) {
+            result.updated++;
+          } else {
+            result.failed++;
+            result.errors.push(`Failed to update discount for "${freq.name}" (${freq.discountCode})`);
+          }
         }
       } else if (!freq.isActive && freq.shopifyDiscountId) {
         // Frequency deactivated -- remove the discount from Shopify
@@ -405,6 +432,10 @@ export async function syncDiscountsForGroup(
             where: { id: freq.id },
             data: { shopifyDiscountId: null },
           });
+          result.deleted++;
+        } else {
+          result.failed++;
+          result.errors.push(`Failed to delete discount for "${freq.name}"`);
         }
       }
     } catch (error) {
@@ -413,27 +444,42 @@ export async function syncDiscountsForGroup(
         `[shopify-discounts] Error syncing discount for freq ${freq.id} (${freq.name}):`,
         error,
       );
+      result.failed++;
+      result.errors.push(`Error syncing "${freq.name}": ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+
+  return result;
 }
 
 /**
  * Sync discount codes for ALL plan groups belonging to a shop.
+ * Returns aggregated results across all groups.
  */
 export async function syncAllDiscounts(
   admin: AdminClient,
   shop: string,
-): Promise<void> {
+): Promise<DiscountSyncResult> {
+  const totals: DiscountSyncResult = { created: 0, updated: 0, deleted: 0, failed: 0, errors: [] };
+
   const groups = await prisma.subscriptionPlanGroup.findMany({
     where: { shop },
     select: { id: true },
   });
 
   for (const group of groups) {
-    await syncDiscountsForGroup(admin, shop, group.id);
+    const r = await syncDiscountsForGroup(admin, shop, group.id);
+    totals.created += r.created;
+    totals.updated += r.updated;
+    totals.deleted += r.deleted;
+    totals.failed += r.failed;
+    totals.errors.push(...r.errors);
   }
 
   console.log(
-    `[shopify-discounts] Finished syncing discounts for ${groups.length} group(s) in shop ${shop}`,
+    `[shopify-discounts] Finished syncing discounts for ${groups.length} group(s) in shop ${shop}: ` +
+    `created=${totals.created}, updated=${totals.updated}, deleted=${totals.deleted}, failed=${totals.failed}`,
   );
+
+  return totals;
 }

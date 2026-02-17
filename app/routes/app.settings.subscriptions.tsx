@@ -869,8 +869,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       case "sync_discounts": {
-        await syncAllDiscounts(admin, shop);
-        return json({ success: true, message: "All discount codes synced to Shopify" });
+        const syncResult = await syncAllDiscounts(admin, shop);
+        if (syncResult.failed > 0) {
+          const parts = [];
+          if (syncResult.created > 0) parts.push(`${syncResult.created} created`);
+          if (syncResult.updated > 0) parts.push(`${syncResult.updated} updated`);
+          parts.push(`${syncResult.failed} failed`);
+          return json({
+            error: `Discount sync partially failed (${parts.join(", ")}): ${syncResult.errors.join("; ")}`,
+          });
+        }
+        const parts = [];
+        if (syncResult.created > 0) parts.push(`${syncResult.created} created`);
+        if (syncResult.updated > 0) parts.push(`${syncResult.updated} updated`);
+        if (syncResult.deleted > 0) parts.push(`${syncResult.deleted} deleted`);
+        const summary = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+        return json({ success: true, message: `All discount codes synced to Shopify${summary}` });
       }
 
       case "register_webhooks": {

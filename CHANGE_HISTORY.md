@@ -2,6 +2,26 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-16 - Fix Discount Sync: Percentage Format & Error Reporting
+
+**Bug Fix — Shopify discount codes not creating:**
+- `buildDiscountInput()` in `shopify-discounts.server.ts` used a NEGATIVE percentage value
+  (e.g. `-0.1` for 10%) but Shopify's `discountCodeBasicCreate` API requires a POSITIVE decimal
+  (e.g. `0.1` for 10%). The GraphQL mutation was silently returning `userErrors`, leaving
+  `shopifyDiscountId` as null. Fixed by removing the negation.
+
+**Improvement — Sync error reporting:**
+- `syncDiscountsForGroup()` and `syncAllDiscounts()` now return a `DiscountSyncResult` with
+  counts of created/updated/deleted/failed and error messages.
+- The `sync_discounts` action now surfaces failures to the UI instead of always reporting success.
+  Shows detailed error messages when any frequency fails to sync.
+
+**Files Modified:**
+- `app/services/shopify-discounts.server.ts` — Fix percentage, add result tracking
+- `app/routes/app.settings.subscriptions.tsx` — Use sync results for error/success messages
+
+---
+
 ### 2026-02-16 - Cart Widget Bug Fix & Selling Plan Conflict Prevention
 
 **Bug Fix — `fetchPlans()` not using API data:**
