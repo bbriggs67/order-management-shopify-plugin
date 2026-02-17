@@ -340,16 +340,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Format: "Wednesday, February 25" - need to infer year
     // Try parsing with current year, and if that date is in the past, use next year
     const currentYear = new Date().getFullYear();
-    const dateWithYear = `${pickupDateRaw}, ${currentYear}`;
-    pickupDate = new Date(dateWithYear);
 
-    if (isNaN(pickupDate.getTime())) {
-      // Try removing day name: "February 25" from "Wednesday, February 25"
-      const withoutDayName = pickupDateRaw.replace(/^[A-Za-z]+,\s*/, "");
-      pickupDate = new Date(`${withoutDayName}, ${currentYear}`);
+    // Remove day name prefix to get just "February 25"
+    const withoutDayName = pickupDateRaw.replace(/^[A-Za-z]+,\s*/, "");
+
+    // Parse the month and day, then construct with T12:00:00 to avoid timezone issues
+    // (midnight UTC = previous day in Pacific time, so we use noon instead)
+    let tempDate = new Date(`${withoutDayName}, ${currentYear}`);
+    if (isNaN(tempDate.getTime())) {
+      tempDate = new Date(`${pickupDateRaw}, ${currentYear}`);
     }
 
-    if (isNaN(pickupDate.getTime())) {
+    if (isNaN(tempDate.getTime())) {
       console.error(`Could not parse pickup date: ${pickupDateRaw}`);
       return json({ error: "Invalid pickup date" }, { status: 400 });
     }
@@ -357,10 +359,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // If the parsed date is more than 7 days in the past, assume it's for next year
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    if (pickupDate < weekAgo) {
-      pickupDate.setFullYear(currentYear + 1);
-      console.log(`Date was in the past, adjusted to next year: ${pickupDate}`);
+    if (tempDate < weekAgo) {
+      tempDate.setFullYear(currentYear + 1);
+      console.log(`Date was in the past, adjusted to next year: ${tempDate}`);
     }
+
+    // Re-construct date with noon to avoid UTC midnight → Pacific previous-day issue
+    const month = String(tempDate.getMonth() + 1).padStart(2, "0");
+    const day = String(tempDate.getDate()).padStart(2, "0");
+    const year = tempDate.getFullYear();
+    pickupDate = new Date(`${year}-${month}-${day}T12:00:00`);
     console.log(`Parsed date from human-readable format: ${pickupDate}`);
   }
 

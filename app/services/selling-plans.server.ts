@@ -192,6 +192,21 @@ const ALL_SELLING_PLAN_GROUPS_QUERY = `
   }
 `;
 
+const UPDATE_SELLING_PLAN_GROUP_NAME_MUTATION = `
+  mutation updateSellingPlanGroupName($id: ID!, $name: String!) {
+    sellingPlanGroupUpdate(id: $id, input: { name: $name }) {
+      sellingPlanGroup {
+        id
+        name
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 const ADD_SELLING_PLAN_MUTATION = `
   mutation addSellingPlanToGroup($id: ID!, $sellingPlansToCreate: [SellingPlanInput!]!) {
     sellingPlanGroupUpdate(id: $id, input: { sellingPlansToCreate: $sellingPlansToCreate }) {
@@ -407,6 +422,7 @@ async function createSellingPlanGroup(
       {
         name: `Deliver every week (${weeklyDiscount}% off)`,
         options: ["Weekly"],
+        position: 1,
         category: "SUBSCRIPTION",
         billingPolicy: {
           recurring: {
@@ -436,6 +452,7 @@ async function createSellingPlanGroup(
       {
         name: `Deliver every 2 weeks (${biweeklyDiscount}% off)`,
         options: ["Bi-weekly"],
+        position: 2,
         category: "SUBSCRIPTION",
         billingPolicy: {
           recurring: {
@@ -802,7 +819,8 @@ export async function addSellingPlanToGroup(
   planName: string,
   intervalCount: number,
   discountPercent: number,
-  interval: string = "WEEK"
+  interval: string = "WEEK",
+  position?: number
 ): Promise<{ success: boolean; error?: string; planId?: string }> {
   // First, check for existing plans with the same interval/frequency to prevent duplicates
   try {
@@ -826,9 +844,10 @@ export async function addSellingPlanToGroup(
   // Shopify requires each selling plan within a group to have unique options
   const uniqueOption = `${getFrequencyLabel(interval, intervalCount)} (${discountPercent}% off)`;
 
-  const sellingPlanInput = {
+  const sellingPlanInput: Record<string, unknown> = {
     name: planName,
     options: [uniqueOption],
+    ...(position !== undefined ? { position } : {}),
     category: "SUBSCRIPTION",
     billingPolicy: {
       recurring: {
@@ -1025,6 +1044,20 @@ async function syncSellingPlansFromSSMAWithConfig(
     return { success: true, message: "No active SSMA frequencies to sync.", added, existing, errors };
   }
 
+  // 2b. Sync the Shopify selling plan group name to match the SSMA plan group name
+  if (ssmaGroups.length > 0) {
+    const ssmaGroupName = ssmaGroups[0].name;
+    try {
+      await admin.graphql(UPDATE_SELLING_PLAN_GROUP_NAME_MUTATION, {
+        variables: { id: shopifyGroupId, name: ssmaGroupName },
+      });
+      console.log(`[selling-plans] Updated Shopify selling plan group name to "${ssmaGroupName}"`);
+    } catch (err) {
+      console.error(`[selling-plans] Failed to update group name:`, err);
+      // Non-fatal — continue with plan sync
+    }
+  }
+
   // 3. Get the current Shopify selling plans in the group
   let shopifyPlans: Array<{ id: string; name: string; interval: string; intervalCount: number }>;
   try {
@@ -1037,8 +1070,14 @@ async function syncSellingPlansFromSSMAWithConfig(
     };
   }
 
-  // 4. For each SSMA frequency, check if a matching Shopify selling plan exists
-  for (const freq of ssmaFrequencies) {
+  // 4. Sort SSMA frequencies by intervalCount so position values are ordered correctly
+  const sortedFrequencies = [...ssmaFrequencies].sort((a, b) => a.intervalCount - b.intervalCount);
+
+  // 5. For each SSMA frequency, check if a matching Shopify selling plan exists
+  for (let i = 0; i < sortedFrequencies.length; i++) {
+    const freq = sortedFrequencies[i];
+    const position = i + 1; // 1-based position for Shopify
+
     const matchingPlan = shopifyPlans.find(
       (p) => p.interval === freq.interval && p.intervalCount === freq.intervalCount,
     );
@@ -1059,6 +1098,7 @@ async function syncSellingPlansFromSSMAWithConfig(
         freq.intervalCount,
         freq.discountPercent,
         freq.interval,
+        position,
       );
       if (result.success) {
         added.push(planName);
