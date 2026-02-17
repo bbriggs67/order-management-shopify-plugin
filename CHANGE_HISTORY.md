@@ -2,6 +2,27 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-16 - Cart Widget Bug Fix & Selling Plan Conflict Prevention
+
+**Bug Fix — `fetchPlans()` not using API data:**
+- `fetchPlans()` returned the entire API response object (`{enabled, groups, plans}`) instead of
+  extracting the `plans` array. Since objects don't have `.length`, the condition `apiPlans.length > 0`
+  always failed, falling back to hardcoded theme settings. Fixed by extracting `data.plans`.
+
+**Selling Plan Conflict Prevention:**
+- Added detection in `loadCartState()`: checks `cart.items[].selling_plan_allocation` to see if
+  customer already selected a subscription on the product page via Shopify's native selling plan UI.
+- If selling plan items are found, `init()` returns early — SSMA Subscribe & Save widget is NOT
+  injected, avoiding duplicate subscription options on the cart page.
+- Result: Product page subscription → cart shows only date/time picker (no duplicate widget).
+  One-time purchase → cart shows SSMA Subscribe & Save widget + date/time picker.
+
+**Files Modified:**
+- `extensions/pickup-scheduler-cart/assets/subscribe-save.js`
+- `CLAUDE.md`
+
+---
+
 ### 2026-02-16 - Auto Discount Codes, Dynamic Cart Widget, Settings UI Cleanup
 
 **Context:**

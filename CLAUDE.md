@@ -93,6 +93,7 @@ Group-based subscription model (replaces flat `SubscriptionPlan`):
 - Settings UI: Plan Groups at top, debug/legacy sections collapsed at bottom
 - Auto-discount sync: Adding/updating frequencies auto-creates Shopify discount codes
 - Cart widget: Dynamically fetches plans from API, applies/removes discount codes programmatically
+- Cart widget conflict prevention: If cart items have `selling_plan_allocation` (subscription selected on product page), SSMA widget skips injection — avoids duplicate Subscribe & Save UI
 - Service: `subscription-plans.server.ts` — full CRUD, `ensureDefaultPlanGroups()` seeds on first load
 
 ## Polaris Gotchas
