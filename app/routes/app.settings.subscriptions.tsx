@@ -802,8 +802,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
         const freq = await addFrequency(shop, groupId, { name, interval, intervalCount, discountPercent, discountCode, isActive });
-        // Auto-sync discount code to Shopify
+        // Auto-sync discount code and selling plan to Shopify
         await syncDiscountsForGroup(admin, shop, groupId);
+        await syncSellingPlansFromSSMA(admin, shop);
         return json({ success: true, message: `Added frequency: ${freq.name}` });
       }
 
@@ -827,6 +828,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (freqGroup) {
           await syncDiscountsForGroup(admin, shop, freqGroup.group.id);
         }
+        // Auto-sync selling plans to Shopify
+        await syncSellingPlansFromSSMA(admin, shop);
         return json({ success: true, message: `Updated frequency: ${freq.name}` });
       }
 
@@ -841,6 +844,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           await deleteDiscountCode(admin, freqToDeleteData.shopifyDiscountId);
         }
         await deleteFrequency(shop, frequencyId);
+        // Note: We don't auto-delete the Shopify selling plan here for safety
+        // (active subscriptions may depend on it). Use the Debug page to manage selling plans manually.
         return json({ success: true, message: "Frequency deleted" });
       }
 
