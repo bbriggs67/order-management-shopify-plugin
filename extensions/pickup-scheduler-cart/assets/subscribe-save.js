@@ -41,6 +41,13 @@
         return;
       }
 
+      // If SSMA subscription attributes were already set from the product page widget,
+      // skip the cart subscription widget (cart page only needs date/time picker)
+      if (this.currentAttributes['Subscription Enabled'] === 'true') {
+        console.log('Subscribe & Save: SSMA subscription already set from product page, skipping cart widget');
+        return;
+      }
+
       // Fetch plans from API, fall back to theme settings
       const apiPlans = await this.fetchPlans();
       if (apiPlans && apiPlans.length > 0) {

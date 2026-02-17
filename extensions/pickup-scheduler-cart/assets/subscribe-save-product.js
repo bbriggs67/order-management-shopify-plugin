@@ -1,0 +1,452 @@
+/**
+ * Subscribe and Save Widget - Product Page Version
+ *
+ * SSMA-controlled subscription options on the product page.
+ * Intercepts the Add to Cart form submission when a subscription is selected,
+ * adds the product via /cart/add.js, sets SSMA cart attributes via
+ * /cart/update.js, applies the discount code, and navigates to /cart.
+ *
+ * One-time purchases submit the form normally (no interception).
+ */
+
+(function () {
+  'use strict';
+
+  const STORAGE_KEY = 'susie_subscription_selection';
+
+  class SubscribeSaveProductWidget {
+    constructor(options) {
+      this.shopDomain = options.shopDomain || '';
+      this.productId = options.productId || '';
+      this.container = null;
+      this.productForm = null;
+      this.plans = [];
+      this.selectedPlan = null; // null = one-time purchase
+
+      if (this.isProductPage() && this.productId) {
+        this.init();
+      }
+    }
+
+    isProductPage() {
+      return window.location.pathname.includes('/products/');
+    }
+
+    async init() {
+      // Fetch plans from API
+      const apiPlans = await this.fetchPlans();
+
+      if (!apiPlans || apiPlans.length === 0) {
+        console.log('Subscribe & Save Product: No plans available');
+        return;
+      }
+
+      // Check product eligibility — if group has productIds, product must match
+      const eligiblePlans = this.filterEligiblePlans(apiPlans);
+
+      if (eligiblePlans.length === 0) {
+        console.log('Subscribe & Save Product: Product not eligible for any plans');
+        return;
+      }
+
+      this.plans = eligiblePlans;
+
+      // Find the product form
+      this.productForm = this.findProductForm();
+      if (!this.productForm) {
+        console.warn('Subscribe & Save Product: Could not find product form');
+        return;
+      }
+
+      this.injectWidget();
+    }
+
+    async fetchPlans() {
+      try {
+        let apiUrl = `/apps/my-subscription/selling-plans?shop=${encodeURIComponent(this.shopDomain)}`;
+        console.log('Subscribe & Save Product: Fetching plans from', apiUrl);
+
+        let response = await fetch(apiUrl);
+
+        // If proxy fails, try the dev tunnel URL (for development)
+        if (!response.ok) {
+          console.log('Subscribe & Save Product: App proxy failed, status:', response.status);
+          const devUrl = document.querySelector('meta[name="subscribe-save-dev-url"]')?.content;
+          if (devUrl) {
+            apiUrl = `${devUrl}/api/selling-plans?shop=${encodeURIComponent(this.shopDomain)}`;
+            console.log('Subscribe & Save Product: Trying dev URL', apiUrl);
+            response = await fetch(apiUrl);
+          }
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+        }
+
+        const data = await response.json();
+        console.log('Subscribe & Save Product: Received data from API', data);
+
+        if (data && data.enabled) {
+          // Return the structured groups so we can check product eligibility
+          if (Array.isArray(data.groups)) {
+            return data.groups;
+          }
+          // Fallback to flat plans list
+          if (Array.isArray(data.plans)) {
+            return [{ id: 'default', name: 'Subscribe & Save', frequencies: data.plans, productIds: [] }];
+          }
+        }
+
+        return null;
+      } catch (e) {
+        console.warn('Subscribe & Save Product: Could not fetch plans from API:', e);
+        return null;
+      }
+    }
+
+    filterEligiblePlans(groups) {
+      const eligible = [];
+
+      // Shopify product IDs from Liquid are numeric; API returns GIDs
+      // Convert numeric product ID to GID format for comparison
+      const productGid = `gid://shopify/Product/${this.productId}`;
+
+      for (const group of groups) {
+        const productIds = group.productIds || [];
+
+        // If no product IDs, this group applies to all products
+        if (productIds.length === 0) {
+          eligible.push(group);
+          continue;
+        }
+
+        // Check if current product is in the group
+        const isMatch = productIds.some(pid => {
+          // Handle both GID and numeric formats
+          if (pid === productGid) return true;
+          if (pid === this.productId) return true;
+          // Extract numeric ID from GID for comparison
+          const numericId = pid.replace('gid://shopify/Product/', '');
+          if (numericId === String(this.productId)) return true;
+          return false;
+        });
+
+        if (isMatch) {
+          eligible.push(group);
+        }
+      }
+
+      return eligible;
+    }
+
+    findProductForm() {
+      // Look for product form by common selectors (Dawn and other themes)
+      const selectors = [
+        'form[action*="/cart/add"]',
+        'form.product-form',
+        'form.shopify-product-form',
+        'product-form form',
+        '.product-form__form',
+      ];
+
+      for (const sel of selectors) {
+        const form = document.querySelector(sel);
+        if (form) return form;
+      }
+
+      return null;
+    }
+
+    injectWidget() {
+      // Find the submit button to insert before
+      const submitBtn =
+        this.productForm.querySelector('[type="submit"]') ||
+        this.productForm.querySelector('button[name="add"]') ||
+        this.productForm.querySelector('.product-form__submit');
+
+      if (!submitBtn) {
+        console.warn('Subscribe & Save Product: Could not find submit button');
+        return;
+      }
+
+      // Create widget
+      this.container = this.createWidgetElement();
+
+      // Insert before the submit button
+      submitBtn.parentNode.insertBefore(this.container, submitBtn);
+
+      // Bind events
+      this.bindEvents();
+
+      // Restore any previous selection
+      this.restoreSelection();
+
+      console.log('Subscribe & Save Product: Widget injected successfully');
+    }
+
+    createWidgetElement() {
+      const widget = document.createElement('div');
+      widget.id = 'subscribe-save-product-widget';
+      widget.className = 'ssma-product-widget';
+
+      // Build subscription choices from all eligible groups
+      let choicesHTML = '';
+      for (const group of this.plans) {
+        const frequencies = group.frequencies || [];
+        for (const freq of frequencies) {
+          const value = freq.frequency ? freq.frequency.toLowerCase() : freq.id;
+          choicesHTML += `
+            <label class="ssma-product-widget__choice">
+              <input type="radio" name="ssma_purchase_option" value="${value}"
+                data-frequency="${freq.frequency || ''}"
+                data-discount="${freq.discountPercent || 0}"
+                data-discount-code="${freq.discountCode || ''}"
+                data-group-name="${group.name || ''}">
+              <span class="ssma-product-widget__radio"></span>
+              <span class="ssma-product-widget__choice-text">
+                ${freq.name}${freq.discountPercent > 0 ? `, <strong>${freq.discountPercent}% off</strong>` : ''}
+              </span>
+            </label>`;
+        }
+      }
+
+      widget.innerHTML = `
+        <div class="ssma-product-widget__options">
+          <!-- One-time purchase -->
+          <label class="ssma-product-widget__option ssma-product-widget__option--onetime">
+            <input type="radio" name="ssma_purchase_option" value="onetime" checked>
+            <span class="ssma-product-widget__radio"></span>
+            <span class="ssma-product-widget__option-content">
+              <span class="ssma-product-widget__option-title">One-time purchase</span>
+            </span>
+          </label>
+
+          <!-- Subscribe & Save -->
+          <div class="ssma-product-widget__option ssma-product-widget__option--subscribe">
+            <div class="ssma-product-widget__option-header">
+              <span class="ssma-product-widget__option-title">Subscribe & Save (Porch Pick-up Only)</span>
+            </div>
+            <div class="ssma-product-widget__choices">
+              ${choicesHTML}
+            </div>
+          </div>
+        </div>
+        <p class="ssma-product-widget__note">Auto-renews, skip or cancel anytime. Discount applied at checkout.</p>
+        <div class="ssma-product-widget__status" style="display: none;"></div>
+      `;
+
+      return widget;
+    }
+
+    bindEvents() {
+      // Radio button changes
+      const radios = this.container.querySelectorAll('input[type="radio"]');
+      radios.forEach(radio => {
+        radio.addEventListener('change', (e) => this.handleSelectionChange(e));
+      });
+
+      // Intercept form submission
+      this.productForm.addEventListener('submit', (e) => this.handleFormSubmit(e));
+    }
+
+    handleSelectionChange(e) {
+      const value = e.target.value;
+      const subscriptionSection = this.container.querySelector('.ssma-product-widget__option--subscribe');
+
+      if (value === 'onetime') {
+        this.selectedPlan = null;
+        subscriptionSection.classList.remove('has-selection');
+      } else {
+        this.selectedPlan = {
+          value,
+          frequency: e.target.dataset.frequency,
+          discount: e.target.dataset.discount,
+          discountCode: e.target.dataset.discountCode,
+          groupName: e.target.dataset.groupName,
+        };
+        subscriptionSection.classList.add('has-selection');
+      }
+
+      this.saveSelection(value);
+    }
+
+    async handleFormSubmit(e) {
+      // If one-time purchase, let the form submit normally
+      if (!this.selectedPlan) {
+        // Clear any previous subscription attributes
+        this.clearSubscriptionAttributesQuietly();
+        return; // Normal form submission continues
+      }
+
+      // Subscription selected — intercept the form submission
+      e.preventDefault();
+      e.stopPropagation();
+
+      const statusEl = this.container.querySelector('.ssma-product-widget__status');
+      statusEl.style.display = 'block';
+      statusEl.textContent = 'Adding to cart with subscription...';
+      statusEl.className = 'ssma-product-widget__status ssma-product-widget__status--loading';
+
+      try {
+        // 1. Get variant ID and quantity from the form
+        const formData = new FormData(this.productForm);
+        const variantId = formData.get('id');
+        const quantity = formData.get('quantity') || 1;
+
+        if (!variantId) {
+          throw new Error('No variant selected');
+        }
+
+        // 2. Add product to cart via /cart/add.js
+        const addResponse = await fetch('/cart/add.js', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: variantId,
+            quantity: parseInt(quantity, 10),
+          }),
+        });
+
+        if (!addResponse.ok) {
+          const errorData = await addResponse.json().catch(() => ({}));
+          throw new Error(errorData.description || 'Failed to add to cart');
+        }
+
+        // 3. Set SSMA cart attributes via /cart/update.js
+        await fetch('/cart/update.js', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            attributes: {
+              'Subscription Enabled': 'true',
+              'Subscription Frequency': this.selectedPlan.frequency,
+              'Subscription Discount': this.selectedPlan.discount,
+            },
+          }),
+        });
+
+        // 4. Apply discount code if available
+        if (this.selectedPlan.discountCode) {
+          await fetch('/discount/' + encodeURIComponent(this.selectedPlan.discountCode), {
+            method: 'GET',
+            redirect: 'manual',
+          });
+        }
+
+        // 5. Save selection to sessionStorage
+        this.saveSelection(this.selectedPlan.value);
+
+        statusEl.textContent = 'Redirecting to cart...';
+
+        // 6. Navigate to cart page
+        window.location.href = '/cart';
+      } catch (error) {
+        console.error('Subscribe & Save Product: Error during add to cart:', error);
+        statusEl.textContent = error.message || 'Error adding to cart. Please try again.';
+        statusEl.className = 'ssma-product-widget__status ssma-product-widget__status--error';
+      }
+    }
+
+    /**
+     * Silently clear subscription attributes if user switches back to one-time.
+     * Non-blocking — fire and forget.
+     */
+    clearSubscriptionAttributesQuietly() {
+      fetch('/cart/update.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          attributes: {
+            'Subscription Enabled': '',
+            'Subscription Frequency': '',
+            'Subscription Discount': '',
+          },
+        }),
+      }).catch(() => { /* ignore */ });
+    }
+
+    saveSelection(value) {
+      const data = {
+        type: value,
+        timestamp: Date.now(),
+      };
+
+      if (this.selectedPlan) {
+        data.frequency = this.selectedPlan.frequency;
+        data.discount = this.selectedPlan.discount;
+      }
+
+      try {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      } catch (e) {
+        // Ignore storage errors
+      }
+    }
+
+    restoreSelection() {
+      try {
+        const saved = sessionStorage.getItem(STORAGE_KEY);
+        if (!saved) return;
+
+        const data = JSON.parse(saved);
+        // Only restore if within 30 minutes
+        if (Date.now() - data.timestamp > 30 * 60 * 1000) return;
+
+        if (data.type && data.type !== 'onetime' && data.frequency) {
+          const radio = this.container.querySelector(
+            `input[data-frequency="${data.frequency}"]`
+          );
+          if (radio) {
+            radio.checked = true;
+            this.selectedPlan = {
+              value: data.type,
+              frequency: data.frequency,
+              discount: data.discount,
+              discountCode: radio.dataset.discountCode || '',
+              groupName: radio.dataset.groupName || '',
+            };
+            const subscriptionSection = this.container.querySelector(
+              '.ssma-product-widget__option--subscribe'
+            );
+            subscriptionSection.classList.add('has-selection');
+          }
+        }
+      } catch (e) {
+        // Ignore restore errors
+      }
+    }
+  }
+
+  // =========================================================
+  // Initialize
+  // =========================================================
+
+  function init() {
+    const embed = document.getElementById('subscribe-save-product-embed');
+    if (!embed || embed.dataset.enabled !== 'true') return;
+
+    // Avoid duplicate injection
+    if (document.getElementById('subscribe-save-product-widget')) return;
+
+    const shopDomain = embed.dataset.shop || window.Shopify?.shop || '';
+    const productId = embed.dataset.productId || '';
+
+    if (!productId) {
+      console.log('Subscribe & Save Product: No product ID, skipping');
+      return;
+    }
+
+    new SubscribeSaveProductWidget({ shopDomain, productId });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+  // Theme editor support
+  document.addEventListener('shopify:section:load', init);
+
+  // Expose for external use
+  window.SubscribeSaveProductWidget = SubscribeSaveProductWidget;
+})();

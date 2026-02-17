@@ -2,6 +2,34 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-16 - SSMA Product Page Subscription Widget
+
+**Replaces Shopify's native selling plan selector** on the product page with an
+SSMA-controlled subscription widget. This eliminates sync issues caused by Shopify
+subscription contracts and keeps SSMA in full control of the subscription lifecycle.
+
+**New flow:**
+1. Product page → SSMA widget shows "One-time purchase" + "Subscribe & Save" options
+2. Customer selects frequency → clicks Add to Cart
+3. Widget intercepts submit → adds product via `/cart/add.js` → sets SSMA cart
+   attributes → applies discount code → navigates to `/cart`
+4. Cart page → only date/time picker (subscription widget skips since attributes set)
+5. Checkout → webhook reads SSMA cart attributes → creates subscription
+
+**Cart widget updated** to skip when SSMA subscription attributes are already
+set from the product page widget (avoids duplicate subscription selection).
+
+**New Files:**
+- `extensions/pickup-scheduler-cart/blocks/subscribe-save-product.liquid`
+- `extensions/pickup-scheduler-cart/assets/subscribe-save-product.js`
+- `extensions/pickup-scheduler-cart/assets/subscribe-save-product.css`
+
+**Modified Files:**
+- `extensions/pickup-scheduler-cart/assets/subscribe-save.js` — Skip cart widget
+  when SSMA attributes already set
+
+---
+
 ### 2026-02-16 - Selling Plan Sync, Group Name, Pickup Date Timezone Fix
 
 **Selling Plan Ordering:**

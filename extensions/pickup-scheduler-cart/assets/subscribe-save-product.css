@@ -1,0 +1,181 @@
+/* Subscribe & Save - Product Page Widget Styles */
+
+.ssma-product-widget {
+  margin: 1.5rem 0;
+  font-family: inherit;
+}
+
+.ssma-product-widget__options {
+  border: 1px solid #e5e5e5;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* Option styling */
+.ssma-product-widget__option {
+  display: block;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #e5e5e5;
+  transition: background-color 0.15s ease;
+}
+
+.ssma-product-widget__option:last-child {
+  border-bottom: none;
+}
+
+.ssma-product-widget__option--onetime {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  cursor: pointer;
+}
+
+.ssma-product-widget__option--onetime:hover {
+  background-color: #fafafa;
+}
+
+.ssma-product-widget__option--subscribe {
+  cursor: default;
+}
+
+/* Radio button styling */
+.ssma-product-widget__radio {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  border: 2px solid #c4c4c4;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s ease;
+}
+
+.ssma-product-widget__radio::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: transparent;
+  transition: background-color 0.15s ease;
+}
+
+input[type="radio"]:checked + .ssma-product-widget__radio {
+  border-color: #000;
+}
+
+input[type="radio"]:checked + .ssma-product-widget__radio::after {
+  background-color: #000;
+}
+
+/* Hide actual radio inputs */
+.ssma-product-widget__option input[type="radio"],
+.ssma-product-widget__choice input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Option content */
+.ssma-product-widget__option-content {
+  flex: 1;
+}
+
+.ssma-product-widget__option-title {
+  font-size: 1.125rem;
+  font-weight: 400;
+  color: #333;
+  line-height: 1.4;
+}
+
+.ssma-product-widget__option-header {
+  margin-bottom: 0.75rem;
+}
+
+.ssma-product-widget__option-header .ssma-product-widget__option-title {
+  font-weight: 500;
+  font-size: 1.125rem;
+}
+
+/* Subscription choices */
+.ssma-product-widget__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-left: 0.25rem;
+}
+
+.ssma-product-widget__choice {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  margin: -0.5rem;
+  margin-left: 0;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+.ssma-product-widget__choice:hover {
+  background-color: #f5f5f5;
+}
+
+.ssma-product-widget__choice-text {
+  font-size: 1.0625rem;
+  color: #333;
+  line-height: 1.4;
+}
+
+.ssma-product-widget__choice-text strong {
+  font-weight: 600;
+}
+
+/* Note text */
+.ssma-product-widget__note {
+  margin-top: 0.75rem;
+  font-size: 1rem;
+  color: #666;
+}
+
+/* Selected state */
+.ssma-product-widget__option--subscribe.has-selection {
+  background-color: #fafafa;
+}
+
+/* Status messages */
+.ssma-product-widget__status {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.9375rem;
+}
+
+.ssma-product-widget__status--loading {
+  background-color: #f0f0f0;
+  color: #555;
+}
+
+.ssma-product-widget__status--error {
+  background-color: #fef2f2;
+  color: #dc2626;
+}
+
+/* Mobile responsive */
+@media (max-width: 480px) {
+  .ssma-product-widget__option {
+    padding: 0.875rem 1rem;
+  }
+
+  .ssma-product-widget__option-title {
+    font-size: 1rem;
+  }
+
+  .ssma-product-widget__choice-text {
+    font-size: 0.9375rem;
+  }
+
+  .ssma-product-widget__note {
+    font-size: 0.9375rem;
+  }
+}
