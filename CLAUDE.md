@@ -47,6 +47,7 @@ prisma/schema.prisma     → Database schema
 | `subscription.server.ts` | Core subscription CRUD + pickup generation |
 | `subscription-plans.server.ts` | SSMA plan groups, frequencies & product CRUD |
 | `subscription-billing.server.ts` | Billing lead time calculation + attempts |
+| `shopify-discounts.server.ts` | Auto-create/sync discount codes in Shopify |
 | `selling-plans.server.ts` | Shopify Selling Plan Groups integration |
 | `pickup-availability.server.ts` | Available dates/times calculation |
 | `order-management.server.ts` | Order sync with Shopify |
@@ -86,10 +87,12 @@ npx prisma generate                             # Regenerate client
 
 Group-based subscription model (replaces flat `SubscriptionPlan`):
 - `SubscriptionPlanGroup` → contains name, billingLeadHours, isActive
-- `SubscriptionPlanFrequency` → child of group (interval, discount, discount code)
+- `SubscriptionPlanFrequency` → child of group (interval, discount, discount code, shopifyDiscountId)
 - `SubscriptionPlanProduct` → child of group (shopifyProductId, title, imageUrl)
-- API: `/api/selling-plans?shop=...` returns both `groups` (v2) and flat `plans` (backward compat)
-- Settings UI: Group cards with frequency DataTable + collapsible product list with picker
+- App proxy: `/apps/my-subscription/selling-plans?shop=...` returns groups + flat plans for cart widget
+- Settings UI: Plan Groups at top, debug/legacy sections collapsed at bottom
+- Auto-discount sync: Adding/updating frequencies auto-creates Shopify discount codes
+- Cart widget: Dynamically fetches plans from API, applies/removes discount codes programmatically
 - Service: `subscription-plans.server.ts` — full CRUD, `ensureDefaultPlanGroups()` seeds on first load
 
 ## Polaris Gotchas

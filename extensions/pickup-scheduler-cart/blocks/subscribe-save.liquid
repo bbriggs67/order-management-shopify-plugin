@@ -5,8 +5,12 @@
 {% endcomment %}
 
 {% if block.settings.enabled %}
+  {% if block.settings.dev_url != blank %}
+    <meta name="subscribe-save-dev-url" content="{{ block.settings.dev_url }}">
+  {% endif %}
   <div
     id="subscribe-save-embed"
+    data-shop="{{ shop.permanent_domain }}"
     data-enabled="true"
     data-weekly-discount="{{ block.settings.weekly_discount }}"
     data-biweekly-discount="{{ block.settings.biweekly_discount }}"
@@ -59,6 +63,12 @@
       "label": "Tri-Weekly (Every 3 Weeks) Discount",
       "default": 3,
       "info": "Set to 0 to hide this option"
+    },
+    {
+      "type": "text",
+      "id": "dev_url",
+      "label": "Development URL (optional)",
+      "info": "For testing only - enter your cloudflare tunnel URL"
     }
   ]
 }

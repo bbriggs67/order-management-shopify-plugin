@@ -2,6 +2,70 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-16 - Auto Discount Codes, Dynamic Cart Widget, Settings UI Cleanup
+
+**Context:**
+The cart widget was hardcoding discount codes (`SUBSCRIBE-WEEKLY-10`, etc.) that didn't exist in
+Shopify. Users had to manually create them. This update makes everything seamless: SSMA auto-creates
+discount codes, the cart widget dynamically reads frequencies from the API, and the settings page
+is reorganized with debug sections collapsed.
+
+**Why discount CODES (not automatic discounts):** Shopify automatic discounts apply to ALL customers
+with eligible products. Since the same products can be bought one-time OR subscription, automatic
+discounts would give everyone the discount. Discount codes applied/removed by the widget solve this.
+
+**Schema Changes (migration: `20260216_add_shopify_discount_id`):**
+- Added `shopifyDiscountId String?` to `SubscriptionPlanFrequency`
+
+**New Service (`app/services/shopify-discounts.server.ts`):**
+- Auto-creates/updates/deletes Shopify discount codes via GraphQL Admin API
+- `generateDiscountCode()` — builds human-readable codes from interval info
+- `createDiscountCodeForFrequency()` — creates discount + persists GID back to DB
+- `syncDiscountsForGroup()` / `syncAllDiscounts()` — batch sync operations
+- Codes auto-generated if `discountCode` is blank (e.g., `SUBSCRIBE-WEEKLY-10`)
+
+**New App Proxy Route (`app/routes/apps.selling-plans.tsx`):**
+- Accessible at `/apps/my-subscription/selling-plans?shop=...`
+- Returns groups (v2 structured) + flat plans array with discount codes
+- Legacy fallback to SellingPlanConfig
+- CORS headers + 5-minute cache
+
+**Cart Widget Rewrite (`extensions/.../assets/subscribe-save.js`):**
+- Removed hardcoded `DISCOUNT_CODES` constant
+- Added `fetchPlans()` — calls app proxy API, falls back to dev URL then theme settings
+- Dynamically generates radio buttons from API response
+- Each radio carries `data-discount-code` attribute from API
+- Applies/removes discount codes programmatically based on selection
+
+**Liquid Embed Update (`extensions/.../blocks/subscribe-save.liquid`):**
+- Added `data-shop="{{ shop.permanent_domain }}"` for API calls
+- Added `dev_url` setting + meta tag for development
+
+**Settings Page (`app/routes/app.settings.subscriptions.tsx`):**
+- Discount sync integrated into 6 action handlers (add/update/delete frequency, add/remove products, delete group)
+- New `sync_discounts` action for manual full sync
+- "Sync All Discounts" button in Plan Groups header
+- Discount Code column shows sync status badges (Synced/Not synced)
+- Frequency modal help text: "Leave blank to auto-generate"
+- UI reorganized: Plan Groups moved to top (after banners/webhooks)
+- "Action Required: Create Discount Codes" banner removed
+- SSMA System card, Shopify Plans reference, Manual Sync moved to collapsible "Advanced / Debug" section
+- Added discount scopes (`read_discounts,write_discounts`) to TOML config
+
+**Files Modified:**
+- `prisma/schema.prisma`
+- `prisma/migrations/20260216_add_shopify_discount_id/migration.sql` (NEW)
+- `app/services/shopify-discounts.server.ts` (NEW)
+- `app/routes/apps.selling-plans.tsx` (NEW)
+- `app/routes/app.settings.subscriptions.tsx`
+- `extensions/pickup-scheduler-cart/blocks/subscribe-save.liquid`
+- `extensions/pickup-scheduler-cart/assets/subscribe-save.js`
+- `shopify.app.susies-sourdough-manager.toml`
+- `CLAUDE.md`
+- `CHANGE_HISTORY.md`
+
+---
+
 ### 2026-02-16 - Subscription Plan Groups v2 (Group → Frequency → Product)
 
 **Context:**

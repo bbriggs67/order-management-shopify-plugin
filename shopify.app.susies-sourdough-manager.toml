@@ -50,7 +50,7 @@ api_version = "2025-04"
 
 [access_scopes]
 # Full subscription scopes to access contracts created via native Shopify subscription UI
-scopes = "read_orders,write_orders,read_products,write_products,read_customers,read_own_subscription_contracts,write_own_subscription_contracts"
+scopes = "read_orders,write_orders,read_products,write_products,read_customers,read_own_subscription_contracts,write_own_subscription_contracts,read_discounts,write_discounts"
 
 [auth]
 redirect_urls = [ "https://order-management-shopify-plugin-production.up.railway.app/auth/callback" ]

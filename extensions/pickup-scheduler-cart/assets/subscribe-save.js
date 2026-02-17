@@ -9,20 +9,15 @@
 
   const STORAGE_KEY = 'susie_subscription_selection';
 
-  // Discount codes for each frequency (must be created in Shopify Admin)
-  const DISCOUNT_CODES = {
-    WEEKLY: 'SUBSCRIBE-WEEKLY-10',
-    BIWEEKLY: 'SUBSCRIBE-BIWEEKLY-5',
-    TRIWEEKLY: 'SUBSCRIBE-TRIWEEKLY-3'
-  };
-
   class SubscribeSaveWidget {
     constructor(options) {
       this.weeklyDiscount = options.weeklyDiscount || 10;
       this.biweeklyDiscount = options.biweeklyDiscount || 5;
       this.triweeklyDiscount = options.triweeklyDiscount || 0;
+      this.shopDomain = options.shopDomain || '';
       this.container = null;
       this.currentDiscountCode = null;
+      this.plans = [];
 
       if (this.isCartPage()) {
         this.init();
@@ -38,7 +33,82 @@
     async init() {
       // Check current cart state for existing subscription attributes
       await this.loadCartState();
+
+      // Fetch plans from API, fall back to theme settings
+      const apiPlans = await this.fetchPlans();
+      if (apiPlans && apiPlans.length > 0) {
+        this.plans = apiPlans;
+      } else {
+        this.plans = this.buildFallbackPlans();
+      }
+
       this.injectWidget();
+    }
+
+    async fetchPlans() {
+      try {
+        let apiUrl = `/apps/my-subscription/selling-plans?shop=${encodeURIComponent(this.shopDomain)}`;
+        console.log('Subscribe & Save: Fetching plans from', apiUrl);
+
+        let response = await fetch(apiUrl);
+
+        // If proxy fails, try the dev tunnel URL (for development)
+        if (!response.ok) {
+          console.log('Subscribe & Save: App proxy failed, status:', response.status);
+          const devUrl = document.querySelector('meta[name="subscribe-save-dev-url"]')?.content;
+          if (devUrl) {
+            apiUrl = `${devUrl}/api/selling-plans?shop=${encodeURIComponent(this.shopDomain)}`;
+            console.log('Subscribe & Save: Trying dev URL', apiUrl);
+            response = await fetch(apiUrl);
+          }
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+        }
+
+        const data = await response.json();
+        console.log('Subscribe & Save: Received plans from API', data);
+        return data;
+      } catch (e) {
+        console.warn('Subscribe & Save: Could not fetch plans from API:', e);
+        return null;
+      }
+    }
+
+    buildFallbackPlans() {
+      const plans = [];
+
+      if (this.weeklyDiscount > 0) {
+        plans.push({
+          frequency: 'WEEKLY',
+          name: 'Deliver every week',
+          discountPercent: this.weeklyDiscount,
+          discountCode: null,
+          value: 'weekly'
+        });
+      }
+
+      if (this.biweeklyDiscount > 0) {
+        plans.push({
+          frequency: 'BIWEEKLY',
+          name: 'Deliver every 2 weeks',
+          discountPercent: this.biweeklyDiscount,
+          discountCode: null,
+          value: 'biweekly'
+        });
+      }
+
+      if (this.triweeklyDiscount > 0) {
+        plans.push({
+          frequency: 'TRIWEEKLY',
+          name: 'Deliver every 3 weeks',
+          discountPercent: this.triweeklyDiscount,
+          discountCode: null,
+          value: 'triweekly'
+        });
+      }
+
+      return plans;
     }
 
     async loadCartState() {
@@ -112,6 +182,18 @@
       widget.dataset.biweeklyDiscount = this.biweeklyDiscount;
       widget.dataset.triweeklyDiscount = this.triweeklyDiscount;
 
+      // Build subscription choice radios dynamically from plans
+      let choicesHTML = '';
+      for (const plan of this.plans) {
+        const value = plan.value || plan.frequency.toLowerCase();
+        choicesHTML += `
+              <label class="subscribe-save-choice">
+                <input type="radio" name="purchase_option" value="${value}" data-frequency="${plan.frequency}" data-discount="${plan.discountPercent}" data-discount-code="${plan.discountCode || ''}">
+                <span class="subscribe-save-choice__radio"></span>
+                <span class="subscribe-save-choice__text">${plan.name}, <strong>${plan.discountPercent}% off</strong></span>
+              </label>`;
+      }
+
       widget.innerHTML = `
         <div class="subscribe-save-header">
           <h3 class="subscribe-save-title">Subscription Options</h3>
@@ -133,23 +215,7 @@
               <span class="subscribe-save-option__title">Subscribe and Save (Porch Pick-up Only)</span>
             </div>
             <div class="subscribe-save-option__choices">
-              <label class="subscribe-save-choice">
-                <input type="radio" name="purchase_option" value="weekly" data-frequency="WEEKLY" data-discount="${this.weeklyDiscount}">
-                <span class="subscribe-save-choice__radio"></span>
-                <span class="subscribe-save-choice__text">Deliver every week, <strong>${this.weeklyDiscount}% off</strong></span>
-              </label>
-              <label class="subscribe-save-choice">
-                <input type="radio" name="purchase_option" value="biweekly" data-frequency="BIWEEKLY" data-discount="${this.biweeklyDiscount}">
-                <span class="subscribe-save-choice__radio"></span>
-                <span class="subscribe-save-choice__text">Deliver every 2 weeks, <strong>${this.biweeklyDiscount}% off</strong></span>
-              </label>
-              ${this.triweeklyDiscount > 0 ? `
-              <label class="subscribe-save-choice">
-                <input type="radio" name="purchase_option" value="triweekly" data-frequency="TRIWEEKLY" data-discount="${this.triweeklyDiscount}">
-                <span class="subscribe-save-choice__radio"></span>
-                <span class="subscribe-save-choice__text">Deliver every 3 weeks, <strong>${this.triweeklyDiscount}% off</strong></span>
-              </label>
-              ` : ''}
+              ${choicesHTML}
             </div>
           </div>
         </div>
@@ -174,9 +240,9 @@
       const statusEl = this.container.querySelector('.subscribe-save-status');
 
       // Update visual state
-      if (value === 'weekly' || value === 'biweekly' || value === 'triweekly') {
+      if (value !== 'onetime') {
         subscriptionSection.classList.add('has-selection');
-      } else if (value === 'onetime') {
+      } else {
         subscriptionSection.classList.remove('has-selection');
       }
 
@@ -241,11 +307,13 @@
         'Subscription Discount': discount
       });
 
-      // Then apply the discount code
-      const discountCode = DISCOUNT_CODES[frequency];
+      // Then apply the discount code from the selected radio
+      const radio = this.container.querySelector(`input[data-frequency="${frequency}"]`);
+      const discountCode = radio?.dataset.discountCode;
+
       if (discountCode) {
-        // Remove any existing subscription discount codes first
-        if (this.currentDiscountCode && Object.values(DISCOUNT_CODES).includes(this.currentDiscountCode)) {
+        // Remove any existing subscription discount code first
+        if (this.currentDiscountCode) {
           await this.removeDiscountCode(this.currentDiscountCode);
         }
 
@@ -263,7 +331,7 @@
       });
 
       // Remove any subscription discount code
-      if (this.currentDiscountCode && Object.values(DISCOUNT_CODES).includes(this.currentDiscountCode)) {
+      if (this.currentDiscountCode) {
         await this.removeDiscountCode(this.currentDiscountCode);
         this.currentDiscountCode = null;
       }
@@ -312,15 +380,11 @@
         timestamp: Date.now()
       };
 
-      if (value === 'weekly') {
-        data.frequency = 'WEEKLY';
-        data.discount = this.weeklyDiscount;
-      } else if (value === 'biweekly') {
-        data.frequency = 'BIWEEKLY';
-        data.discount = this.biweeklyDiscount;
-      } else if (value === 'triweekly') {
-        data.frequency = 'TRIWEEKLY';
-        data.discount = this.triweeklyDiscount;
+      // Find the matching plan for the selected value
+      const plan = this.plans.find(p => (p.value || p.frequency.toLowerCase()) === value);
+      if (plan) {
+        data.frequency = plan.frequency;
+        data.discount = plan.discountPercent;
       }
 
       try {
@@ -334,20 +398,15 @@
       // First check cart attributes for existing subscription
       if (this.currentAttributes['Subscription Enabled'] === 'true') {
         const frequency = this.currentAttributes['Subscription Frequency'];
-        let value = 'onetime';
 
-        if (frequency === 'WEEKLY') value = 'weekly';
-        else if (frequency === 'BIWEEKLY') value = 'biweekly';
-        else if (frequency === 'TRIWEEKLY') value = 'triweekly';
-
-        if (value !== 'onetime') {
-          const radio = this.container.querySelector(`input[value="${value}"]`);
+        if (frequency) {
+          const radio = this.container.querySelector(`input[data-frequency="${frequency}"]`);
           if (radio) {
             radio.checked = true;
             const subscriptionSection = this.container.querySelector('.subscribe-save-option--subscription');
             subscriptionSection.classList.add('has-selection');
+            return;
           }
-          return;
         }
       }
 
@@ -358,10 +417,15 @@
           const data = JSON.parse(saved);
           // Only restore if within 30 minutes
           if ((Date.now() - data.timestamp) < 30 * 60 * 1000) {
-            const radio = this.container.querySelector(`input[value="${data.type}"]`);
-            if (radio) {
-              radio.checked = true;
-              if (data.type !== 'onetime') {
+            if (data.type === 'onetime') {
+              const radio = this.container.querySelector('input[value="onetime"]');
+              if (radio) {
+                radio.checked = true;
+              }
+            } else if (data.frequency) {
+              const radio = this.container.querySelector(`input[data-frequency="${data.frequency}"]`);
+              if (radio) {
+                radio.checked = true;
                 const subscriptionSection = this.container.querySelector('.subscribe-save-option--subscription');
                 subscriptionSection.classList.add('has-selection');
               }
@@ -402,12 +466,14 @@
     const weeklyDiscount = parseInt(embed.dataset.weeklyDiscount) || 10;
     const biweeklyDiscount = parseInt(embed.dataset.biweeklyDiscount) || 5;
     const triweeklyDiscount = parseInt(embed.dataset.triweeklyDiscount) || 0;
+    const shopDomain = embed.dataset.shop || window.Shopify?.shop || '';
 
     // Create the widget
     new SubscribeSaveWidget({
       weeklyDiscount,
       biweeklyDiscount,
-      triweeklyDiscount
+      triweeklyDiscount,
+      shopDomain
     });
   }
 

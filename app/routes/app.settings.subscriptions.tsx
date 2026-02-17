@@ -59,6 +59,11 @@ import {
   removeProductFromGroup,
 } from "../services/subscription-plans.server";
 import type { PlanProductInput } from "../services/subscription-plans.server";
+import {
+  syncDiscountsForGroup,
+  syncAllDiscounts,
+  deleteDiscountCode,
+} from "../services/shopify-discounts.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -768,6 +773,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       case "delete_plan_group": {
         const groupId = formData.get("groupId") as string;
         if (!groupId) return json({ error: "Missing group ID" }, { status: 400 });
+        // Delete Shopify discount codes for all frequencies in this group first
+        const groupToDeleteData = await prisma.subscriptionPlanGroup.findFirst({
+          where: { id: groupId, shop },
+          include: { frequencies: true },
+        });
+        if (groupToDeleteData) {
+          for (const freq of groupToDeleteData.frequencies) {
+            if (freq.shopifyDiscountId) {
+              await deleteDiscountCode(admin, freq.shopifyDiscountId);
+            }
+          }
+        }
         await deletePlanGroup(shop, groupId);
         return json({ success: true, message: "Plan group deleted" });
       }
@@ -784,6 +801,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
         const freq = await addFrequency(shop, groupId, { name, interval, intervalCount, discountPercent, discountCode, isActive });
+        // Auto-sync discount code to Shopify
+        await syncDiscountsForGroup(admin, shop, groupId);
         return json({ success: true, message: `Added frequency: ${freq.name}` });
       }
 
@@ -799,12 +818,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
         const freq = await updateFrequency(shop, frequencyId, { name, interval, intervalCount, discountPercent, discountCode, isActive });
+        // Auto-sync discount code to Shopify (find parent group)
+        const freqGroup = await prisma.subscriptionPlanFrequency.findFirst({
+          where: { id: frequencyId },
+          include: { group: { select: { id: true } } },
+        });
+        if (freqGroup) {
+          await syncDiscountsForGroup(admin, shop, freqGroup.group.id);
+        }
         return json({ success: true, message: `Updated frequency: ${freq.name}` });
       }
 
       case "delete_frequency": {
         const frequencyId = formData.get("frequencyId") as string;
         if (!frequencyId) return json({ error: "Missing frequency ID" }, { status: 400 });
+        // Delete associated Shopify discount code first
+        const freqToDeleteData = await prisma.subscriptionPlanFrequency.findFirst({
+          where: { id: frequencyId },
+        });
+        if (freqToDeleteData?.shopifyDiscountId) {
+          await deleteDiscountCode(admin, freqToDeleteData.shopifyDiscountId);
+        }
         await deleteFrequency(shop, frequencyId);
         return json({ success: true, message: "Frequency deleted" });
       }
@@ -817,6 +851,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
         const products: PlanProductInput[] = JSON.parse(productsJson);
         const count = await addProductsToGroup(shop, groupId, products);
+        // Re-sync discount codes with updated product targeting
+        await syncDiscountsForGroup(admin, shop, groupId);
         return json({ success: true, message: `Added ${count} product(s) to plan group` });
       }
 
@@ -827,7 +863,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ error: "Missing fields" }, { status: 400 });
         }
         await removeProductFromGroup(shop, groupId, productRecordId);
+        // Re-sync discount codes with updated product targeting
+        await syncDiscountsForGroup(admin, shop, groupId);
         return json({ success: true, message: "Product removed from plan group" });
+      }
+
+      case "sync_discounts": {
+        await syncAllDiscounts(admin, shop);
+        return json({ success: true, message: "All discount codes synced to Shopify" });
       }
 
       case "register_webhooks": {
@@ -910,6 +953,9 @@ export default function SubscriptionsSettings() {
 
   // Expanded groups for product lists (reuse existing pattern)
   const [expandedPlanGroups, setExpandedPlanGroups] = useState<Set<string>>(new Set());
+
+  // Debug/Advanced section state
+  const [debugSectionOpen, setDebugSectionOpen] = useState(false);
 
   // Manual sync state
   const [contractId, setContractId] = useState("");
@@ -1291,103 +1337,6 @@ export default function SubscriptionsSettings() {
           </Layout.Section>
         )}
 
-        {/* SSMA Subscription System (Cart-Based) */}
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingMd">
-                  SSMA Subscription System
-                </Text>
-                <Badge tone="info">Cart-Based</Badge>
-              </InlineStack>
-
-              <Text as="p" tone="subdued">
-                SSMA uses a cart-attribute-based subscription system that works independently from Shopify's selling plans.
-                Customers select their subscription frequency on the cart page, and discounts are applied via automatic discount codes.
-              </Text>
-
-              <Divider />
-
-              <BlockStack gap="300">
-                <Text as="h3" variant="headingSm">Setup Checklist</Text>
-
-                <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-                  <BlockStack gap="300">
-                    <InlineStack gap="300" blockAlign="center">
-                      <Badge tone="success">✓</Badge>
-                      <BlockStack gap="100">
-                        <Text as="p" fontWeight="semibold">Cart Widget Deployed</Text>
-                        <Text as="p" tone="subdued" variant="bodySm">
-                          The Subscribe & Save widget is active on your cart page via theme app embed.
-                        </Text>
-                      </BlockStack>
-                    </InlineStack>
-
-                    <InlineStack gap="300" blockAlign="center">
-                      <Badge tone="success">✓</Badge>
-                      <BlockStack gap="100">
-                        <Text as="p" fontWeight="semibold">Checkout Extension Active</Text>
-                        <Text as="p" tone="subdued" variant="bodySm">
-                          The pickup scheduler extension reads subscription attributes and shows preferred day selector.
-                        </Text>
-                      </BlockStack>
-                    </InlineStack>
-
-                    <InlineStack gap="300" blockAlign="center">
-                      <Badge tone="success">✓</Badge>
-                      <BlockStack gap="100">
-                        <Text as="p" fontWeight="semibold">Order Webhook Processing</Text>
-                        <Text as="p" tone="subdued" variant="bodySm">
-                          Orders with subscription cart attributes are automatically detected and processed.
-                        </Text>
-                      </BlockStack>
-                    </InlineStack>
-                  </BlockStack>
-                </Box>
-
-                <Banner tone="warning" title="Action Required: Create Discount Codes">
-                  <BlockStack gap="200">
-                    <Text as="p">
-                      You need to create the following discount codes in Shopify Admin → Discounts for the subscription discounts to work:
-                    </Text>
-                    <Box padding="200" background="bg-surface" borderRadius="100">
-                      <BlockStack gap="100">
-                        <Text as="p" variant="bodyMd"><strong>SUBSCRIBE-WEEKLY-10</strong> — 10% off entire order</Text>
-                        <Text as="p" variant="bodyMd"><strong>SUBSCRIBE-BIWEEKLY-5</strong> — 5% off entire order</Text>
-                        <Text as="p" variant="bodyMd"><strong>SUBSCRIBE-TRIWEEKLY-3</strong> — 2.5% off entire order</Text>
-                      </BlockStack>
-                    </Box>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      These codes are automatically applied by the cart widget when customers select a subscription frequency.
-                    </Text>
-                  </BlockStack>
-                </Banner>
-              </BlockStack>
-
-              <Divider />
-
-              <BlockStack gap="200">
-                <Text as="h3" variant="headingSm">How It Works</Text>
-                <BlockStack gap="100">
-                  <Text as="p" variant="bodySm">
-                    1. <strong>Cart Page:</strong> Customer selects "Subscribe and Save" and chooses frequency (weekly, bi-weekly, or tri-weekly).
-                  </Text>
-                  <Text as="p" variant="bodySm">
-                    2. <strong>Discount Applied:</strong> The widget automatically applies the corresponding discount code to their cart.
-                  </Text>
-                  <Text as="p" variant="bodySm">
-                    3. <strong>Checkout:</strong> Customer selects their first pickup date and preferred day for future pickups.
-                  </Text>
-                  <Text as="p" variant="bodySm">
-                    4. <strong>Order Created:</strong> SSMA detects the subscription attributes and creates the subscription record with future pickups.
-                  </Text>
-                </BlockStack>
-              </BlockStack>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
         {/* SSMA Subscription Plan Groups */}
         <Layout.Section>
           <Card>
@@ -1396,14 +1345,23 @@ export default function SubscriptionsSettings() {
                 <Text as="h2" variant="headingMd">
                   Subscription Plan Groups
                 </Text>
-                <Button size="slim" onClick={() => openGroupModal()}>
-                  Add Plan Group
-                </Button>
+                <InlineStack gap="200">
+                  <Button
+                    size="slim"
+                    onClick={() => submit({ intent: "sync_discounts" }, { method: "post" })}
+                    loading={isLoading}
+                  >
+                    Sync All Discounts
+                  </Button>
+                  <Button size="slim" onClick={() => openGroupModal()}>
+                    Add Plan Group
+                  </Button>
+                </InlineStack>
               </InlineStack>
 
               <Text as="p" tone="subdued">
                 Each plan group contains delivery frequency options and associated products.
-                Different products can belong to different groups with different frequency options.
+                Discount codes are automatically created and managed in Shopify.
               </Text>
 
               {planGroups.length === 0 ? (
@@ -1471,7 +1429,14 @@ export default function SubscriptionsSettings() {
                                 ? freq.intervalCount === 1 ? "Every week" : `Every ${freq.intervalCount} weeks`
                                 : freq.intervalCount === 1 ? "Every month" : `Every ${freq.intervalCount} months`,
                               `${freq.discountPercent}%`,
-                              freq.discountCode || "—",
+                              <InlineStack key={`dc-${freq.id}`} gap="200" blockAlign="center">
+                                <span>{freq.discountCode || "—"}</span>
+                                {freq.discountCode && (freq as Record<string, unknown>).shopifyDiscountId ? (
+                                  <Badge tone="success" key={`ds-${freq.id}`}>Synced</Badge>
+                                ) : freq.discountCode ? (
+                                  <Badge tone="attention" key={`ds-${freq.id}`}>Not synced</Badge>
+                                ) : null}
+                              </InlineStack>,
                               freq.isActive ? (
                                 <Badge key={`fs-${freq.id}`} tone="success">Active</Badge>
                               ) : (
@@ -1566,222 +1531,6 @@ export default function SubscriptionsSettings() {
           </Card>
         </Layout.Section>
 
-        {/* Subscription Plans from Shopify */}
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingMd">
-                  Shopify Subscription Plans
-                </Text>
-                {sellingPlanGroups.length > 0 ? (
-                  <Badge tone="success">{`${sellingPlanGroups.length} group(s)`}</Badge>
-                ) : (
-                  <Badge tone="attention">Not Configured</Badge>
-                )}
-              </InlineStack>
-
-              <Text as="p" tone="subdued">
-                These are the Shopify selling plan groups in your store. Plans created by other apps
-                (like Shopify Subscriptions) are shown for reference but cannot be modified by SSMA.
-              </Text>
-
-              <Banner tone="info">
-                <BlockStack gap="100">
-                  <Text as="p" fontWeight="semibold">Note: SSMA now uses its own subscription system</Text>
-                  <Text as="p">
-                    The new cart-based subscription widget uses cart attributes and discount codes instead of Shopify selling plans.
-                    Existing selling plans from other apps will continue to work alongside the new system.
-                  </Text>
-                </BlockStack>
-              </Banner>
-
-              {usingLocalConfig && (
-                <Banner tone="info">
-                  Showing locally stored configuration. The selling plan group exists in Shopify
-                  but may not be fully synced. Your subscription plans are working correctly.
-                </Banner>
-              )}
-
-              {sellingPlanGroups.length === 0 ? (
-                <BlockStack gap="300">
-                  <Banner tone="warning">
-                    No selling plan groups found. Create one to enable subscriptions.
-                  </Banner>
-                  <Button
-                    variant="primary"
-                    onClick={handleCreateSellingPlans}
-                    loading={isLoading}
-                  >
-                    Create Subscribe & Save Plans
-                  </Button>
-                </BlockStack>
-              ) : (
-                <BlockStack gap="400">
-                  {sellingPlanGroups.map((group: SellingPlanGroupDetail) => (
-                    <Box
-                      key={group.id}
-                      padding="400"
-                      background="bg-surface-secondary"
-                      borderRadius="200"
-                    >
-                      <BlockStack gap="300">
-                        <InlineStack align="space-between" blockAlign="center">
-                          <BlockStack gap="100">
-                            <InlineStack gap="200" blockAlign="center">
-                              <Text as="h3" variant="headingSm">
-                                {group.name}
-                              </Text>
-                              {group.isOwnedByCurrentApp ? (
-                                <Badge tone="success">SSMA</Badge>
-                              ) : (
-                                <Badge tone="attention">External App</Badge>
-                              )}
-                            </InlineStack>
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              {group.productCount} product(s)
-                            </Text>
-                          </BlockStack>
-                          {group.isOwnedByCurrentApp && (
-                            <InlineStack gap="200">
-                              <Button
-                                size="slim"
-                                onClick={() => handleOpenProductPicker(group.id)}
-                              >
-                                Add Products
-                              </Button>
-                              <Button
-                                size="slim"
-                                onClick={() => handleOpenAddPlanModal(group.id)}
-                              >
-                                Add Plan
-                              </Button>
-                            </InlineStack>
-                          )}
-                        </InlineStack>
-
-                        {!group.isOwnedByCurrentApp && (
-                          <Banner tone="warning">
-                            This selling plan group was created by another app. SSMA cannot modify or delete these plans.
-                            To manage these plans, use the app that created them (e.g., Shopify Subscriptions).
-                          </Banner>
-                        )}
-
-                        <Divider />
-
-                        {/* Selling Plans */}
-                        {group.plans.length === 0 ? (
-                          <Text as="p" tone="subdued">
-                            No plans in this group.
-                          </Text>
-                        ) : (
-                          <DataTable
-                            columnContentTypes={["text", "text", "numeric", "text"]}
-                            headings={["Plan Name", "Frequency", "Discount", "Actions"]}
-                            rows={group.plans.map((plan) => [
-                              plan.name,
-                              formatFrequency(plan.interval, plan.intervalCount),
-                              plan.discountType === "PERCENTAGE"
-                                ? `${plan.discount}% off`
-                                : `$${plan.discount} off`,
-                              group.isOwnedByCurrentApp ? (
-                                <Button
-                                  key={plan.id}
-                                  size="slim"
-                                  tone="critical"
-                                  onClick={() => handleDeletePlan(group.id, plan.id, plan.name)}
-                                >
-                                  Delete
-                                </Button>
-                              ) : (
-                                <Text key={plan.id} as="span" tone="subdued">—</Text>
-                              ),
-                            ])}
-                          />
-                        )}
-
-                        <Divider />
-
-                        {/* Products Section */}
-                        <BlockStack gap="200">
-                          <InlineStack align="space-between" blockAlign="center">
-                            <Button
-                              variant="plain"
-                              onClick={() => toggleGroupProducts(group.id)}
-                              icon={expandedGroups.has(group.id) ? ChevronUpIcon : ChevronDownIcon}
-                            >
-                              {`${expandedGroups.has(group.id) ? "Hide" : "Show"} Products (${group.products?.length || 0})`}
-                            </Button>
-                          </InlineStack>
-
-                          <Collapsible
-                            open={expandedGroups.has(group.id)}
-                            id={`products-${group.id}`}
-                          >
-                            <Box paddingBlockStart="200">
-                              {!group.products || group.products.length === 0 ? (
-                                <Banner tone="info">
-                                  {group.isOwnedByCurrentApp
-                                    ? "No products in this group yet. Click \"Add Products\" to browse and add products."
-                                    : "No products in this group. Products are managed by the app that created this selling plan group."}
-                                </Banner>
-                              ) : (
-                                <BlockStack gap="200">
-                                  {group.products.map((product) => (
-                                    <Box
-                                      key={product.id}
-                                      padding="200"
-                                      background="bg-surface"
-                                      borderRadius="100"
-                                    >
-                                      <InlineStack align="space-between" blockAlign="center" gap="300">
-                                        <InlineStack gap="300" blockAlign="center">
-                                          {product.imageUrl ? (
-                                            <Thumbnail
-                                              source={product.imageUrl}
-                                              alt={product.imageAlt || product.title}
-                                              size="small"
-                                            />
-                                          ) : (
-                                            <Box
-                                              background="bg-surface-secondary"
-                                              padding="200"
-                                              borderRadius="100"
-                                            >
-                                              <Icon source={ImageIcon} tone="subdued" />
-                                            </Box>
-                                          )}
-                                          <Text as="span" variant="bodyMd">
-                                            {product.title}
-                                          </Text>
-                                        </InlineStack>
-                                        {group.isOwnedByCurrentApp && (
-                                          <Button
-                                            size="slim"
-                                            tone="critical"
-                                            icon={DeleteIcon}
-                                            onClick={() => handleRemoveProduct(group.id, product.id)}
-                                            accessibilityLabel={`Remove ${product.title}`}
-                                          />
-                                        )}
-                                      </InlineStack>
-                                    </Box>
-                                  ))}
-                                </BlockStack>
-                              )}
-                            </Box>
-                          </Collapsible>
-                        </BlockStack>
-                      </BlockStack>
-                    </Box>
-                  ))}
-                </BlockStack>
-              )}
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
-
         {/* Customer Subscription Management URL */}
         <Layout.Section>
           <Card>
@@ -1831,34 +1580,113 @@ export default function SubscriptionsSettings() {
           </Card>
         </Layout.Section>
 
-        {/* Manual Subscription Sync */}
+        <Layout.Section>
+          <Divider />
+        </Layout.Section>
+
+        {/* Advanced / Debug Section */}
         <Layout.Section>
           <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">
-                Manual Subscription Sync
-              </Text>
-              <Text as="p" tone="subdued">
-                If a subscription wasn't captured automatically, you can manually sync it by entering
-                the order number (e.g., #1829 or 1829) from the subscription order.
-              </Text>
-              <FormLayout>
-                <TextField
-                  label="Order Number"
-                  value={contractId}
-                  onChange={setContractId}
-                  placeholder="#1829 or 1829"
-                  autoComplete="off"
-                  helpText="The order number from the subscription order (found at the top of the order page)"
-                />
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">
+                  Advanced / Debug
+                </Text>
                 <Button
-                  onClick={handleManualSync}
-                  disabled={!contractId.trim()}
-                  loading={isLoading}
+                  variant="plain"
+                  onClick={() => setDebugSectionOpen(!debugSectionOpen)}
+                  icon={debugSectionOpen ? ChevronUpIcon : ChevronDownIcon}
                 >
-                  Sync Subscription
+                  {debugSectionOpen ? "Hide" : "Show"}
                 </Button>
-              </FormLayout>
+              </InlineStack>
+
+              <Collapsible open={debugSectionOpen} id="debug-section">
+                <BlockStack gap="500">
+                  {/* Manual Subscription Sync */}
+                  <Box paddingBlockStart="300">
+                    <BlockStack gap="300">
+                      <Text as="h3" variant="headingSm">Manual Subscription Sync</Text>
+                      <Text as="p" tone="subdued">
+                        If a subscription wasn't captured automatically, manually sync it by entering the order number.
+                      </Text>
+                      <FormLayout>
+                        <TextField
+                          label="Order Number"
+                          value={contractId}
+                          onChange={setContractId}
+                          placeholder="#1829 or 1829"
+                          autoComplete="off"
+                          helpText="The order number from the subscription order"
+                        />
+                        <Button
+                          onClick={handleManualSync}
+                          disabled={!contractId.trim()}
+                          loading={isLoading}
+                        >
+                          Sync Subscription
+                        </Button>
+                      </FormLayout>
+                    </BlockStack>
+                  </Box>
+
+                  <Divider />
+
+                  {/* How SSMA Works */}
+                  <BlockStack gap="300">
+                    <Text as="h3" variant="headingSm">How SSMA Subscriptions Work</Text>
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm">
+                        1. <strong>Cart Page:</strong> Customer selects "Subscribe and Save" and chooses frequency.
+                      </Text>
+                      <Text as="p" variant="bodySm">
+                        2. <strong>Discount Applied:</strong> The widget automatically applies the corresponding discount code.
+                      </Text>
+                      <Text as="p" variant="bodySm">
+                        3. <strong>Checkout:</strong> Customer selects their first pickup date and preferred day.
+                      </Text>
+                      <Text as="p" variant="bodySm">
+                        4. <strong>Order Created:</strong> SSMA detects subscription attributes and creates the subscription record.
+                      </Text>
+                    </BlockStack>
+                  </BlockStack>
+
+                  <Divider />
+
+                  {/* Shopify Selling Plans Reference */}
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="h3" variant="headingSm">Shopify Selling Plans (Legacy Reference)</Text>
+                      {sellingPlanGroups.length > 0 ? (
+                        <Badge>{`${sellingPlanGroups.length} group(s)`}</Badge>
+                      ) : (
+                        <Badge tone="attention">None</Badge>
+                      )}
+                    </InlineStack>
+                    <Text as="p" tone="subdued" variant="bodySm">
+                      SSMA now uses its own subscription system with cart attributes and discount codes.
+                      Existing selling plans from other apps are shown for reference only.
+                    </Text>
+                    {sellingPlanGroups.length > 0 && (
+                      <BlockStack gap="200">
+                        {sellingPlanGroups.map((group: SellingPlanGroupDetail) => (
+                          <Box key={group.id} padding="200" background="bg-surface-secondary" borderRadius="100">
+                            <InlineStack gap="200" blockAlign="center">
+                              <Text as="span" variant="bodySm" fontWeight="semibold">{group.name}</Text>
+                              <Badge>{`${group.plans.length} plan(s)`}</Badge>
+                              {group.isOwnedByCurrentApp ? (
+                                <Badge tone="success">SSMA</Badge>
+                              ) : (
+                                <Badge tone="attention">External</Badge>
+                              )}
+                            </InlineStack>
+                          </Box>
+                        ))}
+                      </BlockStack>
+                    )}
+                  </BlockStack>
+                </BlockStack>
+              </Collapsible>
             </BlockStack>
           </Card>
         </Layout.Section>
@@ -2183,12 +2011,12 @@ export default function SubscriptionsSettings() {
                 autoComplete="off"
               />
               <TextField
-                label="Discount Code"
+                label="Discount Code (auto-generated if blank)"
                 value={freqDiscountCode}
                 onChange={setFreqDiscountCode}
                 placeholder="e.g., SUBSCRIBE-WEEKLY-10"
                 autoComplete="off"
-                helpText="Shopify discount code applied by cart widget"
+                helpText="Leave blank to auto-generate. SSMA will create the discount code in Shopify automatically."
               />
             </FormLayout.Group>
             <Select
