@@ -2,6 +2,35 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-16 - Selling Plan Sync, Group Name, Pickup Date Timezone Fix
+
+**Selling Plan Ordering:**
+- Added `position` field to selling plans so product page shows correct order:
+  Weekly (1) → Bi-Weekly (2) → Tri-Weekly (3).
+- `syncSellingPlansFromSSMA` now sorts by intervalCount and passes position.
+
+**Selling Plan Group Name Sync:**
+- `syncSellingPlansFromSSMA` now updates the Shopify selling plan group name to match
+  the SSMA plan group name (e.g. "Subscribe & Save - Porch Pick Up").
+
+**Pickup Date Timezone Bug Fix:**
+- Human-readable dates like "Tuesday, February 24" were parsed as midnight UTC via
+  `new Date("February 24, 2026")`. In Pacific time, midnight UTC = previous day.
+  Fixed by re-constructing parsed dates with `T12:00:00` (noon) like the ISO format paths.
+- This also fixes `preferredDay` calculation and future pickup date generation since both
+  depend on the correctly parsed pickup date.
+
+**Auto-Sync Selling Plans:**
+- Adding or editing SSMA frequencies now auto-syncs selling plans to Shopify
+  (matching existing auto-sync for discount codes).
+
+**Files Modified:**
+- `app/services/selling-plans.server.ts` — Position field, group name sync, auto-sync
+- `app/routes/webhooks.orders.create.tsx` — Pickup date timezone fix
+- `app/routes/app.settings.subscriptions.tsx` — Sync selling plans button, auto-sync calls
+
+---
+
 ### 2026-02-16 - Fix Discount Sync: Percentage Format & Error Reporting
 
 **Bug Fix — Shopify discount codes not creating:**
