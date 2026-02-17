@@ -962,6 +962,127 @@ export async function deleteSellingPlan(
 }
 
 /**
+ * Sync Shopify Selling Plans from SSMA Subscription Plan Group frequencies.
+ *
+ * Compares SSMA plan group frequencies against the actual Shopify selling plans
+ * in the group and creates any that are missing (matched by interval + intervalCount).
+ *
+ * Returns a summary of what was added/already existed.
+ */
+export async function syncSellingPlansFromSSMA(
+  admin: AdminClient,
+  shop: string,
+): Promise<{ success: boolean; message: string; added: string[]; existing: string[]; errors: string[] }> {
+  const added: string[] = [];
+  const existing: string[] = [];
+  const errors: string[] = [];
+
+  // 1. Get the selling plan config (tells us which Shopify selling plan group to use)
+  const config = await prisma.sellingPlanConfig.findUnique({
+    where: { shop },
+  });
+
+  if (!config) {
+    // Try to ensure the selling plan group exists
+    try {
+      await ensureSellingPlanGroup(shop, admin);
+    } catch (err) {
+      return {
+        success: false,
+        message: "No selling plan group found and could not create one.",
+        added, existing, errors: [String(err)],
+      };
+    }
+    // Re-fetch config after creation
+    const newConfig = await prisma.sellingPlanConfig.findUnique({ where: { shop } });
+    if (!newConfig) {
+      return { success: false, message: "Failed to create selling plan config.", added, existing, errors };
+    }
+    return syncSellingPlansFromSSMAWithConfig(admin, shop, newConfig.sellingPlanGroupId);
+  }
+
+  return syncSellingPlansFromSSMAWithConfig(admin, shop, config.sellingPlanGroupId);
+}
+
+async function syncSellingPlansFromSSMAWithConfig(
+  admin: AdminClient,
+  shop: string,
+  shopifyGroupId: string,
+): Promise<{ success: boolean; message: string; added: string[]; existing: string[]; errors: string[] }> {
+  const added: string[] = [];
+  const existing: string[] = [];
+  const errors: string[] = [];
+
+  // 2. Get ALL SSMA plan group frequencies (active ones)
+  const ssmaGroups = await prisma.subscriptionPlanGroup.findMany({
+    where: { shop },
+    include: { frequencies: { where: { isActive: true } } },
+  });
+
+  const ssmaFrequencies = ssmaGroups.flatMap((g) => g.frequencies);
+
+  if (ssmaFrequencies.length === 0) {
+    return { success: true, message: "No active SSMA frequencies to sync.", added, existing, errors };
+  }
+
+  // 3. Get the current Shopify selling plans in the group
+  let shopifyPlans: Array<{ id: string; name: string; interval: string; intervalCount: number }>;
+  try {
+    shopifyPlans = await getSellingPlansInGroup(admin, shopifyGroupId);
+  } catch (err) {
+    return {
+      success: false,
+      message: `Failed to read Shopify selling plans: ${err}`,
+      added, existing, errors: [String(err)],
+    };
+  }
+
+  // 4. For each SSMA frequency, check if a matching Shopify selling plan exists
+  for (const freq of ssmaFrequencies) {
+    const matchingPlan = shopifyPlans.find(
+      (p) => p.interval === freq.interval && p.intervalCount === freq.intervalCount,
+    );
+
+    if (matchingPlan) {
+      existing.push(`${freq.name} (${getFrequencyLabel(freq.interval, freq.intervalCount)})`);
+      continue;
+    }
+
+    // Missing from Shopify — add it
+    const planName = `Deliver ${getFrequencyLabel(freq.interval, freq.intervalCount).toLowerCase()} (${freq.discountPercent}% off)`;
+    try {
+      const result = await addSellingPlanToGroup(
+        admin,
+        shop,
+        shopifyGroupId,
+        planName,
+        freq.intervalCount,
+        freq.discountPercent,
+        freq.interval,
+      );
+      if (result.success) {
+        added.push(planName);
+      } else {
+        errors.push(`${freq.name}: ${result.error}`);
+      }
+    } catch (err) {
+      errors.push(`${freq.name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  const parts = [];
+  if (added.length > 0) parts.push(`${added.length} added`);
+  if (existing.length > 0) parts.push(`${existing.length} already existed`);
+  if (errors.length > 0) parts.push(`${errors.length} failed`);
+
+  return {
+    success: errors.length === 0,
+    message: `Selling plans synced (${parts.join(", ")}).${added.length > 0 ? ` Added: ${added.join(", ")}` : ""}${errors.length > 0 ? ` Errors: ${errors.join("; ")}` : ""}`,
+    added, existing, errors,
+  };
+}
+
+/**
  * Helper to generate frequency label (uses shared formatting)
  */
 function getFrequencyLabel(interval: string, intervalCount: number): string {

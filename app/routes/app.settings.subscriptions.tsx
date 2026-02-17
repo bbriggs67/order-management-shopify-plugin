@@ -34,6 +34,7 @@ import {
   getAllSellingPlanGroups,
   addSellingPlanToGroup,
   deleteSellingPlan,
+  syncSellingPlansFromSSMA,
 } from "../services/selling-plans.server";
 import type { SellingPlanGroupDetail } from "../types/selling-plans";
 import { formatFrequency } from "../utils/formatting";
@@ -887,6 +888,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return json({ success: true, message: `All discount codes synced to Shopify${summary}` });
       }
 
+      case "sync_selling_plans": {
+        const spResult = await syncSellingPlansFromSSMA(admin, shop);
+        if (spResult.success) {
+          return json({ success: true, message: spResult.message });
+        }
+        return json({ error: spResult.message });
+      }
+
       case "register_webhooks": {
         const result = await registerAllWebhooks(admin);
 
@@ -1362,10 +1371,17 @@ export default function SubscriptionsSettings() {
                 <InlineStack gap="200">
                   <Button
                     size="slim"
+                    onClick={() => submit({ intent: "sync_selling_plans" }, { method: "post" })}
+                    loading={isLoading}
+                  >
+                    Sync Selling Plans
+                  </Button>
+                  <Button
+                    size="slim"
                     onClick={() => submit({ intent: "sync_discounts" }, { method: "post" })}
                     loading={isLoading}
                   >
-                    Sync All Discounts
+                    Sync Discounts
                   </Button>
                   <Button size="slim" onClick={() => openGroupModal()}>
                     Add Plan Group
