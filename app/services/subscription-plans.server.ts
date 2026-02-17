@@ -62,7 +62,7 @@ export async function getActivePlanGroups(shop: string) {
     include: {
       frequencies: {
         where: { isActive: true },
-        orderBy: { sortOrder: "asc" },
+        orderBy: [{ sortOrder: "asc" }, { intervalCount: "asc" }],
       },
       products: true,
     },

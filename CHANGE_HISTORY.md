@@ -2,6 +2,44 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-16 - Critical Subscription Pipeline Fixes
+
+**Root Cause Analysis:** Identified 3 compounding issues causing subscriptions to not
+appear in SSMA after live test orders.
+
+**Fix 1: Webhook note_attributes intermittently missing (known Shopify bug)**
+- Shopify's `orders/create` webhook intermittently omits `note_attributes` when set
+  via `/cart/update.js` (documented issue in Shopify developer forums).
+- Added fallback: if webhook payload has no/incomplete attributes, re-fetch the order
+  from Shopify GraphQL `customAttributes` before processing.
+
+**Fix 2: Subscriptions page queried Shopify Contracts for SSMA-native subscriptions**
+- The subscriptions list page (`app.subscriptions._index.tsx`) tried to fetch
+  `SubscriptionContract` data from Shopify for every subscription — but SSMA-created
+  subscriptions store order GIDs, not contract GIDs. Shopify returned null, causing
+  empty product/price/frequency columns.
+- Now only queries Shopify for actual `SubscriptionContract` GIDs.
+- SSMA-native subscriptions show frequency/discount from the local DB instead.
+
+**Fix 3: Frequency ordering on product page widget**
+- All subscription plan frequencies had `sortOrder: 0` (default), causing
+  unpredictable display order.
+- Added `intervalCount` as secondary sort in `getActivePlanGroups()` so
+  Weekly (1) < Bi-Weekly (2) < Tri-Weekly (3) always.
+
+**Fix 4: Test Subscription debug tool**
+- New debug page at `/app/debug/test-subscription` creates test SubscriptionPickup
+  records and future pickups WITHOUT requiring a live Shopify order.
+- Allows validating the full subscription pipeline before live testing.
+
+**Files Modified:**
+- `app/routes/webhooks.orders.create.tsx` — Re-fetch attributes fallback
+- `app/routes/app.subscriptions._index.tsx` — SSMA-native subscription display
+- `app/services/subscription-plans.server.ts` — intervalCount secondary sort
+- `app/routes/app.debug.test-subscription.tsx` — NEW: test subscription tool
+
+---
+
 ### 2026-02-16 - SSMA Product Page Subscription Widget
 
 **Replaces Shopify's native selling plan selector** on the product page with an

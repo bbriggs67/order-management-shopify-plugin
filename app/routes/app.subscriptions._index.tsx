@@ -39,11 +39,23 @@ interface SubscriptionWithShopifyData {
   preferredDay: number;
   nextPickupDate: string | null;
   discountPercent: number;
-  // Shopify data
+  // Shopify data (may be null for SSMA-native subscriptions)
   lines: ContractLineItem[];
   deliveryPolicy: ContractDeliveryPolicy | null;
   totalPrice: string;
   currencyCode: string;
+  // SSMA source indicator
+  isSSMANative: boolean;
+}
+
+/** Convert SSMA frequency enum to human-readable label */
+function getSSMAFrequencyLabel(frequency: string): string {
+  switch (frequency) {
+    case "WEEKLY": return "Every week";
+    case "BIWEEKLY": return "Every 2 weeks";
+    case "TRIWEEKLY": return "Every 3 weeks";
+    default: return frequency;
+  }
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -55,12 +67,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     orderBy: { nextPickupDate: "asc" },
   });
 
-  // Batch fetch all Shopify contract details in a single query (fixes N+1 problem)
-  const contractIds = subscriptions.map((sub) => sub.shopifyContractId);
-  const contractDetailsMap = await getContractDetailsBatch(admin, contractIds);
+  // Only query Shopify for actual Subscription Contract GIDs (not order GIDs)
+  // SSMA-native subscriptions store order GIDs in shopifyContractId, which
+  // start with "gid://shopify/Order/" instead of "gid://shopify/SubscriptionContract/"
+  const shopifyContractIds = subscriptions
+    .map((sub) => sub.shopifyContractId)
+    .filter((id) => id.includes("SubscriptionContract"));
 
-  // Map subscription data with Shopify contract details
+  const contractDetailsMap = shopifyContractIds.length > 0
+    ? await getContractDetailsBatch(admin, shopifyContractIds)
+    : new Map();
+
+  // Map subscription data with Shopify contract details (or SSMA-native data)
   const subscriptionsWithDetails: SubscriptionWithShopifyData[] = subscriptions.map((sub) => {
+    const isSSMANative = !sub.shopifyContractId.includes("SubscriptionContract");
     const contractDetails = contractDetailsMap.get(sub.shopifyContractId);
 
     return {
@@ -74,11 +94,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       preferredDay: sub.preferredDay,
       nextPickupDate: sub.nextPickupDate?.toISOString() || null,
       discountPercent: sub.discountPercent,
-      // Shopify data
+      // Shopify data (empty for SSMA-native subscriptions)
       lines: contractDetails?.lines || [],
       deliveryPolicy: contractDetails?.deliveryPolicy || null,
       totalPrice: contractDetails?.pricingSummary?.totalPrice?.amount || "0.00",
       currencyCode: contractDetails?.pricingSummary?.totalPrice?.currencyCode || "USD",
+      isSSMANative,
     };
   });
 
@@ -280,10 +301,21 @@ export default function SubscriptionsIndex() {
   });
 
   const tableRows = filteredSubscriptions.map((sub) => [
-    sub.customerName,
-    renderProductCell(sub.lines),
-    formatCurrency(sub.totalPrice, sub.currencyCode),
-    getDeliveryFrequencyLabel(sub.deliveryPolicy),
+    <BlockStack gap="0" key={`name-${sub.id}`}>
+      <Text as="span" fontWeight="medium">{sub.customerName}</Text>
+      {sub.shopifyOrderNumber && (
+        <Text as="span" tone="subdued" variant="bodySm">{sub.shopifyOrderNumber}</Text>
+      )}
+    </BlockStack>,
+    sub.lines.length > 0
+      ? renderProductCell(sub.lines)
+      : <Text as="span" tone="subdued">SSMA Subscription</Text>,
+    sub.lines.length > 0
+      ? formatCurrency(sub.totalPrice, sub.currencyCode)
+      : `${sub.discountPercent}% off`,
+    sub.deliveryPolicy
+      ? getDeliveryFrequencyLabel(sub.deliveryPolicy)
+      : getSSMAFrequencyLabel(sub.frequency),
     formatDate(sub.nextPickupDate),
     getStatusBadge(sub.status),
     <Button

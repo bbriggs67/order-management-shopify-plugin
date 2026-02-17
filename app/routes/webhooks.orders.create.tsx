@@ -130,8 +130,55 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Extract pickup attributes from the order
   // Try both note_attributes (REST API) and check for any custom attributes format
-  const attributes = order.note_attributes || [];
-  console.log(`Found ${attributes.length} note_attributes`);
+  let attributes: OrderAttribute[] = order.note_attributes || [];
+  console.log(`Found ${attributes.length} note_attributes from webhook payload`);
+
+  // WORKAROUND: Shopify webhooks intermittently omit note_attributes (known bug).
+  // If we got zero attributes or are missing expected SSMA keys, re-fetch the order
+  // from Shopify REST API to get the complete data.
+  const hasSSMAAttrs = attributes.some((a) =>
+    a.name === ATTR_SUBSCRIPTION_ENABLED || a.name === ATTR_PICKUP_DATE
+  );
+
+  if (attributes.length === 0 || !hasSSMAAttrs) {
+    console.log(`note_attributes missing or incomplete in webhook payload, re-fetching order ${order.id} from Shopify REST API`);
+    try {
+      const { admin: restAdmin } = await unauthenticated.admin(shop);
+      const refetchResponse = await restAdmin.graphql(`
+        query getOrderAttributes($orderId: ID!) {
+          order(id: $orderId) {
+            id
+            customAttributes {
+              key
+              value
+            }
+          }
+        }
+      `, {
+        variables: {
+          orderId: order.admin_graphql_api_id,
+        },
+      });
+
+      const refetchData = await refetchResponse.json();
+      const customAttrs = refetchData.data?.order?.customAttributes || [];
+      console.log(`Re-fetched ${customAttrs.length} customAttributes from GraphQL:`, JSON.stringify(customAttrs));
+
+      if (customAttrs.length > 0) {
+        // GraphQL uses "key"/"value", convert to webhook format "name"/"value"
+        attributes = customAttrs.map((a: { key: string; value: string }) => ({
+          name: a.key,
+          value: a.value || "",
+        }));
+        console.log(`Using re-fetched attributes (${attributes.length} total)`);
+      } else {
+        console.log(`Re-fetch also returned no attributes — order may genuinely have none`);
+      }
+    } catch (refetchError) {
+      console.error(`Failed to re-fetch order attributes:`, refetchError);
+      // Continue with whatever we have from the webhook
+    }
+  }
 
   const getAttr = (key: string) => {
     // Shopify REST API uses "name" for the attribute key, not "key"
@@ -148,7 +195,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const pickupTimeSlot = getAttr(ATTR_PICKUP_TIME);
   const pickupLocationId = getAttr(ATTR_PICKUP_LOCATION_ID);
 
-  // NEW: Check for SSMA-owned subscription via cart attributes (primary method)
+  // Check for SSMA-owned subscription via cart attributes (primary method)
   const subscriptionEnabledAttr = getAttr(ATTR_SUBSCRIPTION_ENABLED);
   const subscriptionFrequencyAttr = getAttr(ATTR_SUBSCRIPTION_FREQUENCY);
   const subscriptionPreferredDayAttr = getAttr(ATTR_SUBSCRIPTION_PREFERRED_DAY);
