@@ -9,17 +9,15 @@ npm install
 npm run dev                      # Local dev (requires Shopify CLI)
 npm run build                    # Build for production
 npx shopify app deploy --config shopify.app.susies-sourdough-manager.toml
-npx shopify app release --version=VERSION --config shopify.app.susies-sourdough-manager.toml --allow-updates
 ```
 
 ## Project Overview
 
-Shopify app for managing sourdough bread subscriptions with local pickup scheduling. Built for a small bakery (Susie's Sourdough) with 17 existing subscribers.
+Shopify app for managing sourdough bread subscriptions with local pickup scheduling. Built for a small bakery (Susie's Sourdough).
 
 - Weekly/bi-weekly/tri-weekly subscription plans with discounts
 - Customer self-service subscription portal
 - Pickup date/time scheduling on cart page
-- Configurable pickup days, time slots, blackout dates
 - Order management dashboard
 
 ## Architecture
@@ -36,8 +34,7 @@ app/routes/apps.*.tsx    → App proxy routes (customer-facing)
 app/routes/api.*.tsx     → Internal API endpoints
 app/routes/webhooks.*.tsx→ Webhook handlers
 app/services/            → Business logic
-app/utils/               → Helpers (timezone, validation, constants)
-extensions/              → Theme extensions (pickup scheduler, subscribe widget)
+extensions/              → Theme extensions (pickup scheduler, subscribe widgets)
 prisma/schema.prisma     → Database schema
 ```
 
@@ -50,57 +47,66 @@ prisma/schema.prisma     → Database schema
 | `shopify-discounts.server.ts` | Auto-create/sync discount codes in Shopify |
 | `selling-plans.server.ts` | Shopify Selling Plan Groups integration |
 | `pickup-availability.server.ts` | Available dates/times calculation |
-| `order-management.server.ts` | Order sync with Shopify |
 | `google-calendar.server.ts` | Calendar event sync |
-| `migration.server.ts` | Import existing orders/subscriptions |
+
+## Subscription Flow (SSMA-Controlled)
+
+**Product page** → SSMA widget shows "One-time purchase" + "Subscribe & Save" options
+→ Customer selects frequency → clicks Add to Cart
+→ Widget intercepts submit → `/cart/add.js` → `/cart/update.js` (sets SSMA attributes) → applies discount code → navigates to `/cart`
+→ **Cart page** → only date/time picker (subscription widget skips since attributes set)
+→ **Checkout** → webhook reads SSMA cart attributes → creates subscription
+
+**Two theme extension widgets:**
+- `subscribe-save-product.js/liquid` — Product page (primary subscription selector)
+- `subscribe-save.js/liquid` — Cart page (fallback + date/time picker support)
+
+Cart widget auto-skips when SSMA attributes already set from product page.
+
+**Webhook fallback**: Shopify intermittently omits `note_attributes` from `orders/create` webhook (known bug). Webhook re-fetches order via GraphQL when attributes are missing.
 
 ## Important Notes
 
-1. **Timezone**: All dates use Pacific Time (`America/Los_Angeles`). See `app/utils/timezone.server.ts`.
-2. **Selling Plan Scopes**: `read/write_selling_plan_groups` scopes do NOT exist. Use `write_products`.
-3. **Theme Extension Caching**: Shopify CDN caches assets. Clear browser cache after deploy.
-4. **App Proxy**: Configured at `/apps/my-subscription`. Shopify strips subpath when forwarding.
-5. **Test Store**: `aheajv-fg.myshopify.com` (TEST theme). **Live Store**: `susiessourdough.com`
-6. **Webhook attributes**: Shopify REST webhooks use `name` (not `key`) for note_attributes.
-7. **Date parsing**: Checkout extension formats dates as "Wednesday, February 25" (no year). Webhook handler infers year.
+1. **Timezone**: All dates use Pacific Time. Use `T12:00:00` (noon) when constructing dates to avoid UTC midnight → Pacific previous-day bug.
+2. **Theme Extension schema**: Block `name` max 25 characters.
+3. **Shopify discounts**: `discountCodeBasicCreate` requires POSITIVE decimal (0.1 for 10%).
+4. **Frequency ordering**: `getActivePlanGroups()` sorts by `[sortOrder, intervalCount]`. All frequencies default to `sortOrder: 0`, so `intervalCount` is the effective sort.
+5. **Subscriptions page**: Only queries Shopify SubscriptionContract API for actual contract GIDs. SSMA-native subscriptions display frequency/discount from local DB.
+6. **App Proxy**: Configured at `/apps/my-subscription`. Shopify strips subpath when forwarding.
+7. **Test Store**: `aheajv-fg.myshopify.com`. **Live Store**: `susiessourdough.com`
+8. **Webhook attributes**: Shopify REST webhooks use `name` (not `key`) for note_attributes.
+
+## SSMA Subscription Plan Groups (v2)
+
+- `SubscriptionPlanGroup` → name, billingLeadHours, isActive
+- `SubscriptionPlanFrequency` → interval, discount, discount code, shopifyDiscountId
+- `SubscriptionPlanProduct` → shopifyProductId, title, imageUrl
+- API: `/apps/my-subscription/selling-plans?shop=...` returns groups + flat plans
+- Auto-sync: Adding/updating frequencies auto-creates discount codes and selling plans
+- Settings UI at `app.settings.subscriptions.tsx` (plan groups, sync buttons, billing management)
+
+## Debug Tools
+
+- `/app/debug/test-subscription` — Create test subscriptions without live orders
+- `/app/debug/subscriptions` — View raw subscription data
+- Settings page → Advanced/Debug section
 
 ## Database Migrations
 
 ```bash
 npx prisma migrate dev --name migration_name   # Local
 npx prisma migrate deploy                       # Production (Railway runs this)
-npx prisma generate                             # Regenerate client
 ```
 
 ## Deploying
 
 1. Commit and push to `funny-leakey` → Railway auto-deploys backend
-2. Theme extension changes also need: `npx shopify app deploy` + `npx shopify app release`
-
-## Known Issues (Resolved)
-
-- **Duplicate subscription widgets**: Caused by products in multiple Selling Plan Groups. Fixed by consolidating to one group per product.
-- **COD + subscriptions incompatible**: Disabled COD. Shopify requires auto-chargeable payment methods for subscriptions.
-- **Shopify Functions**: Payment customization functions require Shopify Plus ($399/mo). Not available on Basic plan.
-
-## SSMA Subscription Plan Groups (v2)
-
-Group-based subscription model (replaces flat `SubscriptionPlan`):
-- `SubscriptionPlanGroup` → contains name, billingLeadHours, isActive
-- `SubscriptionPlanFrequency` → child of group (interval, discount, discount code, shopifyDiscountId)
-- `SubscriptionPlanProduct` → child of group (shopifyProductId, title, imageUrl)
-- App proxy: `/apps/my-subscription/selling-plans?shop=...` returns groups + flat plans for cart widget
-- Settings UI: Plan Groups at top, debug/legacy sections collapsed at bottom
-- Auto-discount sync: Adding/updating frequencies auto-creates Shopify discount codes
-- Cart widget: Dynamically fetches plans from API, applies/removes discount codes programmatically
-- Cart widget conflict prevention: If cart items have `selling_plan_allocation` (subscription selected on product page), SSMA widget skips injection — avoids duplicate Subscribe & Save UI
-- Service: `subscription-plans.server.ts` — full CRUD, `ensureDefaultPlanGroups()` seeds on first load
+2. Theme extension changes also need: `npx shopify app deploy --force --config shopify.app.susies-sourdough-manager.toml`
 
 ## Polaris Gotchas
 
 - `Badge` does NOT have `tone="subdued"` — use no tone for neutral
 - `InlineStack` uses `blockAlign` not `blockAlignment`
-- Numbers in Badge/Button children must be template literals (`` `${count}` ``)
 
 ## Related Docs
 
