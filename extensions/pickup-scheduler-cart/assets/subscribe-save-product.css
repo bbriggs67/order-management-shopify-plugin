@@ -1,5 +1,14 @@
 /* Subscribe & Save - Product Page Widget Styles */
 
+/*
+ * Hide Shopify's native selling plan selector when SSMA widget is active.
+ * SSMA replaces the native UI with its own subscription widget.
+ * These selectors cover Dawn and most Shopify themes.
+ */
+.ssma-native-selling-plan-hidden {
+  display: none !important;
+}
+
 .ssma-product-widget {
   margin: 1.5rem 0;
   font-family: inherit;

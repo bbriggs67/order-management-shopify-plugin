@@ -168,6 +168,9 @@
         return;
       }
 
+      // Hide Shopify's native selling plan selector — SSMA replaces it
+      this.hideNativeSellingPlanSelector();
+
       // Create widget
       this.container = this.createWidgetElement();
 
@@ -181,6 +184,95 @@
       this.restoreSelection();
 
       console.log('Subscribe & Save Product: Widget injected successfully');
+    }
+
+    /**
+     * Hide Shopify's native selling plan selector.
+     * The native selector appears automatically when selling plans are attached
+     * to a product. We hide it so only the SSMA widget shows.
+     * Uses multiple strategies to find and hide it across different themes.
+     */
+    hideNativeSellingPlanSelector() {
+      const selectors = [
+        // Dawn theme and common themes
+        '.product-form__input[data-selling-plan-group]',
+        '.selling-plan-group',
+        'selling-plan-widget',
+        '.selling_plan_theme_integration',
+        // Fieldset containing selling plan radios
+        'fieldset:has(input[name*="selling_plan"])',
+        'fieldset:has(input[data-selling-plan-id])',
+        'fieldset:has([data-radio-type="selling_plan"])',
+        // Container with selling plan hidden input
+        '.product-form__selling-plan',
+        // Generic: any element with selling-plan in data attributes
+        '[data-selling-plan-group]',
+      ];
+
+      let hidden = 0;
+
+      for (const selector of selectors) {
+        try {
+          const elements = document.querySelectorAll(selector);
+          elements.forEach(el => {
+            // Don't hide our own widget
+            if (el.id === 'subscribe-save-product-widget' || el.closest('#subscribe-save-product-widget')) return;
+            el.classList.add('ssma-native-selling-plan-hidden');
+            hidden++;
+          });
+        } catch (e) {
+          // :has() not supported in older browsers — skip that selector
+        }
+      }
+
+      // Fallback: find any fieldset/div in the product form that contains
+      // "One-time purchase" text and selling plan options but is NOT our widget
+      if (hidden === 0 && this.productForm) {
+        const allFieldsets = this.productForm.querySelectorAll('fieldset, .product-form__input');
+        allFieldsets.forEach(el => {
+          if (el.id === 'subscribe-save-product-widget' || el.closest('#subscribe-save-product-widget')) return;
+
+          const text = el.textContent || '';
+          // Check if this element contains selling plan related text
+          if (
+            (text.includes('One-time purchase') || text.includes('Subscribe')) &&
+            (el.querySelector('input[name*="selling_plan"]') ||
+             el.querySelector('[data-selling-plan-id]') ||
+             el.querySelector('[data-radio-type]'))
+          ) {
+            el.classList.add('ssma-native-selling-plan-hidden');
+            hidden++;
+          }
+        });
+      }
+
+      // Last resort: hide by looking for the selling plan hidden input and its parent container
+      if (hidden === 0) {
+        const sellingPlanInput = this.productForm?.querySelector('input[name="selling_plan"]');
+        if (sellingPlanInput) {
+          // Walk up to find the visible container
+          let parent = sellingPlanInput.parentElement;
+          while (parent && parent !== this.productForm) {
+            // Check if this parent looks like a selling plan container
+            const text = parent.textContent || '';
+            if (
+              (text.includes('One-time purchase') || text.includes('Subscribe')) &&
+              parent.querySelector('input[type="radio"]')
+            ) {
+              parent.classList.add('ssma-native-selling-plan-hidden');
+              hidden++;
+              break;
+            }
+            parent = parent.parentElement;
+          }
+        }
+      }
+
+      if (hidden > 0) {
+        console.log(`Subscribe & Save Product: Hidden ${hidden} native selling plan element(s)`);
+      } else {
+        console.log('Subscribe & Save Product: No native selling plan selector found to hide');
+      }
     }
 
     createWidgetElement() {
