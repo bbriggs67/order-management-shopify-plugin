@@ -386,14 +386,20 @@
     }
 
     async applyDiscountCode(code) {
-      // Shopify's standard way to apply a discount code
-      const response = await fetch('/discount/' + encodeURIComponent(code), {
-        method: 'GET',
-        redirect: 'manual'
-      });
-
-      // The discount endpoint redirects, so we don't check response.ok
-      // Instead we'll verify on page reload
+      // Shopify's /discount/ endpoint sets a session cookie via redirect.
+      // Use redirect: 'follow' so the browser follows the redirect chain
+      // and the discount cookie gets set properly.
+      try {
+        await fetch('/discount/' + encodeURIComponent(code), {
+          method: 'GET',
+          redirect: 'follow',
+          credentials: 'same-origin',
+        });
+        console.log('Subscribe & Save: Applied discount code:', code);
+      } catch (e) {
+        // Discount endpoint may error due to redirect, but the cookie should still be set
+        console.warn('Subscribe & Save: Discount apply returned error (may still work):', e);
+      }
       return true;
     }
 

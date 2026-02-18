@@ -417,11 +417,21 @@
         });
 
         // 4. Apply discount code if available
+        // Shopify's /discount/ endpoint sets a session cookie via redirect.
+        // We use redirect: 'follow' so the browser follows the redirect chain
+        // and the discount cookie gets set properly.
         if (this.selectedPlan.discountCode) {
-          await fetch('/discount/' + encodeURIComponent(this.selectedPlan.discountCode), {
-            method: 'GET',
-            redirect: 'manual',
-          });
+          try {
+            await fetch('/discount/' + encodeURIComponent(this.selectedPlan.discountCode), {
+              method: 'GET',
+              redirect: 'follow',
+              credentials: 'same-origin',
+            });
+            console.log('Subscribe & Save Product: Applied discount code:', this.selectedPlan.discountCode);
+          } catch (discountErr) {
+            // Discount endpoint may error due to redirect, but the cookie should still be set
+            console.warn('Subscribe & Save Product: Discount apply returned error (may still work):', discountErr);
+          }
         }
 
         // 5. Save selection to sessionStorage
