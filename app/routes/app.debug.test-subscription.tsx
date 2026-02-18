@@ -328,7 +328,7 @@ export default function TestSubscription() {
                     s.frequency,
                     DAY_NAMES[s.preferredDay] || "?",
                     s.nextPickupDate
-                      ? new Date(s.nextPickupDate).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+                      ? new Date(s.nextPickupDate).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric" })
                       : "—",
                     s.status,
                   ])}
@@ -351,7 +351,7 @@ export default function TestSubscription() {
                   rows={recentPickups.map((p) => [
                     p.orderNumber || "—",
                     p.customerName,
-                    new Date(p.pickupDate).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }),
+                    new Date(p.pickupDate).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric" }),
                     p.pickupTimeSlot,
                     p.pickupStatus,
                   ])}

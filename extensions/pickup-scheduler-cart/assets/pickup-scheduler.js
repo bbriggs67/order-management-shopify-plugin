@@ -380,11 +380,13 @@
       selectedDate = dateStr;
       const dateData = availableDates.find(d => d.date === dateStr);
 
-      // Format display date
+      // Format display date - include ISO date in parentheses for reliable webhook parsing
+      // e.g. "Tuesday, February 24 (2026-02-24)"
       const dateObj = new Date(dateStr + 'T12:00:00');
       const displayDate = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+      const displayWithISO = (dateData ? dateData.displayDate : displayDate) + ' (' + dateStr + ')';
 
-      if (dateInput) dateInput.value = dateData ? dateData.displayDate : displayDate;
+      if (dateInput) dateInput.value = displayWithISO;
 
       // Update calendar UI
       document.querySelectorAll('.calendar-day--selected').forEach(el => {

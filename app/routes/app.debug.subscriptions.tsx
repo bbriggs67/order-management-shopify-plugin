@@ -1135,7 +1135,7 @@ export default function SubscriptionDebugPage() {
                           {contract.status}
                         </Badge>
                         <Text as="span" tone="subdued">
-                          Created: {new Date(contract.createdAt).toLocaleDateString()}
+                          Created: {new Date(contract.createdAt).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles" })}
                         </Text>
                       </InlineStack>
                     </List.Item>
@@ -1167,7 +1167,7 @@ export default function SubscriptionDebugPage() {
                           <Badge tone={sub.status === "ACTIVE" ? "success" : "warning"}>{sub.status}</Badge>
                           <Text as="span" tone="subdued">{sub.frequency}</Text>
                           <Text as="span" tone="subdued">
-                            Next: {sub.nextPickupDate ? new Date(sub.nextPickupDate).toLocaleDateString() : "N/A"}
+                            Next: {sub.nextPickupDate ? new Date(sub.nextPickupDate).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles" }) : "N/A"}
                           </Text>
                         </InlineStack>
                       </List.Item>
@@ -1192,7 +1192,7 @@ export default function SubscriptionDebugPage() {
                           <Text as="span" fontWeight="semibold">{pickup.customerName}</Text>
                           <Badge>{pickup.shopifyOrderNumber}</Badge>
                           <Text as="span" tone="subdued">
-                            {new Date(pickup.pickupDate).toLocaleDateString()}
+                            {new Date(pickup.pickupDate).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles" })}
                           </Text>
                           <Badge tone={pickup.pickupStatus === "SCHEDULED" ? "info" : "success"}>
                             {pickup.pickupStatus}

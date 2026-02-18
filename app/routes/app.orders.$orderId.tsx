@@ -42,10 +42,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Order ID required", { status: 400 });
   }
 
+  // orderId from URL can be either the Shopify GraphQL ID (gid://shopify/Order/...)
+  // or the internal database ID. Try shopifyOrderId first, then fall back to id.
+  const decodedOrderId = decodeURIComponent(orderId);
   const pickup = await prisma.pickupSchedule.findFirst({
     where: {
       shop,
-      id: orderId,
+      shopifyOrderId: decodedOrderId,
     },
     include: {
       orderItems: true,
@@ -93,8 +96,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const action = formData.get("_action") as string;
 
+  const decodedOrderId = decodeURIComponent(orderId);
   const pickup = await prisma.pickupSchedule.findFirst({
-    where: { shop, id: orderId },
+    where: { shop, shopifyOrderId: decodedOrderId },
   });
 
   if (!pickup) {
@@ -110,7 +114,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     await prisma.pickupSchedule.update({
-      where: { id: orderId },
+      where: { id: pickup.id },
       data: { pickupStatus: newStatus as any },
     });
 
@@ -284,7 +288,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const notes = formData.get("notes") as string;
 
     await prisma.pickupSchedule.update({
-      where: { id: orderId },
+      where: { id: pickup.id },
       data: { notes },
     });
 
@@ -293,7 +297,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (action === "resendNotification") {
     try {
-      await sendReadyNotification(orderId, shop);
+      await sendReadyNotification(pickup.id, shop);
       return json({ success: true, message: "Notification sent" });
     } catch (error) {
       console.error("Failed to send notification:", error);
@@ -314,7 +318,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     // Get the pickup with subscription info
     const pickupWithSub = await prisma.pickupSchedule.findFirst({
-      where: { shop, id: orderId },
+      where: { shop, id: pickup.id },
       include: { subscriptionPickup: true },
     });
 
@@ -339,7 +343,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     await prisma.$transaction(async (tx) => {
       // Update pickup status
       await tx.pickupSchedule.update({
-        where: { id: orderId },
+        where: { id: pickup.id },
         data: {
           pickupStatus: "CANCELLED",
           notes: pickupWithSub.notes
@@ -396,6 +400,7 @@ export default function OrderDetail() {
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString("en-US", {
+      timeZone: "America/Los_Angeles",
       weekday: "long",
       year: "numeric",
       month: "long",
@@ -406,6 +411,7 @@ export default function OrderDetail() {
   const formatDateTime = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleString("en-US", {
+      timeZone: "America/Los_Angeles",
       month: "short",
       day: "numeric",
       hour: "numeric",

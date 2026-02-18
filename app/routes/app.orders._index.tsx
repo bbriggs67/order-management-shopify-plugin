@@ -166,6 +166,7 @@ export default function OrdersIndex() {
   const formatDate = (dateInput: string | Date) => {
     const date = typeof dateInput === "string" ? new Date(dateInput) : dateInput;
     return date.toLocaleDateString("en-US", {
+      timeZone: "America/Los_Angeles",
       weekday: "short",
       month: "short",
       day: "numeric",

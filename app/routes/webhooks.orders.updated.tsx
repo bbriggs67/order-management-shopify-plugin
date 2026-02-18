@@ -154,22 +154,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } else {
         // Format: "Wednesday, February 25" - need to infer year
         const currentYear = new Date().getFullYear();
-        const dateWithYear = `${pickupDateRaw}, ${currentYear}`;
-        let parsedDate = new Date(dateWithYear);
 
-        if (isNaN(parsedDate.getTime())) {
-          // Try removing day name
-          const withoutDayName = pickupDateRaw.replace(/^[A-Za-z]+,\s*/, "");
-          parsedDate = new Date(`${withoutDayName}, ${currentYear}`);
+        // Remove day name prefix to get just "February 25"
+        const withoutDayName = pickupDateRaw.replace(/^[A-Za-z]+,\s*/, "");
+
+        let tempDate = new Date(`${withoutDayName}, ${currentYear}`);
+        if (isNaN(tempDate.getTime())) {
+          tempDate = new Date(`${pickupDateRaw}, ${currentYear}`);
         }
 
-        if (!isNaN(parsedDate.getTime())) {
+        if (!isNaN(tempDate.getTime())) {
           // If date is more than 7 days in past, assume next year
           const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-          if (parsedDate < weekAgo) {
-            parsedDate.setFullYear(currentYear + 1);
+          if (tempDate < weekAgo) {
+            tempDate.setFullYear(currentYear + 1);
           }
-          newPickupDate = parsedDate;
+
+          // Re-construct date with noon to avoid UTC midnight → Pacific previous-day issue
+          const month = String(tempDate.getMonth() + 1).padStart(2, "0");
+          const day = String(tempDate.getDate()).padStart(2, "0");
+          const year = tempDate.getFullYear();
+          newPickupDate = new Date(`${year}-${month}-${day}T12:00:00`);
+          console.log(`orders/updated: Parsed date from human-readable: ${newPickupDate}`);
         }
       }
     }

@@ -238,6 +238,7 @@ export default function SubscriptionsIndex() {
     if (!dateString) return "—";
     const date = new Date(dateString);
     return date.toLocaleDateString("en-US", {
+      timeZone: "America/Los_Angeles",
       month: "short",
       day: "numeric",
       year: "numeric",
