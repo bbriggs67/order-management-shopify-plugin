@@ -1070,8 +1070,8 @@ async function syncSellingPlansFromSSMAWithConfig(
     };
   }
 
-  // 4. Sort SSMA frequencies by intervalCount so position values are ordered correctly
-  const sortedFrequencies = [...ssmaFrequencies].sort((a, b) => a.intervalCount - b.intervalCount);
+  // 4. Sort SSMA frequencies by sortOrder (then intervalCount as fallback) so position values match SSMA display order
+  const sortedFrequencies = [...ssmaFrequencies].sort((a, b) => a.sortOrder - b.sortOrder || a.intervalCount - b.intervalCount);
 
   // 5. For each SSMA frequency, check if a matching Shopify selling plan exists
   for (let i = 0; i < sortedFrequencies.length; i++) {

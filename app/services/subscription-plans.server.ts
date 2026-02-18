@@ -274,6 +274,35 @@ export async function findFrequencyByLabel(shop: string, frequencyLabel: string)
 // Default Seeding
 // ============================================
 
+/**
+ * Ensure frequencies have correct sortOrder values.
+ * Fixes records created before sortOrder was introduced (all stuck at 0).
+ * Sets sortOrder = intervalCount - 1 so Weekly=0, Bi-Weekly=1, Tri-Weekly=2.
+ * Called on settings page load alongside ensureDefaultPlanGroups.
+ */
+export async function ensureFrequencySortOrder(shop: string): Promise<void> {
+  const groups = await prisma.subscriptionPlanGroup.findMany({
+    where: { shop },
+    include: { frequencies: { orderBy: { intervalCount: "asc" } } },
+  });
+
+  for (const group of groups) {
+    // Check if all frequencies have sortOrder = 0 (unfixed state)
+    const allZero = group.frequencies.length > 1 &&
+      group.frequencies.every((f) => f.sortOrder === 0);
+
+    if (allZero) {
+      // Set sortOrder based on position (intervalCount order)
+      for (let i = 0; i < group.frequencies.length; i++) {
+        await prisma.subscriptionPlanFrequency.update({
+          where: { id: group.frequencies[i].id },
+          data: { sortOrder: i },
+        });
+      }
+    }
+  }
+}
+
 /** Ensure default plan groups exist (called on settings page load) */
 export async function ensureDefaultPlanGroups(shop: string): Promise<void> {
   const existingCount = await prisma.subscriptionPlanGroup.count({ where: { shop } });

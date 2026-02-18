@@ -58,6 +58,7 @@ import {
   deleteFrequency,
   addProductsToGroup,
   removeProductFromGroup,
+  ensureFrequencySortOrder,
 } from "../services/subscription-plans.server";
 import type { PlanProductInput } from "../services/subscription-plans.server";
 import {
@@ -72,6 +73,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Ensure SSMA default plan groups exist
   await ensureDefaultPlanGroups(shop);
+
+  // Fix frequency sortOrder if needed (fixes records created before sortOrder was introduced)
+  await ensureFrequencySortOrder(shop);
 
   // Get all SSMA plan groups
   const planGroups = await getPlanGroups(shop);
@@ -801,7 +805,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (!groupId || !name || !interval || isNaN(intervalCount) || isNaN(discountPercent)) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
-        const freq = await addFrequency(shop, groupId, { name, interval, intervalCount, discountPercent, discountCode, isActive });
+        // Auto-set sortOrder: find the max sortOrder in this group and add 1
+        const existingFreqs = await prisma.subscriptionPlanFrequency.findMany({
+          where: { groupId },
+          select: { sortOrder: true },
+        });
+        const maxSortOrder = existingFreqs.length > 0
+          ? Math.max(...existingFreqs.map((f) => f.sortOrder))
+          : -1;
+        const sortOrder = maxSortOrder + 1;
+        const freq = await addFrequency(shop, groupId, { name, interval, intervalCount, discountPercent, discountCode, isActive, sortOrder });
         // Auto-sync discount code and selling plan to Shopify
         await syncDiscountsForGroup(admin, shop, groupId);
         await syncSellingPlansFromSSMA(admin, shop);
