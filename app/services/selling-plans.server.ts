@@ -313,6 +313,29 @@ const REMOVE_PRODUCTS_FROM_SELLING_PLAN_GROUP_MUTATION = `
   }
 `;
 
+const UPDATE_SELLING_PLAN_POSITIONS_MUTATION = `
+  mutation updateSellingPlanPositions($id: ID!, $sellingPlansToUpdate: [SellingPlanInput!]!) {
+    sellingPlanGroupUpdate(id: $id, input: { sellingPlansToUpdate: $sellingPlansToUpdate }) {
+      sellingPlanGroup {
+        id
+        sellingPlans(first: 20) {
+          edges {
+            node {
+              id
+              name
+              position
+            }
+          }
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 // ============================================
 // Service Functions
 // ============================================
@@ -1074,6 +1097,7 @@ async function syncSellingPlansFromSSMAWithConfig(
   const sortedFrequencies = [...ssmaFrequencies].sort((a, b) => a.sortOrder - b.sortOrder || a.intervalCount - b.intervalCount);
 
   // 5. For each SSMA frequency, check if a matching Shopify selling plan exists
+  const plansToReposition: Array<{ id: string; position: number }> = [];
   for (let i = 0; i < sortedFrequencies.length; i++) {
     const freq = sortedFrequencies[i];
     const position = i + 1; // 1-based position for Shopify
@@ -1084,6 +1108,8 @@ async function syncSellingPlansFromSSMAWithConfig(
 
     if (matchingPlan) {
       existing.push(`${freq.name} (${getFrequencyLabel(freq.interval, freq.intervalCount)})`);
+      // Track for position update — even existing plans may need reordering
+      plansToReposition.push({ id: matchingPlan.id, position });
       continue;
     }
 
@@ -1110,9 +1136,42 @@ async function syncSellingPlansFromSSMAWithConfig(
     }
   }
 
+  // 6. Update positions of existing plans to match SSMA sort order
+  if (plansToReposition.length > 0) {
+    try {
+      const sellingPlansToUpdate = plansToReposition.map((p) => ({
+        id: p.id,
+        position: p.position,
+      }));
+      console.log(`[selling-plans] Updating positions for ${sellingPlansToUpdate.length} existing plans:`, sellingPlansToUpdate);
+
+      const posResponse = await admin.graphql(UPDATE_SELLING_PLAN_POSITIONS_MUTATION, {
+        variables: {
+          id: shopifyGroupId,
+          sellingPlansToUpdate,
+        },
+      });
+
+      const posData = await posResponse.json();
+      if (posData.data?.sellingPlanGroupUpdate?.userErrors?.length > 0) {
+        const posErrors = posData.data.sellingPlanGroupUpdate.userErrors
+          .map((e: any) => e.message)
+          .join(", ");
+        console.error(`[selling-plans] Position update errors: ${posErrors}`);
+        errors.push(`Position update: ${posErrors}`);
+      } else {
+        console.log(`[selling-plans] Successfully updated positions for ${plansToReposition.length} plans`);
+      }
+    } catch (err) {
+      console.error(`[selling-plans] Failed to update positions:`, err);
+      errors.push(`Position update failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   const parts = [];
   if (added.length > 0) parts.push(`${added.length} added`);
   if (existing.length > 0) parts.push(`${existing.length} already existed`);
+  if (plansToReposition.length > 0) parts.push(`${plansToReposition.length} repositioned`);
   if (errors.length > 0) parts.push(`${errors.length} failed`);
 
   return {
