@@ -384,16 +384,26 @@ export async function syncDiscountsForGroup(
 
   for (const freq of group.frequencies) {
     try {
-      if (freq.isActive && freq.discountCode) {
+      // Active frequency with a discount percentage should have a Shopify discount code.
+      // If discountCode is null/empty but discountPercent > 0, auto-generate a code.
+      const needsDiscount = freq.isActive && freq.discountPercent > 0;
+      const hasCode = freq.discountCode && freq.discountCode.trim().length > 0;
+      const effectiveCode = hasCode
+        ? freq.discountCode!
+        : needsDiscount
+          ? generateDiscountCode(freq.interval, freq.intervalCount, freq.discountPercent)
+          : null;
+
+      if (needsDiscount && effectiveCode) {
         if (!freq.shopifyDiscountId) {
-          // Create new discount
+          // Create new discount (will auto-persist the code to DB)
           const id = await createDiscountCodeForFrequency(
             admin,
             {
               id: freq.id,
               name: freq.name,
               discountPercent: freq.discountPercent,
-              discountCode: freq.discountCode,
+              discountCode: effectiveCode,
               interval: freq.interval,
               intervalCount: freq.intervalCount,
             },
@@ -403,7 +413,7 @@ export async function syncDiscountsForGroup(
             result.created++;
           } else {
             result.failed++;
-            result.errors.push(`Failed to create discount for "${freq.name}" (${freq.discountCode})`);
+            result.errors.push(`Failed to create discount for "${freq.name}" (${effectiveCode})`);
           }
         } else {
           // Update existing discount
@@ -412,7 +422,7 @@ export async function syncDiscountsForGroup(
             freq.shopifyDiscountId,
             {
               discountPercent: freq.discountPercent,
-              discountCode: freq.discountCode,
+              discountCode: effectiveCode,
               name: freq.name,
             },
             groupProducts,
@@ -421,7 +431,7 @@ export async function syncDiscountsForGroup(
             result.updated++;
           } else {
             result.failed++;
-            result.errors.push(`Failed to update discount for "${freq.name}" (${freq.discountCode})`);
+            result.errors.push(`Failed to update discount for "${freq.name}" (${effectiveCode})`);
           }
         }
       } else if (!freq.isActive && freq.shopifyDiscountId) {
