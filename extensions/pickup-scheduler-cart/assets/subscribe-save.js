@@ -16,7 +16,6 @@
       this.triweeklyDiscount = options.triweeklyDiscount || 0;
       this.shopDomain = options.shopDomain || '';
       this.container = null;
-      this.currentDiscountCode = null;
       this.plans = [];
 
       if (this.isCartPage()) {
@@ -138,11 +137,6 @@
 
         // Check if subscription is already enabled in cart attributes
         this.currentAttributes = cart.attributes || {};
-
-        // Store current discount code if any
-        if (cart.discount_codes && cart.discount_codes.length > 0) {
-          this.currentDiscountCode = cart.discount_codes[0].code;
-        }
 
         // Check if any cart items already have a Shopify selling plan
         // (customer selected subscription on product page via native UI)
@@ -314,9 +308,10 @@
           }
         }));
 
-        // Reload page to show updated cart with discount
-        // This ensures the discount code is visually reflected
-        if (value !== 'onetime' || this.currentDiscountCode) {
+        // Reload page to show updated cart
+        // Note: discount is applied at checkout by the checkout extension,
+        // not on the cart page
+        if (value !== 'onetime') {
           setTimeout(() => {
             window.location.reload();
           }, 500);
@@ -330,41 +325,35 @@
     }
 
     async setSubscriptionAttributes(frequency, discount) {
-      // First, set the cart attributes
-      await this.updateCartAttributes({
-        'Subscription Enabled': 'true',
-        'Subscription Frequency': frequency,
-        'Subscription Discount': discount
-      });
-
-      // Then apply the discount code from the selected radio
+      // Get the discount code from the selected radio
       const radio = this.container.querySelector(`input[data-frequency="${frequency}"]`);
       const discountCode = radio?.dataset.discountCode;
 
-      if (discountCode) {
-        // Remove any existing subscription discount code first
-        if (this.currentDiscountCode) {
-          await this.removeDiscountCode(this.currentDiscountCode);
-        }
+      // Set the cart attributes including the discount code
+      // The checkout extension will read 'Subscription Discount Code' and
+      // apply it programmatically via Shopify's checkout API
+      const attributes = {
+        'Subscription Enabled': 'true',
+        'Subscription Frequency': frequency,
+        'Subscription Discount': discount
+      };
 
-        await this.applyDiscountCode(discountCode);
-        this.currentDiscountCode = discountCode;
+      if (discountCode) {
+        attributes['Subscription Discount Code'] = discountCode;
+        console.log('Subscribe & Save: Storing discount code in cart attribute:', discountCode);
       }
+
+      await this.updateCartAttributes(attributes);
     }
 
     async clearSubscriptionAttributes() {
-      // Clear subscription attributes
+      // Clear subscription attributes including discount code
       await this.updateCartAttributes({
         'Subscription Enabled': '',
         'Subscription Frequency': '',
-        'Subscription Discount': ''
+        'Subscription Discount': '',
+        'Subscription Discount Code': ''
       });
-
-      // Remove any subscription discount code
-      if (this.currentDiscountCode) {
-        await this.removeDiscountCode(this.currentDiscountCode);
-        this.currentDiscountCode = null;
-      }
     }
 
     async updateCartAttributes(attributes) {
@@ -385,30 +374,9 @@
       return await response.json();
     }
 
-    async applyDiscountCode(code) {
-      // Shopify's /discount/ endpoint sets a session cookie via redirect.
-      // Use redirect: 'follow' so the browser follows the redirect chain
-      // and the discount cookie gets set properly.
-      try {
-        await fetch('/discount/' + encodeURIComponent(code), {
-          method: 'GET',
-          redirect: 'follow',
-          credentials: 'same-origin',
-        });
-        console.log('Subscribe & Save: Applied discount code:', code);
-      } catch (e) {
-        // Discount endpoint may error due to redirect, but the cookie should still be set
-        console.warn('Subscribe & Save: Discount apply returned error (may still work):', e);
-      }
-      return true;
-    }
-
-    async removeDiscountCode(code) {
-      // To remove a discount, we can try to apply an empty/invalid code
-      // or clear it via the checkout. For now, we'll skip this and let
-      // the page reload handle it
-      return true;
-    }
+    // Note: Discount codes are no longer applied client-side via /discount/ endpoint.
+    // Instead, the discount code is stored as a cart attribute ('Subscription Discount Code')
+    // and the checkout extension applies it programmatically via Shopify's checkout API.
 
     saveSelection(value) {
       const data = {

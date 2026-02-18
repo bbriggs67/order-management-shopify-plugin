@@ -404,35 +404,23 @@
         }
 
         // 3. Set SSMA cart attributes via /cart/update.js
+        // Include discount code as a cart attribute so the checkout extension
+        // can read it and apply it programmatically via Shopify's checkout API
+        const cartAttributes = {
+          'Subscription Enabled': 'true',
+          'Subscription Frequency': this.selectedPlan.frequency,
+          'Subscription Discount': this.selectedPlan.discount,
+        };
+        if (this.selectedPlan.discountCode) {
+          cartAttributes['Subscription Discount Code'] = this.selectedPlan.discountCode;
+          console.log('Subscribe & Save Product: Storing discount code in cart attribute:', this.selectedPlan.discountCode);
+        }
+
         await fetch('/cart/update.js', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            attributes: {
-              'Subscription Enabled': 'true',
-              'Subscription Frequency': this.selectedPlan.frequency,
-              'Subscription Discount': this.selectedPlan.discount,
-            },
-          }),
+          body: JSON.stringify({ attributes: cartAttributes }),
         });
-
-        // 4. Apply discount code if available
-        // Shopify's /discount/ endpoint sets a session cookie via redirect.
-        // We use redirect: 'follow' so the browser follows the redirect chain
-        // and the discount cookie gets set properly.
-        if (this.selectedPlan.discountCode) {
-          try {
-            await fetch('/discount/' + encodeURIComponent(this.selectedPlan.discountCode), {
-              method: 'GET',
-              redirect: 'follow',
-              credentials: 'same-origin',
-            });
-            console.log('Subscribe & Save Product: Applied discount code:', this.selectedPlan.discountCode);
-          } catch (discountErr) {
-            // Discount endpoint may error due to redirect, but the cookie should still be set
-            console.warn('Subscribe & Save Product: Discount apply returned error (may still work):', discountErr);
-          }
-        }
 
         // 5. Save selection to sessionStorage
         this.saveSelection(this.selectedPlan.value);
@@ -461,6 +449,7 @@
             'Subscription Enabled': '',
             'Subscription Frequency': '',
             'Subscription Discount': '',
+            'Subscription Discount Code': '',
           },
         }),
       }).catch(() => { /* ignore */ });
