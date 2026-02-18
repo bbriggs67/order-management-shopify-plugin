@@ -9,6 +9,21 @@
   display: none !important;
 }
 
+/*
+ * Hide express checkout buttons (Shop Pay, Apple Pay, Google Pay) on
+ * product pages. These bypass the cart and date picker flow which breaks
+ * the subscription/pickup scheduling pipeline.
+ * This CSS is only loaded on product pages via the theme extension block.
+ */
+shopify-payment-button,
+.shopify-payment-button,
+.product-form__buttons .shopify-payment-button,
+.dynamic-checkout__content,
+.product-form__payment-button,
+[data-shopify="payment-button"] {
+  display: none !important;
+}
+
 .ssma-product-widget {
   margin: 1.5rem 0;
   font-family: inherit;
