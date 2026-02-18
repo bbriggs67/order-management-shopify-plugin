@@ -53,12 +53,19 @@ prisma/schema.prisma     → Database schema
 
 **Product page** → SSMA widget shows "One-time purchase" + "Subscribe & Save" options
 → Customer selects frequency → clicks Add to Cart
-→ Widget intercepts submit → `/cart/add.js` → `/cart/update.js` (sets SSMA attributes) → applies discount code → navigates to `/cart`
+→ Widget intercepts submit → `/cart/add.js` → `/cart/update.js` (sets SSMA attributes incl. discount code) → navigates to `/cart`
 → **Cart page** → only date/time picker (subscription widget skips since attributes set)
-→ **Checkout** → webhook reads SSMA cart attributes → creates subscription
+→ **Checkout** → checkout extension auto-applies discount code via `useApplyDiscountCodeChange` → webhook reads SSMA cart attributes → creates subscription
+
+**Discount code pipeline:**
+1. `syncDiscountsForGroup()` auto-generates codes (e.g. `SUBSCRIBE-WEEKLY-10`) for frequencies with `discountPercent > 0`
+2. API `/apps/my-subscription/selling-plans` returns `discountCode` per frequency
+3. Product/cart widget stores `Subscription Discount Code` as cart attribute
+4. Checkout extension reads attribute → applies via `useApplyDiscountCodeChange` hook
+5. Discount is NOT applied client-side via `/discount/` endpoint (that approach was unreliable)
 
 **Two theme extension widgets:**
-- `subscribe-save-product.js/liquid` — Product page (primary subscription selector)
+- `subscribe-save-product.js/css/liquid` — Product page (primary subscription selector + hides express checkout + hides native selling plan selector)
 - `subscribe-save.js/liquid` — Cart page (fallback + date/time picker support)
 
 Cart widget auto-skips when SSMA attributes already set from product page.
@@ -75,6 +82,8 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 6. **App Proxy**: Configured at `/apps/my-subscription`. Shopify strips subpath when forwarding.
 7. **Test Store**: `aheajv-fg.myshopify.com`. **Live Store**: `susiessourdough.com`
 8. **Webhook attributes**: Shopify REST webhooks use `name` (not `key`) for note_attributes.
+9. **Express checkout hidden on product pages** via CSS in `subscribe-save-product.css` (Shop Pay, Apple Pay, Google Pay bypass cart/date-picker flow).
+10. **Discount codes via cart attributes**: Never use `/discount/CODE` fetch — cookies don't propagate reliably. Use cart attribute `Subscription Discount Code` + checkout extension `useApplyDiscountCodeChange`.
 
 ## SSMA Subscription Plan Groups (v2)
 
