@@ -196,6 +196,26 @@
         if (validationMsg) {
           validationMsg.style.display = 'none';
         }
+
+        // Check for subscription discount code and redirect to checkout with it
+        // The checkout UI extension isn't rendering, so apply discount via URL param
+        e.preventDefault();
+        fetch('/cart.js')
+          .then(function(r) { return r.json(); })
+          .then(function(cart) {
+            var attrs = cart.attributes || {};
+            var discountCode = attrs['Subscription Discount Code'];
+            if (discountCode) {
+              console.log('Pickup Scheduler: Redirecting to checkout with discount code:', discountCode);
+              window.location.href = '/checkout?discount=' + encodeURIComponent(discountCode);
+            } else {
+              window.location.href = '/checkout';
+            }
+          })
+          .catch(function() {
+            // Fallback: just go to checkout
+            window.location.href = '/checkout';
+          });
       });
     }
 
