@@ -55,14 +55,15 @@ prisma/schema.prisma     → Database schema
 → Customer selects frequency → clicks Add to Cart
 → Widget intercepts submit → `/cart/add.js` → `/cart/update.js` (sets SSMA attributes incl. discount code) → navigates to `/cart`
 → **Cart page** → only date/time picker (subscription widget skips since attributes set)
-→ **Checkout** → checkout extension auto-applies discount code via `useApplyDiscountCodeChange` → webhook reads SSMA cart attributes → creates subscription
+→ **Checkout** → discount code auto-applied via URL parameter `?discount=CODE` → webhook reads SSMA cart attributes → creates subscription
 
 **Discount code pipeline:**
 1. `syncDiscountsForGroup()` auto-generates codes (e.g. `SUBSCRIBE-WEEKLY-10`) for frequencies with `discountPercent > 0`
 2. API `/apps/my-subscription/selling-plans` returns `discountCode` per frequency
 3. Product/cart widget stores `Subscription Discount Code` as cart attribute
-4. Checkout extension reads attribute → applies via `useApplyDiscountCodeChange` hook
-5. Discount is NOT applied client-side via `/discount/` endpoint (that approach was unreliable)
+4. Cart page `pickup-scheduler.js` reads discount code from cart attributes → redirects to `/checkout?discount=CODE`
+5. Checkout UI extension (`Checkout.tsx`) exists but does NOT render on one-page checkout (known issue). URL param approach is the working solution.
+6. Discount is NOT applied via `/discount/` endpoint (cookies unreliable) or checkout extension (doesn't render)
 
 **Two theme extension widgets:**
 - `subscribe-save-product.js/css/liquid` — Product page (primary subscription selector + hides express checkout + hides native selling plan selector)
@@ -83,7 +84,7 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 7. **Test Store**: `aheajv-fg.myshopify.com`. **Live Store**: `susiessourdough.com`
 8. **Webhook attributes**: Shopify REST webhooks use `name` (not `key`) for note_attributes.
 9. **Express checkout hidden on product pages** via CSS in `subscribe-save-product.css` (Shop Pay, Apple Pay, Google Pay bypass cart/date-picker flow).
-10. **Discount codes via cart attributes**: Never use `/discount/CODE` fetch — cookies don't propagate reliably. Use cart attribute `Subscription Discount Code` + checkout extension `useApplyDiscountCodeChange`.
+10. **Discount codes via URL param**: Cart page `pickup-scheduler.js` redirects to `/checkout?discount=CODE`. Never use `/discount/CODE` fetch (cookies unreliable). Checkout UI extension exists but doesn't render on one-page checkout.
 
 ## SSMA Subscription Plan Groups (v2)
 
