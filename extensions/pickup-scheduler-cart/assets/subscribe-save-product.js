@@ -140,6 +140,8 @@
 
     findProductForm() {
       // Look for product form by common selectors (Dawn and other themes)
+      // Some themes have multiple forms matching these selectors (e.g. a hidden
+      // form and the real product form). Prefer the form that contains a submit button.
       const selectors = [
         'form[action*="/cart/add"]',
         'form.product-form',
@@ -149,8 +151,17 @@
       ];
 
       for (const sel of selectors) {
-        const form = document.querySelector(sel);
-        if (form) return form;
+        const forms = document.querySelectorAll(sel);
+        if (forms.length === 0) continue;
+        // If multiple forms match, prefer the one with a submit button
+        if (forms.length > 1) {
+          for (const form of forms) {
+            if (form.querySelector('[type="submit"], button[name="add"], .product-form__submit')) {
+              return form;
+            }
+          }
+        }
+        return forms[0];
       }
 
       return null;
