@@ -1693,6 +1693,28 @@ export default function SubscriptionsSettings() {
 
                   <Divider />
 
+                  {/* Ensure Automatic Discount (Shopify Function) */}
+                  <Box paddingBlockStart="300">
+                    <BlockStack gap="300">
+                      <Text as="h3" variant="headingSm">Automatic Discount (Shopify Function)</Text>
+                      <Text as="p" tone="subdued">
+                        Creates the automatic discount linked to the subscription-discount Shopify Function.
+                        This replaces discount codes — the Function reads cart attributes and applies the
+                        correct percentage at checkout automatically.
+                      </Text>
+                      <Button
+                        onClick={() => {
+                          submit({ intent: "ensure_automatic_discount" }, { method: "post" });
+                        }}
+                        loading={isLoading}
+                      >
+                        Ensure Automatic Discount
+                      </Button>
+                    </BlockStack>
+                  </Box>
+
+                  <Divider />
+
                   {/* How SSMA Works */}
                   <BlockStack gap="300">
                     <Text as="h3" variant="headingSm">How SSMA Subscriptions Work</Text>
