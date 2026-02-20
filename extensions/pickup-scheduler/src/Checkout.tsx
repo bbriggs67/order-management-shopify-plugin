@@ -2,9 +2,7 @@ import {
   reactExtension,
   useApi,
   useApplyAttributeChange,
-  useApplyDiscountCodeChange,
   useAttributeValues,
-  useDiscountCodes,
   useSettings,
   BlockStack,
   InlineStack,
@@ -20,7 +18,7 @@ import {
   BlockSpacer,
   Pressable,
 } from "@shopify/ui-extensions-react/checkout";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 // Types
 interface TimeSlot {
@@ -100,50 +98,10 @@ function PickupScheduler() {
   // Check if this is a subscription order
   const isSubscription = subscriptionEnabled === "true";
 
-  // Discount code application
-  const applyDiscountCodeChange = useApplyDiscountCodeChange();
-  const discountCodes = useDiscountCodes();
-  const discountAppliedRef = useRef(false);
-
-  // Auto-apply subscription discount code at checkout
-  useEffect(() => {
-    async function applySubscriptionDiscount() {
-      if (!isSubscription || !subscriptionDiscountCode || discountAppliedRef.current) {
-        return;
-      }
-
-      // Check if the discount code is already applied
-      const alreadyApplied = discountCodes?.some(
-        (dc) => dc.code?.toUpperCase() === subscriptionDiscountCode.toUpperCase()
-      );
-
-      if (alreadyApplied) {
-        console.log("Subscription discount already applied:", subscriptionDiscountCode);
-        discountAppliedRef.current = true;
-        return;
-      }
-
-      console.log("Applying subscription discount code:", subscriptionDiscountCode);
-
-      try {
-        const result = await applyDiscountCodeChange({
-          type: "addDiscountCode",
-          code: subscriptionDiscountCode,
-        });
-
-        if (result.type === "success") {
-          console.log("Subscription discount applied successfully:", subscriptionDiscountCode);
-          discountAppliedRef.current = true;
-        } else {
-          console.error("Failed to apply subscription discount:", result.message);
-        }
-      } catch (err) {
-        console.error("Error applying subscription discount code:", err);
-      }
-    }
-
-    applySubscriptionDiscount();
-  }, [isSubscription, subscriptionDiscountCode, discountCodes, applyDiscountCodeChange]);
+  // NOTE: Discount codes are applied via URL parameter (/checkout?discount=CODE)
+  // from the cart page pickup-scheduler.js widget. We intentionally do NOT use
+  // useApplyDiscountCodeChange or useDiscountCodes here because importing those
+  // hooks causes Shopify to show the discount code input field on checkout.
 
   // State
   const [loading, setLoading] = useState(true);
