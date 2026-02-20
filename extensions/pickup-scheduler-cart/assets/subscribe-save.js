@@ -212,7 +212,7 @@
         const value = plan.value || plan.frequency.toLowerCase();
         choicesHTML += `
               <label class="subscribe-save-choice">
-                <input type="radio" name="purchase_option" value="${value}" data-frequency="${plan.frequency}" data-discount="${plan.discountPercent}" data-discount-code="${plan.discountCode || ''}">
+                <input type="radio" name="purchase_option" value="${value}" data-frequency="${plan.frequency}" data-discount="${plan.discountPercent}">
                 <span class="subscribe-save-choice__radio"></span>
                 <span class="subscribe-save-choice__text">${plan.name}, <strong>${plan.discountPercent}% off</strong></span>
               </label>`;
@@ -325,34 +325,25 @@
     }
 
     async setSubscriptionAttributes(frequency, discount) {
-      // Get the discount code from the selected radio
-      const radio = this.container.querySelector(`input[data-frequency="${frequency}"]`);
-      const discountCode = radio?.dataset.discountCode;
-
-      // Set the cart attributes including the discount code
-      // The checkout extension will read 'Subscription Discount Code' and
-      // apply it programmatically via Shopify's checkout API
+      // Set cart attributes for the Shopify Discount Function to read.
+      // The Function automatically applies the discount at checkout based on
+      // "Subscription Enabled" and "Subscription Discount" attributes.
+      // No discount code needed — the automatic discount approach handles it.
       const attributes = {
         'Subscription Enabled': 'true',
         'Subscription Frequency': frequency,
         'Subscription Discount': discount
       };
 
-      if (discountCode) {
-        attributes['Subscription Discount Code'] = discountCode;
-        console.log('Subscribe & Save: Storing discount code in cart attribute:', discountCode);
-      }
-
       await this.updateCartAttributes(attributes);
     }
 
     async clearSubscriptionAttributes() {
-      // Clear subscription attributes including discount code
+      // Clear subscription attributes
       await this.updateCartAttributes({
         'Subscription Enabled': '',
         'Subscription Frequency': '',
-        'Subscription Discount': '',
-        'Subscription Discount Code': ''
+        'Subscription Discount': ''
       });
     }
 
@@ -374,9 +365,8 @@
       return await response.json();
     }
 
-    // Note: Discount codes are no longer applied client-side via /discount/ endpoint.
-    // Instead, the discount code is stored as a cart attribute ('Subscription Discount Code')
-    // and the checkout extension applies it programmatically via Shopify's checkout API.
+    // Note: Subscription discounts are applied automatically at checkout by the
+    // Shopify Discount Function (subscription-discount). No discount codes needed.
 
     saveSelection(value) {
       const data = {

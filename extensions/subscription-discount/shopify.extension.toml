@@ -1,0 +1,16 @@
+api_version = "2025-04"
+
+[[extensions]]
+name = "Subscription Discount"
+handle = "subscription-discount"
+uid = "c2d3f89c-e6a3-3391-5ac0-e714d8a02eefb604e0d4"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/cart_lines_discounts_generate_run.graphql"
+  export = "cart-lines-discounts-generate-run"
+
+  [extensions.build]
+  command = ""
+  path = "dist/function.wasm"

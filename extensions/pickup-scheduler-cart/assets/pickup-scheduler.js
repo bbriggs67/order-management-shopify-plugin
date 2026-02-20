@@ -199,27 +199,13 @@
         validationMsg.style.display = 'none';
       }
 
-      // Always intercept checkout to apply subscription discount code via URL param.
-      // The checkout UI extension doesn't render on one-page checkout, so we redirect
-      // to /checkout?discount=CODE instead of letting the form submit normally.
+      // Redirect to checkout. The subscription discount is applied automatically
+      // by the Shopify Discount Function (subscription-discount) which reads
+      // cart attributes "Subscription Enabled" and "Subscription Discount".
+      // No discount code URL parameter needed.
       e.preventDefault();
       e.stopPropagation();
-      fetch('/cart.js')
-        .then(function(r) { return r.json(); })
-        .then(function(cart) {
-          var attrs = cart.attributes || {};
-          var discountCode = attrs['Subscription Discount Code'];
-          if (discountCode) {
-            console.log('Pickup Scheduler: Redirecting to checkout with discount code:', discountCode);
-            window.location.href = '/checkout?discount=' + encodeURIComponent(discountCode);
-          } else {
-            window.location.href = '/checkout';
-          }
-        })
-        .catch(function() {
-          // Fallback: just go to checkout
-          window.location.href = '/checkout';
-        });
+      window.location.href = '/checkout';
     };
 
     // Attach handler to both the checkout button click AND the form submit

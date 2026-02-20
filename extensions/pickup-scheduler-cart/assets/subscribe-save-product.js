@@ -417,15 +417,16 @@
         // 3. Set SSMA cart attributes via /cart/update.js
         // Include discount code as a cart attribute so the checkout extension
         // can read it and apply it programmatically via Shopify's checkout API
+        // Set cart attributes for the Shopify Discount Function to read.
+        // The Function automatically applies the discount at checkout based on
+        // "Subscription Enabled" and "Subscription Discount" attributes.
+        // No discount code needed — the old "Subscription Discount Code" attribute
+        // has been removed in favor of the automatic discount approach.
         const cartAttributes = {
           'Subscription Enabled': 'true',
           'Subscription Frequency': this.selectedPlan.frequency,
           'Subscription Discount': this.selectedPlan.discount,
         };
-        if (this.selectedPlan.discountCode) {
-          cartAttributes['Subscription Discount Code'] = this.selectedPlan.discountCode;
-          console.log('Subscribe & Save Product: Storing discount code in cart attribute:', this.selectedPlan.discountCode);
-        }
 
         await fetch('/cart/update.js', {
           method: 'POST',
@@ -460,7 +461,6 @@
             'Subscription Enabled': '',
             'Subscription Frequency': '',
             'Subscription Discount': '',
-            'Subscription Discount Code': '',
           },
         }),
       }).catch(() => { /* ignore */ });

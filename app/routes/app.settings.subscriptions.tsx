@@ -66,6 +66,7 @@ import {
   syncAllDiscounts,
   deleteDiscountCode,
 } from "../services/shopify-discounts.server";
+import { ensureAutomaticDiscount } from "../services/shopify-automatic-discount.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -904,6 +905,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (syncResult.deleted > 0) parts.push(`${syncResult.deleted} deleted`);
         const summary = parts.length > 0 ? ` (${parts.join(", ")})` : "";
         return json({ success: true, message: `All discount codes synced to Shopify${summary}` });
+      }
+
+      case "ensure_automatic_discount": {
+        try {
+          const result = await ensureAutomaticDiscount(admin);
+          const msg = result.created
+            ? "Automatic subscription discount created successfully"
+            : "Automatic subscription discount already exists";
+          return json({ success: true, message: msg });
+        } catch (err) {
+          return json({ error: `Failed to create automatic discount: ${err}` });
+        }
       }
 
       case "sync_selling_plans": {
