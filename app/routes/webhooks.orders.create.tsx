@@ -525,18 +525,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     try {
       const { admin: tagAdmin } = await unauthenticated.admin(shop);
 
-      // Format pickup date for tag (e.g., "February 20 2026")
-      const pickupDateTag = pickupDate.toLocaleDateString("en-US", {
+      // Format pickup date for tag — avoid commas since Shopify splits tags on commas.
+      // e.g., "February 20 2026" not "February 20, 2026"
+      const dateFormatter = new Intl.DateTimeFormat("en-US", {
         timeZone: "America/Los_Angeles",
         month: "long",
         day: "numeric",
         year: "numeric",
       });
+      const dateParts = dateFormatter.formatToParts(pickupDate);
+      const monthPart = dateParts.find(p => p.type === "month")?.value || "";
+      const dayPart = dateParts.find(p => p.type === "day")?.value || "";
+      const yearPart = dateParts.find(p => p.type === "year")?.value || "";
+      const pickupDateTag = `${monthPart} ${dayPart} ${yearPart}`;
+
+      const dayOfWeek = pickupDate.toLocaleDateString("en-US", {
+        timeZone: "America/Los_Angeles",
+        weekday: "long",
+      });
 
       const tags: string[] = [
         effectivePickupTimeSlot,
         pickupDateTag,
-        pickupDate.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "long" }),
+        dayOfWeek,
       ];
 
       if (isSubscriptionOrder) {

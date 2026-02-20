@@ -199,13 +199,40 @@
         validationMsg.style.display = 'none';
       }
 
-      // Redirect to checkout. The subscription discount is applied automatically
-      // by the Shopify Discount Function (subscription-discount) which reads
-      // cart attributes "Subscription Enabled" and "Subscription Discount".
-      // No discount code URL parameter needed.
+      // Save pickup attributes to cart via AJAX before redirecting to checkout.
+      // Hidden form inputs only work on normal form POST — since we intercept and
+      // redirect with window.location.href, we must persist them via /cart/update.js.
       e.preventDefault();
       e.stopPropagation();
-      window.location.href = '/checkout';
+
+      const pickupAttributes = {
+        'Pickup Date': dateInput.value,
+        'Pickup Time Slot': timeInput.value,
+      };
+      const locationInput = document.getElementById('ps-location-input');
+      if (locationInput && locationInput.value) {
+        pickupAttributes['Pickup Location ID'] = locationInput.value;
+      }
+
+      console.log('Pickup Scheduler: Saving attributes to cart before checkout:', pickupAttributes);
+
+      fetch('/cart/update.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attributes: pickupAttributes }),
+      })
+        .then(function(response) {
+          if (!response.ok) {
+            console.error('Pickup Scheduler: Failed to save cart attributes:', response.status);
+          }
+          // Redirect to checkout regardless — attributes may already be set from form
+          window.location.href = '/checkout';
+        })
+        .catch(function(err) {
+          console.error('Pickup Scheduler: Error saving cart attributes:', err);
+          // Redirect anyway
+          window.location.href = '/checkout';
+        });
     };
 
     // Attach handler to both the checkout button click AND the form submit
