@@ -75,6 +75,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
+  if (intent === "delete_webhook_event") {
+    // Delete a WebhookEvent so the order can be reprocessed on next webhook delivery.
+    // With the updated webhook handler, orders without a PickupSchedule will be
+    // reprocessed even if the WebhookEvent exists, but deleting it provides a clean slate.
+    const eventId = formData.get("eventId") as string;
+    const event = await prisma.webhookEvent.findFirst({
+      where: { id: eventId, shop },
+    });
+    if (event) {
+      await prisma.webhookEvent.delete({ where: { id: eventId } });
+      return json({
+        success: true,
+        message: `Deleted WebhookEvent for order ${event.shopifyId}. The order will be reprocessed on next webhook delivery, or you can trigger a reprocess by fetching the order via GraphQL.`,
+      });
+    }
+    return json({ error: "WebhookEvent not found" }, { status: 404 });
+  }
+
   if (intent === "view_payload") {
     const eventId = formData.get("eventId") as string;
     const event = await prisma.webhookEvent.findFirst({
@@ -320,17 +338,33 @@ export default function WebhookDebug() {
                             {new Date(event.processedAt).toLocaleString()}
                           </Text>
                         </BlockStack>
-                        <Button
-                          size="slim"
-                          onClick={() => {
-                            const formData = new FormData();
-                            formData.append("intent", "view_payload");
-                            formData.append("eventId", event.id);
-                            submit(formData, { method: "post" });
-                          }}
-                        >
-                          View Payload
-                        </Button>
+                        <InlineStack gap="200">
+                          <Button
+                            size="slim"
+                            onClick={() => {
+                              const formData = new FormData();
+                              formData.append("intent", "view_payload");
+                              formData.append("eventId", event.id);
+                              submit(formData, { method: "post" });
+                            }}
+                          >
+                            View Payload
+                          </Button>
+                          <Button
+                            size="slim"
+                            tone="critical"
+                            onClick={() => {
+                              if (confirm("Delete this WebhookEvent? This allows the order to be reprocessed.")) {
+                                const formData = new FormData();
+                                formData.append("intent", "delete_webhook_event");
+                                formData.append("eventId", event.id);
+                                submit(formData, { method: "post" });
+                              }
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        </InlineStack>
                       </InlineStack>
                     </Box>
                   ))}
