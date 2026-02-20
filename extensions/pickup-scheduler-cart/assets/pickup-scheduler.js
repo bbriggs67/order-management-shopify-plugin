@@ -367,7 +367,7 @@
           const locAddrEl = document.getElementById('ps-location-address');
           if (locNameEl) locNameEl.textContent = loc.name;
           if (locAddrEl) locAddrEl.textContent = loc.address;
-          if (locationInput) locationInput.value = `${loc.name} - ${loc.address}`;
+          if (locationInput) locationInput.value = loc.id;
         }
 
         if (loadingEl) loadingEl.style.display = 'none';

@@ -242,7 +242,81 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const pickupDateRaw = getAttr(ATTR_PICKUP_DATE);
   const pickupTimeSlot = getAttr(ATTR_PICKUP_TIME);
-  const pickupLocationId = getAttr(ATTR_PICKUP_LOCATION_ID);
+  const pickupLocationIdRaw = getAttr(ATTR_PICKUP_LOCATION_ID);
+
+  // Resolve pickupLocationId: The cart extension now sends a cuid (e.g. "cm..."),
+  // but older orders may have a human-readable string like "Name - Address".
+  // We need a valid PickupLocation.id (foreign key) or null.
+  let pickupLocationId: string | null = null;
+  if (pickupLocationIdRaw) {
+    // Check if it looks like a cuid (starts with 'c' and is 25 chars) — if so, verify it exists
+    const looksLikeCuid = /^c[a-z0-9]{20,30}$/.test(pickupLocationIdRaw);
+    if (looksLikeCuid) {
+      const locationExists = await prisma.pickupLocation.findFirst({
+        where: { id: pickupLocationIdRaw, shop },
+        select: { id: true },
+      });
+      if (locationExists) {
+        pickupLocationId = pickupLocationIdRaw;
+        console.log(`Pickup location ID verified: ${pickupLocationId}`);
+      } else {
+        console.log(`Pickup location ID "${pickupLocationIdRaw}" not found in database, will try fallback`);
+      }
+    }
+
+    // Fallback: if the value is a human-readable string (e.g. "Olivenhain Porch Pick-Up - 3637 ..."),
+    // try to find the matching PickupLocation by name or address
+    if (!pickupLocationId) {
+      console.log(`Attempting to resolve pickup location from string: "${pickupLocationIdRaw}"`);
+      // Try exact match on name first
+      let location = await prisma.pickupLocation.findFirst({
+        where: { shop, name: pickupLocationIdRaw, isActive: true },
+        select: { id: true },
+      });
+      // Try matching "Name - Address" format
+      if (!location && pickupLocationIdRaw.includes(" - ")) {
+        const [name] = pickupLocationIdRaw.split(" - ");
+        location = await prisma.pickupLocation.findFirst({
+          where: { shop, name: name.trim(), isActive: true },
+          select: { id: true },
+        });
+      }
+      // Last resort: try contains match on name
+      if (!location) {
+        location = await prisma.pickupLocation.findFirst({
+          where: { shop, isActive: true, name: { contains: pickupLocationIdRaw.split(" - ")[0]?.trim() || "" } },
+          select: { id: true },
+        });
+      }
+      if (location) {
+        pickupLocationId = location.id;
+        console.log(`Resolved pickup location by name lookup: ${pickupLocationId}`);
+      } else {
+        console.log(`Could not resolve pickup location from "${pickupLocationIdRaw}", using default`);
+        // Use default location as ultimate fallback
+        const defaultLocation = await prisma.pickupLocation.findFirst({
+          where: { shop, isActive: true, isDefault: true },
+          select: { id: true },
+        });
+        if (defaultLocation) {
+          pickupLocationId = defaultLocation.id;
+          console.log(`Using default pickup location: ${pickupLocationId}`);
+        } else {
+          // No default — use any active location
+          const anyLocation = await prisma.pickupLocation.findFirst({
+            where: { shop, isActive: true },
+            select: { id: true },
+          });
+          if (anyLocation) {
+            pickupLocationId = anyLocation.id;
+            console.log(`Using first available pickup location: ${pickupLocationId}`);
+          } else {
+            console.log(`No active pickup locations found for shop ${shop}, pickupLocationId will be null`);
+          }
+        }
+      }
+    }
+  }
 
   // Check for SSMA-owned subscription via cart attributes (primary method)
   const subscriptionEnabledAttr = getAttr(ATTR_SUBSCRIPTION_ENABLED);
@@ -251,7 +325,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const isSSMASubscription = subscriptionEnabledAttr === "true" && subscriptionFrequencyAttr;
 
-  console.log(`Extracted pickup info - Date: ${pickupDateRaw}, Time: ${pickupTimeSlot}, Location: ${pickupLocationId}`);
+  console.log(`Extracted pickup info - Date: ${pickupDateRaw}, Time: ${pickupTimeSlot}, Location raw: ${pickupLocationIdRaw}, Resolved ID: ${pickupLocationId}`);
   console.log(`SSMA Subscription attributes - Enabled: ${subscriptionEnabledAttr}, Frequency: ${subscriptionFrequencyAttr}, PreferredDay: ${subscriptionPreferredDayAttr}`);
 
   // LEGACY: Check if this is a subscription order from REST payload (for backward compatibility with Shopify selling plans)
