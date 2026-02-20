@@ -34,7 +34,9 @@
       await this.loadCartState();
 
       // If Shopify selling plans are already handling subscription on this cart
-      // (customer selected subscription on product page), don't show duplicate widget
+      // (customer selected subscription on product page via SSMA or native UI),
+      // don't show duplicate widget. The selling plan pricing policy handles the
+      // discount automatically at checkout — no discount codes needed.
       if (this.hasSellingPlanItems) {
         console.log('Subscribe & Save: Cart already has selling plan items, skipping widget');
         return;

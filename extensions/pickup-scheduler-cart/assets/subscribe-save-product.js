@@ -302,7 +302,7 @@
               <input type="radio" name="ssma_purchase_option" value="${value}"
                 data-frequency="${freq.frequency || ''}"
                 data-discount="${freq.discountPercent || 0}"
-                data-discount-code="${freq.discountCode || ''}"
+                data-selling-plan-id="${freq.sellingPlanId || ''}"
                 data-group-name="${group.name || ''}">
               <span class="ssma-product-widget__radio"></span>
               <span class="ssma-product-widget__choice-text">
@@ -363,7 +363,7 @@
           value,
           frequency: e.target.dataset.frequency,
           discount: e.target.dataset.discount,
-          discountCode: e.target.dataset.discountCode,
+          sellingPlanId: e.target.dataset.sellingPlanId,
           groupName: e.target.dataset.groupName,
         };
         subscriptionSection.classList.add('has-selection');
@@ -400,13 +400,20 @@
         }
 
         // 2. Add product to cart via /cart/add.js
+        // Include selling_plan if available so Shopify applies the native
+        // selling plan pricing discount automatically at checkout.
+        const addPayload = {
+          id: variantId,
+          quantity: parseInt(quantity, 10),
+        };
+        if (this.selectedPlan.sellingPlanId) {
+          addPayload.selling_plan = this.selectedPlan.sellingPlanId;
+          console.log('Subscribe & Save Product: Adding with selling_plan:', this.selectedPlan.sellingPlanId);
+        }
         const addResponse = await fetch('/cart/add.js', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: variantId,
-            quantity: parseInt(quantity, 10),
-          }),
+          body: JSON.stringify(addPayload),
         });
 
         if (!addResponse.ok) {
@@ -415,13 +422,10 @@
         }
 
         // 3. Set SSMA cart attributes via /cart/update.js
-        // Include discount code as a cart attribute so the checkout extension
-        // can read it and apply it programmatically via Shopify's checkout API
-        // Set cart attributes for the Shopify Discount Function to read.
-        // The Function automatically applies the discount at checkout based on
-        // "Subscription Enabled" and "Subscription Discount" attributes.
-        // No discount code needed — the old "Subscription Discount Code" attribute
-        // has been removed in favor of the automatic discount approach.
+        // These attributes are used by SSMA's webhook handler to create a
+        // subscription record when the order is placed. The discount is handled
+        // natively by the Shopify selling plan pricing policy — no discount
+        // codes needed.
         const cartAttributes = {
           'Subscription Enabled': 'true',
           'Subscription Frequency': this.selectedPlan.frequency,

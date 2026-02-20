@@ -14,6 +14,88 @@ import { json } from "@remix-run/node";
 import prisma from "../db.server";
 import { getActivePlanGroups } from "../services/subscription-plans.server";
 
+/** Selling plan ID mapping cache (per shop, refreshed every 5 min) */
+const sellingPlanCache: Record<string, { data: Record<string, string>; expires: number }> = {};
+
+/**
+ * Fetch Shopify selling plan IDs and build a mapping from
+ * `${interval}:${intervalCount}` to the Shopify selling plan numeric ID.
+ * This is needed so the storefront widget can add items to cart
+ * with the correct selling_plan parameter for native pricing discounts.
+ */
+async function getSellingPlanIdMap(shop: string): Promise<Record<string, string>> {
+  const now = Date.now();
+  if (sellingPlanCache[shop] && sellingPlanCache[shop].expires > now) {
+    return sellingPlanCache[shop].data;
+  }
+
+  try {
+    const session = await prisma.session.findFirst({ where: { shop } });
+    if (!session?.accessToken) return {};
+
+    const resp = await fetch(`https://${shop}/admin/api/2025-04/graphql.json`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": session.accessToken,
+      },
+      body: JSON.stringify({
+        query: `{
+          sellingPlanGroups(first: 10) {
+            nodes {
+              sellingPlans(first: 20) {
+                nodes {
+                  id
+                  deliveryPolicy {
+                    ... on SellingPlanRecurringDeliveryPolicy {
+                      interval
+                      intervalCount
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }`,
+      }),
+    });
+
+    const data = (await resp.json()) as {
+      data?: {
+        sellingPlanGroups: {
+          nodes: Array<{
+            sellingPlans: {
+              nodes: Array<{
+                id: string;
+                deliveryPolicy: { interval: string; intervalCount: number };
+              }>;
+            };
+          }>;
+        };
+      };
+    };
+
+    const map: Record<string, string> = {};
+    for (const group of data.data?.sellingPlanGroups?.nodes || []) {
+      for (const plan of group.sellingPlans?.nodes || []) {
+        const policy = plan.deliveryPolicy;
+        if (policy?.interval && policy?.intervalCount) {
+          // Extract numeric ID from GID (e.g., "gid://shopify/SellingPlan/4240146644" -> "4240146644")
+          const numericId = plan.id.split("/").pop() || "";
+          map[`${policy.interval}:${policy.intervalCount}`] = numericId;
+        }
+      }
+    }
+
+    sellingPlanCache[shop] = { data: map, expires: now + 5 * 60 * 1000 };
+    console.log("Selling plan ID map:", JSON.stringify(map));
+    return map;
+  } catch (e) {
+    console.warn("Failed to fetch selling plan IDs:", e);
+    return {};
+  }
+}
+
 // CORS headers
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -60,6 +142,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // PRIMARY: Read from SSMA SubscriptionPlanGroup model
     const planGroups = await getActivePlanGroups(shop);
 
+    // Fetch Shopify selling plan ID mapping so the widget can add items
+    // to cart with the correct selling_plan parameter for native pricing
+    const sellingPlanIds = await getSellingPlanIdMap(shop);
+
     if (planGroups.length > 0) {
       // Flat list for backward compat with current cart widget
       const plans = planGroups.flatMap((group) =>
@@ -74,6 +160,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           discountPercent: freq.discountPercent,
           discountCode: freq.discountCode,
           billingLeadHours: group.billingLeadHours,
+          // Shopify selling plan numeric ID for /cart/add.js
+          sellingPlanId: sellingPlanIds[`${freq.interval}:${freq.intervalCount}`] || null,
         }))
       );
 
@@ -93,6 +181,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             intervalCount: f.intervalCount,
             discountPercent: f.discountPercent,
             discountCode: f.discountCode,
+            sellingPlanId: sellingPlanIds[`${f.interval}:${f.intervalCount}`] || null,
           })),
           productIds: g.products.map((p) => p.shopifyProductId),
         })),
