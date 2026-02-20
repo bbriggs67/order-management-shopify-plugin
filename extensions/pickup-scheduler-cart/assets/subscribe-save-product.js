@@ -347,8 +347,30 @@
         radio.addEventListener('change', (e) => this.handleSelectionChange(e));
       });
 
-      // Intercept form submission
-      this.productForm.addEventListener('submit', (e) => this.handleFormSubmit(e));
+      // Intercept form submission — use capturing phase to fire BEFORE
+      // Dawn theme's <product-form> custom element handler.
+      // Safari doesn't always respect stopPropagation on submit events
+      // when the Dawn theme also has its own fetch-based add-to-cart.
+      this.productForm.addEventListener('submit', (e) => this.handleFormSubmit(e), true);
+
+      // Also intercept clicks on the submit button directly.
+      // Dawn's <product-form> may listen for button clicks and trigger
+      // its own /cart/add.js fetch, bypassing the form submit event.
+      const submitBtn =
+        this.productForm.querySelector('[type="submit"]') ||
+        this.productForm.querySelector('button[name="add"]') ||
+        this.productForm.querySelector('.product-form__submit');
+      if (submitBtn) {
+        submitBtn.addEventListener('click', (e) => {
+          if (this.selectedPlan) {
+            // Prevent the click from reaching Dawn's handler
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            // Manually trigger our submission logic
+            this.handleFormSubmit(e);
+          }
+        }, true); // Capture phase — fire first
+      }
     }
 
     handleSelectionChange(e) {
@@ -358,6 +380,9 @@
       if (value === 'onetime') {
         this.selectedPlan = null;
         subscriptionSection.classList.remove('has-selection');
+        // Clear the native selling plan hidden input so Dawn doesn't submit
+        // a stale selling plan if it handles the form on its own.
+        this.setNativeSellingPlanInput('');
       } else {
         this.selectedPlan = {
           value,
@@ -367,9 +392,31 @@
           groupName: e.target.dataset.groupName,
         };
         subscriptionSection.classList.add('has-selection');
+        // Set the native selling plan hidden input as a fallback.
+        // If Dawn's <product-form> handler fires despite our interception
+        // (Safari bug), at least the correct selling plan will be included.
+        this.setNativeSellingPlanInput(this.selectedPlan.sellingPlanId || '');
       }
 
       this.saveSelection(value);
+    }
+
+    /**
+     * Set the native hidden input[name="selling_plan"] value in the product form.
+     * This ensures that even if Dawn's native form handler fires (e.g. in Safari),
+     * the correct selling plan is submitted.
+     */
+    setNativeSellingPlanInput(value) {
+      if (!this.productForm) return;
+      let input = this.productForm.querySelector('input[name="selling_plan"]');
+      if (!input) {
+        // Create the hidden input if it doesn't exist
+        input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'selling_plan';
+        this.productForm.appendChild(input);
+      }
+      input.value = value;
     }
 
     async handleFormSubmit(e) {
@@ -380,9 +427,15 @@
         return; // Normal form submission continues
       }
 
-      // Subscription selected — intercept the form submission
+      // Guard against double execution (button click + form submit both fire)
+      if (this._submitting) return;
+      this._submitting = true;
+
+      // Subscription selected — intercept the form submission.
+      // Use stopImmediatePropagation to prevent Dawn theme's <product-form>
+      // custom element from also handling this event (causes duplicate cart items in Safari).
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
 
       const statusEl = this.container.querySelector('.ssma-product-widget__status');
       statusEl.style.display = 'block';
@@ -449,6 +502,7 @@
         console.error('Subscribe & Save Product: Error during add to cart:', error);
         statusEl.textContent = error.message || 'Error adding to cart. Please try again.';
         statusEl.className = 'ssma-product-widget__status ssma-product-widget__status--error';
+        this._submitting = false; // Allow retry on error
       }
     }
 
