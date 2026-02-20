@@ -141,7 +141,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   console.log(`Order note_attributes:`, JSON.stringify(order.note_attributes));
   console.log(`Order line_items count:`, order.line_items?.length);
 
-  // Check for idempotency - has this webhook already been processed?
+  // Check for idempotency — two layers:
+  // 1. Check if a PickupSchedule already exists for this order (definitive)
+  // 2. Check WebhookEvent as a secondary guard
+  // NOTE: We do NOT save WebhookEvent early because Shopify sends multiple
+  // concurrent webhook deliveries. If we save WebhookEvent before processing,
+  // concurrent requests will pass the check, then one PickupSchedule.create
+  // succeeds while others fail with unique constraint — and retries will be
+  // blocked by the existing WebhookEvent.
+  const existingPickup = await prisma.pickupSchedule.findFirst({
+    where: {
+      shop,
+      shopifyOrderId: order.admin_graphql_api_id,
+    },
+  });
+
+  if (existingPickup) {
+    console.log(`PickupSchedule already exists for order ${order.name} (${existingPickup.id}), skipping`);
+    return json({ message: "Already processed" });
+  }
+
   const existingEvent = await prisma.webhookEvent.findUnique({
     where: {
       shop_topic_shopifyId: {
@@ -153,21 +172,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
 
   if (existingEvent) {
-    console.log(`Webhook already processed for order ${order.id}`);
-    return json({ message: "Already processed" });
+    // WebhookEvent exists but no PickupSchedule — previous attempt may have failed.
+    // Allow reprocessing by continuing (don't return early).
+    console.log(`WebhookEvent exists for order ${order.id} but no PickupSchedule — reprocessing`);
   }
-
-  // Save WebhookEvent EARLY for idempotency and debugging.
-  // This ensures we track every webhook we receive, even if processing fails later.
-  await prisma.webhookEvent.create({
-    data: {
-      shop,
-      topic: "orders/create",
-      shopifyId: order.id.toString(),
-      payload: payload as object,
-    },
-  });
-  console.log(`Saved webhook event for order ${order.name} (ID: ${order.id})`);
 
   // Extract pickup attributes from the order
   // Try both note_attributes (REST API) and check for any custom attributes format
@@ -323,7 +331,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!pickupDateRaw || !pickupTimeSlot) {
     if (!isSubscriptionOrderEarly) {
       console.log(`Order ${order.name} has no pickup info and is not a subscription, skipping`);
-      // WebhookEvent already saved above
+      // Save WebhookEvent before returning so we don't reprocess this order
+      await prisma.webhookEvent.upsert({
+        where: { shop_topic_shopifyId: { shop, topic: "orders/create", shopifyId: order.id.toString() } },
+        update: {},
+        create: { shop, topic: "orders/create", shopifyId: order.id.toString(), payload: payload as object },
+      });
       return json({ message: "No pickup info" });
     }
     // For subscription orders without pickup info, continue processing below.
@@ -613,10 +626,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Non-critical — continue even if tagging fails
     }
 
-    // WebhookEvent already saved at top of handler
+    // Save WebhookEvent AFTER successful processing.
+    // Using upsert to handle concurrent requests gracefully.
+    await prisma.webhookEvent.upsert({
+      where: { shop_topic_shopifyId: { shop, topic: "orders/create", shopifyId: order.id.toString() } },
+      update: {},
+      create: { shop, topic: "orders/create", shopifyId: order.id.toString(), payload: payload as object },
+    });
+    console.log(`Saved webhook event for order ${order.name}`);
+
     return json({ success: true, pickupScheduleId: pickupSchedule.id });
   } catch (error) {
+    // Handle race condition: if another concurrent request already created
+    // the PickupSchedule (unique constraint on shop+shopifyOrderId), treat
+    // as success rather than returning 500.
+    const errorMsg = String(error);
+    if (errorMsg.includes("Unique constraint") || errorMsg.includes("P2002")) {
+      console.log(`Concurrent request already created PickupSchedule for order ${order.name}, treating as success`);
+      // Still save WebhookEvent
+      await prisma.webhookEvent.upsert({
+        where: { shop_topic_shopifyId: { shop, topic: "orders/create", shopifyId: order.id.toString() } },
+        update: {},
+        create: { shop, topic: "orders/create", shopifyId: order.id.toString(), payload: payload as object },
+      }).catch(() => {}); // Ignore if this also fails
+      return json({ success: true, message: "Processed by concurrent request" });
+    }
+
     console.error("Error creating pickup schedule:", error);
+    // Don't save WebhookEvent on failure — allow retry
     return json({ error: "Failed to create pickup schedule" }, { status: 500 });
   }
 };
