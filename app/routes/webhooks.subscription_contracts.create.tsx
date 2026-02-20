@@ -67,6 +67,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
+    // Check if orders/create webhook already created a subscription for this customer
+    // with matching frequency. The orders/create webhook stores the order GID as
+    // shopifyContractId, while this webhook uses the contract GID — so the unique
+    // constraint alone doesn't prevent duplicates.
+    const recentDuplicateCheck = await prisma.subscriptionPickup.findFirst({
+      where: {
+        shop,
+        customerEmail: contract.customer.email,
+        status: "ACTIVE",
+        createdAt: {
+          // Only check subscriptions created in the last 5 minutes (both webhooks fire close together)
+          gte: new Date(Date.now() - 5 * 60 * 1000),
+        },
+      },
+    });
+
+    if (recentDuplicateCheck) {
+      console.log(`Subscription already exists for customer ${contract.customer.email} (created by orders/create webhook: ${recentDuplicateCheck.id}). Skipping duplicate from subscription_contracts/create.`);
+
+      // Still log the webhook for idempotency
+      await prisma.webhookEvent.create({
+        data: {
+          shop,
+          topic: "subscription_contracts/create",
+          shopifyId: contract.admin_graphql_api_id,
+          payload: payload as object,
+        },
+      });
+
+      return json({ message: "Duplicate - subscription already created by orders/create webhook" });
+    }
+
     // Extract customer info
     const customerName = `${contract.customer.first_name} ${contract.customer.last_name}`.trim();
     const customerEmail = contract.customer.email || null;

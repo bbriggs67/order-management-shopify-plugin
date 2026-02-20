@@ -122,3 +122,4 @@ npx prisma migrate deploy                       # Production (Railway runs this)
 
 - `CHANGE_HISTORY.md` - Detailed change log with file lists
 - `PRODUCTION_TRANSITION_PLAN.md` - Production rollout plan
+- `SHOPIFY_COMPLIANCE.md` - Shopify Dev Docs compliance report & known non-blocking issues

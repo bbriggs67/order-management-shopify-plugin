@@ -2,6 +2,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { findFrequencyByLabel } from "../services/subscription-plans.server";
 
 interface SubscriptionContractPayload {
   admin_graphql_api_id: string;
@@ -58,9 +59,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Update customer info and status
     const customerName = `${contract.customer.first_name} ${contract.customer.last_name}`.trim();
-    const frequency =
-      contract.billing_policy.interval_count === 1 ? "WEEKLY" : "BIWEEKLY";
-    const discountPercent = frequency === "WEEKLY" ? 10 : 5;
+
+    // Map interval_count to frequency
+    let frequency: string;
+    switch (contract.billing_policy.interval_count) {
+      case 1: frequency = "WEEKLY"; break;
+      case 3: frequency = "TRIWEEKLY"; break;
+      default: frequency = "BIWEEKLY"; break;
+    }
+
+    // Look up discount from DB, fall back to hardcoded defaults
+    const dbFrequency = await findFrequencyByLabel(shop, frequency);
+    const discountPercent = dbFrequency
+      ? dbFrequency.discountPercent
+      : frequency === "WEEKLY" ? 10 : frequency === "TRIWEEKLY" ? 2.5 : 5;
 
     await prisma.subscriptionPickup.update({
       where: { id: subscription.id },

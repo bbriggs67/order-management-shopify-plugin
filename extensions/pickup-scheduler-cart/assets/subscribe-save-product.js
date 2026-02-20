@@ -507,7 +507,7 @@
               value: data.type,
               frequency: data.frequency,
               discount: data.discount,
-              discountCode: radio.dataset.discountCode || '',
+              sellingPlanId: radio.dataset.sellingPlanId || '',
               groupName: radio.dataset.groupName || '',
             };
             const subscriptionSection = this.container.querySelector(

@@ -16,6 +16,7 @@ import {
   calculateBillingDate,
   extractTimeSlotStart,
 } from "./subscription-billing.server";
+import { findFrequencyByLabel } from "./subscription-plans.server";
 
 /**
  * Process all active subscriptions that need pickup generation
@@ -281,7 +282,7 @@ function calculateNextPickupDate(
   preferredDay: number,
   frequency: string
 ): Date {
-  const increment = frequency === "WEEKLY" ? 7 : 14;
+  const increment = frequency === "WEEKLY" ? 7 : frequency === "TRIWEEKLY" ? 21 : 14;
   const nextDate = new Date(afterDate);
   nextDate.setDate(nextDate.getDate() + increment);
 
@@ -357,27 +358,30 @@ export async function createSubscriptionFromOrder(
     return existingSubscription.id;
   }
 
-  // Use provided discount or fall back to defaults
+  // Look up discount/billing from DB, fall back to overrides or hardcoded defaults
   let discountPercent: number;
+  let billingLeadHours: number;
+
   if (discountPercentOverride !== undefined) {
     discountPercent = discountPercentOverride;
+    billingLeadHours = billingLeadHoursOverride ?? 48;
   } else {
-    switch (frequency) {
-      case "WEEKLY":
-        discountPercent = 10;
-        break;
-      case "BIWEEKLY":
-        discountPercent = 5;
-        break;
-      case "TRIWEEKLY":
-        discountPercent = 2.5;
-        break;
-      default:
-        discountPercent = 5;
+    const dbFrequency = await findFrequencyByLabel(shop, frequency);
+    if (dbFrequency) {
+      discountPercent = dbFrequency.discountPercent;
+      billingLeadHours = billingLeadHoursOverride ?? dbFrequency.group.billingLeadHours;
+      console.log(`Using DB frequency for order: discount=${discountPercent}%, billingLeadHours=${billingLeadHours}`);
+    } else {
+      console.warn(`No DB frequency found for ${frequency}, using hardcoded defaults`);
+      switch (frequency) {
+        case "WEEKLY": discountPercent = 10; break;
+        case "BIWEEKLY": discountPercent = 5; break;
+        case "TRIWEEKLY": discountPercent = 2.5; break;
+        default: discountPercent = 5;
+      }
+      billingLeadHours = billingLeadHoursOverride ?? 48;
     }
   }
-
-  const billingLeadHours = billingLeadHoursOverride ?? 48;
 
   const nextPickupDate = calculateNextPickupDateFromToday(preferredDay, frequency);
 
@@ -427,27 +431,30 @@ export async function createSubscriptionFromContract(
   discountPercentOverride?: number,
   billingLeadHoursOverride?: number
 ): Promise<string> {
-  // Use provided discount or fall back to defaults
+  // Look up discount/billing from DB, fall back to overrides or hardcoded defaults
   let discountPercent: number;
+  let billingLeadHours: number;
+
   if (discountPercentOverride !== undefined) {
     discountPercent = discountPercentOverride;
+    billingLeadHours = billingLeadHoursOverride ?? 48;
   } else {
-    switch (frequency) {
-      case "WEEKLY":
-        discountPercent = 10;
-        break;
-      case "BIWEEKLY":
-        discountPercent = 5;
-        break;
-      case "TRIWEEKLY":
-        discountPercent = 2.5;
-        break;
-      default:
-        discountPercent = 5;
+    const dbFrequency = await findFrequencyByLabel(shop, frequency);
+    if (dbFrequency) {
+      discountPercent = dbFrequency.discountPercent;
+      billingLeadHours = billingLeadHoursOverride ?? dbFrequency.group.billingLeadHours;
+      console.log(`Using DB frequency for contract: discount=${discountPercent}%, billingLeadHours=${billingLeadHours}`);
+    } else {
+      console.warn(`No DB frequency found for ${frequency}, using hardcoded defaults`);
+      switch (frequency) {
+        case "WEEKLY": discountPercent = 10; break;
+        case "BIWEEKLY": discountPercent = 5; break;
+        case "TRIWEEKLY": discountPercent = 2.5; break;
+        default: discountPercent = 5;
+      }
+      billingLeadHours = billingLeadHoursOverride ?? 48;
     }
   }
-
-  const billingLeadHours = billingLeadHoursOverride ?? 48;
 
   const nextPickupDate = calculateNextPickupDateFromToday(preferredDay, frequency);
 

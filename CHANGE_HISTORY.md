@@ -2,6 +2,69 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-20 - Fix Order Tags, Calendar, and Orders Page for Subscription Orders
+
+**3 issues from live test order #1865:**
+
+**Fix 1: Shopify order tags not populated**
+- Webhook handler never wrote tags to Shopify orders after creation.
+- Added `tagsAdd` GraphQL mutation after creating PickupSchedule.
+- Tags now include: time slot, pickup date, day of week, and "Subscription" flag.
+
+**Fix 2+3: SSMA Orders page and Calendar empty**
+- Root cause: When subscription order had no pickup date/time in cart attributes,
+  the webhook took an early-return path that created a `SubscriptionPickup` but
+  NO `PickupSchedule`. Both Orders and Calendar pages query `PickupSchedule`.
+- Fixed: Removed the early-return for subscription orders. Now falls through to
+  the main processing path with fallback date (today) and time slot ("TBD") when
+  cart attributes are missing. Always creates a `PickupSchedule` + `SubscriptionPickup`
+  + future pickup schedules.
+
+**Fix 4: TRIWEEKLY frequency calculation bug (from code review)**
+- `calculateNextPickupDate()` used `frequency === "WEEKLY" ? 7 : 14` — TRIWEEKLY
+  got 14 days instead of 21.
+- Fixed in both `subscription.server.ts` and `subscription-billing.server.ts`.
+
+**Fix 5: discountPercent Int → Float (compliance #1)**
+- `SubscriptionPickup.discountPercent` was `Int`, truncating 2.5% to 2 for triweekly.
+- Changed to `Float` in schema + created migration.
+
+**Fix 6: Hardcoded discount defaults → DB lookup (compliance #3)**
+- `createSubscriptionFromOrder()` and `createSubscriptionFromContract()` used hardcoded
+  discount percentages. Now calls `findFrequencyByLabel()` to read from
+  `SubscriptionPlanFrequency` table, with hardcoded fallback if DB lookup fails.
+
+**Fix 7: subscription_contracts.update ignores TRIWEEKLY (compliance #4)**
+- Only mapped `interval_count === 1` to WEEKLY, everything else defaulted to BIWEEKLY.
+- Now properly maps: 1=WEEKLY, 3=TRIWEEKLY, default=BIWEEKLY.
+- Also uses DB lookup for discount percent.
+
+**Fix 8: restoreSelection() stale discountCode property (compliance #5)**
+- `subscribe-save-product.js` `restoreSelection()` set `discountCode` instead of
+  `sellingPlanId`, causing restored selections to miss the selling plan ID.
+
+**Fix 9: Duplicate subscriptions from dual webhooks (compliance #6)**
+- Both `orders/create` and `subscription_contracts/create` could create duplicate
+  `SubscriptionPickup` records for the same order (different GIDs bypass unique constraint).
+- Added 5-minute duplicate check in `subscription_contracts/create` webhook.
+
+**New file:**
+- `SHOPIFY_COMPLIANCE.md` — Shopify Dev Docs compliance report & known non-blocking issues
+
+**Files Modified:**
+- `app/routes/webhooks.orders.create.tsx` — Tags, fallback date, unified flow
+- `app/services/subscription.server.ts` — TRIWEEKLY fix, DB lookup for discounts
+- `app/services/subscription-billing.server.ts` — TRIWEEKLY fix
+- `app/routes/webhooks.subscription_contracts.update.tsx` — TRIWEEKLY + DB lookup
+- `app/routes/webhooks.subscription_contracts.create.tsx` — Duplicate prevention
+- `extensions/pickup-scheduler-cart/assets/subscribe-save-product.js` — restoreSelection fix
+- `prisma/schema.prisma` — discountPercent Int → Float
+- `prisma/migrations/20260220_discount_percent_float/migration.sql` (NEW)
+- `CLAUDE.md` — Added reference to SHOPIFY_COMPLIANCE.md
+- `SHOPIFY_COMPLIANCE.md` (NEW)
+
+---
+
 ### 2026-02-16 - Critical Subscription Pipeline Fixes
 
 **Root Cause Analysis:** Identified 3 compounding issues causing subscriptions to not

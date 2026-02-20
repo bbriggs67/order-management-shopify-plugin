@@ -280,90 +280,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const isSubscriptionOrderEarly = isSSMASubscription || subscriptionLineItem;
 
   if (!pickupDateRaw || !pickupTimeSlot) {
-    // Even without pickup info, create subscription record if this is a subscription order
-    if (isSubscriptionOrderEarly) {
-      console.log(`Order ${order.name} is a subscription order but has no pickup info - creating subscription record only`);
-
-      try {
-        const customerName = order.customer
-          ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
-          : order.billing_address
-            ? `${order.billing_address.first_name} ${order.billing_address.last_name}`.trim()
-            : "Guest";
-        const customerEmail = order.email || order.customer?.email || null;
-        const customerPhone =
-          order.customer?.phone ||
-          order.billing_address?.phone ||
-          order.shipping_address?.phone ||
-          order.phone ||
-          null;
-
-        let frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY" = "WEEKLY";
-        let preferredDay: number;
-        let productTitle: string;
-
-        if (isSSMASubscription) {
-          // NEW: Use SSMA cart attributes
-          console.log(`Detected SSMA subscription: ${subscriptionFrequencyAttr}`);
-          frequency = subscriptionFrequencyAttr as "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY";
-          preferredDay = subscriptionPreferredDayAttr
-            ? parseInt(subscriptionPreferredDayAttr, 10)
-            : new Date().getDay();
-          productTitle = order.line_items[0]?.title || "Subscription";
-        } else if (subscriptionLineItem) {
-          // LEGACY: Use selling plan detection
-          const sellingPlanName = subscriptionLineItem.selling_plan_allocation?.selling_plan.name || "";
-          console.log(`Detected legacy subscription with selling plan: ${sellingPlanName}`);
-
-          if (sellingPlanName.toLowerCase().includes("every 2 weeks") ||
-              sellingPlanName.toLowerCase().includes("bi-weekly") ||
-              sellingPlanName.toLowerCase().includes("biweekly")) {
-            frequency = "BIWEEKLY";
-          } else if (sellingPlanName.toLowerCase().includes("every 3 weeks") ||
-                     sellingPlanName.toLowerCase().includes("tri-weekly") ||
-                     sellingPlanName.toLowerCase().includes("triweekly")) {
-            frequency = "TRIWEEKLY";
-          }
-
-          preferredDay = new Date().getDay();
-          productTitle = subscriptionLineItem.title;
-        } else {
-          throw new Error("Subscription detection inconsistency");
-        }
-
-        // Create subscription record
-        const subscriptionId = await createSubscriptionFromOrder(
-          shop,
-          order.admin_graphql_api_id,
-          order.name, // Order number like "#1847"
-          customerName,
-          customerEmail,
-          customerPhone,
-          frequency,
-          preferredDay,
-          "TBD", // Pickup time slot to be determined
-          productTitle
-        );
-
-        console.log(`Created subscription ${subscriptionId} from order ${order.name} (no pickup info, method: ${isSSMASubscription ? 'SSMA attributes' : 'selling plan'})`);
-      } catch (subError) {
-        console.error("Failed to create subscription from order:", subError);
-      }
-    } else {
+    if (!isSubscriptionOrderEarly) {
       console.log(`Order ${order.name} has no pickup info and is not a subscription, skipping`);
+
+      // Log the webhook for idempotency
+      await prisma.webhookEvent.create({
+        data: {
+          shop,
+          topic: "orders/create",
+          shopifyId: order.id.toString(),
+          payload: payload as object,
+        },
+      });
+
+      return json({ message: "No pickup info" });
     }
-
-    // Log the webhook for idempotency
-    await prisma.webhookEvent.create({
-      data: {
-        shop,
-        topic: "orders/create",
-        shopifyId: order.id.toString(),
-        payload: payload as object,
-      },
-    });
-
-    return json({ message: isSubscriptionOrderEarly ? "Subscription created (no pickup info)" : "No pickup info" });
+    // For subscription orders without pickup info, continue processing below.
+    // We'll use fallback date/time so the order still appears in SSMA Orders & Calendar.
+    console.log(`Order ${order.name} is a subscription order with missing pickup info - will use fallback date/time`);
   }
 
   // Parse the pickup date
@@ -371,52 +305,60 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // 1. "Friday, January 17 (2025-01-17)" - with ISO date in parentheses
   // 2. "Wednesday, February 25" - day name and date without year
   // 3. "2025-01-17" - ISO date
+  // 4. null/undefined - fallback to today (for subscription orders without pickup info)
   let pickupDate: Date;
-  const isoDateMatch = pickupDateRaw.match(/\((\d{4}-\d{2}-\d{2})\)/);
-  const plainIsoMatch = pickupDateRaw.match(/^(\d{4}-\d{2}-\d{2})$/);
+  const effectivePickupTimeSlot = pickupTimeSlot || "TBD";
 
-  if (isoDateMatch) {
-    // Format: "Friday, January 17 (2025-01-17)"
-    pickupDate = new Date(isoDateMatch[1] + "T12:00:00");
-    console.log(`Parsed date from ISO in parentheses: ${pickupDate}`);
-  } else if (plainIsoMatch) {
-    // Format: "2025-01-17"
-    pickupDate = new Date(plainIsoMatch[1] + "T12:00:00");
-    console.log(`Parsed date from plain ISO: ${pickupDate}`);
-  } else {
-    // Format: "Wednesday, February 25" - need to infer year
-    // Try parsing with current year, and if that date is in the past, use next year
-    const currentYear = new Date().getFullYear();
-
-    // Remove day name prefix to get just "February 25"
-    const withoutDayName = pickupDateRaw.replace(/^[A-Za-z]+,\s*/, "");
-
-    // Parse the month and day, then construct with T12:00:00 to avoid timezone issues
-    // (midnight UTC = previous day in Pacific time, so we use noon instead)
-    let tempDate = new Date(`${withoutDayName}, ${currentYear}`);
-    if (isNaN(tempDate.getTime())) {
-      tempDate = new Date(`${pickupDateRaw}, ${currentYear}`);
-    }
-
-    if (isNaN(tempDate.getTime())) {
-      console.error(`Could not parse pickup date: ${pickupDateRaw}`);
-      return json({ error: "Invalid pickup date" }, { status: 400 });
-    }
-
-    // If the parsed date is more than 7 days in the past, assume it's for next year
+  if (!pickupDateRaw) {
+    // Fallback: subscription order with no pickup date — use today at noon
     const now = new Date();
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    if (tempDate < weekAgo) {
-      tempDate.setFullYear(currentYear + 1);
-      console.log(`Date was in the past, adjusted to next year: ${tempDate}`);
-    }
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    pickupDate = new Date(`${y}-${m}-${d}T12:00:00`);
+    console.log(`No pickup date provided, using today as fallback: ${pickupDate}`);
+  } else {
+    const isoDateMatch = pickupDateRaw.match(/\((\d{4}-\d{2}-\d{2})\)/);
+    const plainIsoMatch = pickupDateRaw.match(/^(\d{4}-\d{2}-\d{2})$/);
 
-    // Re-construct date with noon to avoid UTC midnight → Pacific previous-day issue
-    const month = String(tempDate.getMonth() + 1).padStart(2, "0");
-    const day = String(tempDate.getDate()).padStart(2, "0");
-    const year = tempDate.getFullYear();
-    pickupDate = new Date(`${year}-${month}-${day}T12:00:00`);
-    console.log(`Parsed date from human-readable format: ${pickupDate}`);
+    if (isoDateMatch) {
+      // Format: "Friday, January 17 (2025-01-17)"
+      pickupDate = new Date(isoDateMatch[1] + "T12:00:00");
+      console.log(`Parsed date from ISO in parentheses: ${pickupDate}`);
+    } else if (plainIsoMatch) {
+      // Format: "2025-01-17"
+      pickupDate = new Date(plainIsoMatch[1] + "T12:00:00");
+      console.log(`Parsed date from plain ISO: ${pickupDate}`);
+    } else {
+      // Format: "Wednesday, February 25" - need to infer year
+      const currentYear = new Date().getFullYear();
+      const withoutDayName = pickupDateRaw.replace(/^[A-Za-z]+,\s*/, "");
+
+      let tempDate = new Date(`${withoutDayName}, ${currentYear}`);
+      if (isNaN(tempDate.getTime())) {
+        tempDate = new Date(`${pickupDateRaw}, ${currentYear}`);
+      }
+
+      if (isNaN(tempDate.getTime())) {
+        console.error(`Could not parse pickup date: ${pickupDateRaw}`);
+        return json({ error: "Invalid pickup date" }, { status: 400 });
+      }
+
+      // If the parsed date is more than 7 days in the past, assume it's for next year
+      const now = new Date();
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      if (tempDate < weekAgo) {
+        tempDate.setFullYear(currentYear + 1);
+        console.log(`Date was in the past, adjusted to next year: ${tempDate}`);
+      }
+
+      // Re-construct date with noon to avoid UTC midnight → Pacific previous-day issue
+      const month = String(tempDate.getMonth() + 1).padStart(2, "0");
+      const day = String(tempDate.getDate()).padStart(2, "0");
+      const year = tempDate.getFullYear();
+      pickupDate = new Date(`${year}-${month}-${day}T12:00:00`);
+      console.log(`Parsed date from human-readable format: ${pickupDate}`);
+    }
   }
 
   // Get customer info
@@ -445,7 +387,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         customerEmail,
         customerPhone,
         pickupDate,
-        pickupTimeSlot,
+        pickupTimeSlot: effectivePickupTimeSlot,
         pickupStatus: "SCHEDULED",
         pickupLocationId: pickupLocationId || undefined,
         orderItems: {
@@ -471,12 +413,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     } catch (error) {
       console.error("Failed to create Google Calendar event:", error);
-      // Continue even if calendar event creation fails
     }
 
     // Check if this is a subscription order and create subscription record
-    // PRIMARY: Use SSMA cart attributes (new system)
-    // FALLBACK: Use selling plan detection (legacy/backward compatibility)
     const isSubscriptionOrder = isSSMASubscription || subscriptionLineItem;
 
     if (isSubscriptionOrder) {
@@ -486,24 +425,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         let productTitle: string;
 
         if (isSSMASubscription) {
-          // NEW: Use SSMA cart attributes (primary method)
           console.log(`Detected SSMA subscription order via cart attributes: ${subscriptionFrequencyAttr}`);
-
           frequency = subscriptionFrequencyAttr as "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY";
-
-          // Get preferred day from attribute or fallback to pickup date
           preferredDay = subscriptionPreferredDayAttr
             ? parseInt(subscriptionPreferredDayAttr, 10)
             : pickupDate.getDay();
-
-          // Use first line item title
           productTitle = order.line_items[0]?.title || "Subscription";
         } else if (subscriptionLineItem) {
-          // LEGACY: Use selling plan detection (backward compatibility)
           const sellingPlanName = subscriptionLineItem.selling_plan_allocation?.selling_plan.name || "";
           console.log(`Detected legacy subscription order with selling plan: ${sellingPlanName}`);
 
-          // Determine frequency from selling plan name
           if (sellingPlanName.toLowerCase().includes("every 2 weeks") ||
               sellingPlanName.toLowerCase().includes("bi-weekly") ||
               sellingPlanName.toLowerCase().includes("biweekly")) {
@@ -514,26 +445,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             frequency = "TRIWEEKLY";
           }
 
-          // Get preferred day from pickup date (day of week)
           preferredDay = pickupDate.getDay();
           productTitle = subscriptionLineItem.title;
         } else {
-          // This shouldn't happen, but handle gracefully
           console.error("isSubscriptionOrder is true but neither method detected subscription");
           throw new Error("Subscription detection inconsistency");
         }
 
-        // Create subscription record from order
         const subscriptionId = await createSubscriptionFromOrder(
           shop,
           order.admin_graphql_api_id,
-          order.name, // Order number like "#1847"
+          order.name,
           customerName,
           customerEmail,
           customerPhone,
           frequency,
           preferredDay,
-          pickupTimeSlot,
+          effectivePickupTimeSlot,
           productTitle
         );
 
@@ -553,14 +481,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           });
 
           if (subscription && subscription.nextPickupDate) {
-            const frequencyDays = subscription.frequency === "BIWEEKLY" ? 14 : subscription.frequency === "TRIWEEKLY" ? 21 : 7;
+            const frequencyDays = frequency === "WEEKLY" ? 7 : frequency === "TRIWEEKLY" ? 21 : 14;
 
-            // Generate 4 weeks of future pickups (starting from week 1, since week 0 is the current order)
             for (let week = 1; week <= 4; week++) {
               const futurePickupDate = new Date(pickupDate);
               futurePickupDate.setDate(futurePickupDate.getDate() + (week * frequencyDays));
 
-              // Create future pickup schedule
               const futurePickup = await prisma.pickupSchedule.create({
                 data: {
                   shop,
@@ -570,14 +496,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   customerEmail,
                   customerPhone,
                   pickupDate: futurePickupDate,
-                  pickupTimeSlot,
+                  pickupTimeSlot: effectivePickupTimeSlot,
                   pickupStatus: "SCHEDULED",
                   pickupLocationId: pickupLocationId || undefined,
                   subscriptionPickupId: subscriptionId,
                 },
               });
 
-              // Create Google Calendar event for future pickup
               try {
                 await createPickupEvent(shop, futurePickup.id);
               } catch (calError) {
@@ -590,12 +515,60 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           }
         } catch (futureError) {
           console.error("Failed to generate future pickups:", futureError);
-          // Continue even if future pickup generation fails
         }
       } catch (subError) {
         console.error("Failed to create subscription from order:", subError);
-        // Continue even if subscription creation fails - the order is still valid
       }
+    }
+
+    // Add tags to the Shopify order: time slot, pickup date, and subscription flag
+    try {
+      const { admin: tagAdmin } = await unauthenticated.admin(shop);
+
+      // Format pickup date for tag (e.g., "February 20 2026")
+      const pickupDateTag = pickupDate.toLocaleDateString("en-US", {
+        timeZone: "America/Los_Angeles",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      });
+
+      const tags: string[] = [
+        effectivePickupTimeSlot,
+        pickupDateTag,
+        pickupDate.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "long" }),
+      ];
+
+      if (isSubscriptionOrder) {
+        tags.push("Subscription");
+      }
+
+      await tagAdmin.graphql(`
+        mutation addOrderTags($id: ID!, $tags: [String!]!) {
+          tagsAdd(id: $id, tags: $tags) {
+            node {
+              ... on Order {
+                id
+                tags
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `, {
+        variables: {
+          id: order.admin_graphql_api_id,
+          tags,
+        },
+      });
+
+      console.log(`Added tags to order ${order.name}: ${tags.join(", ")}`);
+    } catch (tagError) {
+      console.error("Failed to add tags to order:", tagError);
+      // Non-critical — continue even if tagging fails
     }
 
     // Log the webhook for idempotency

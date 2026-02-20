@@ -195,7 +195,7 @@ export function calculateNextPickupDate(
   preferredDay: number,
   frequency: string
 ): Date {
-  const increment = frequency === "WEEKLY" ? 7 : 14;
+  const increment = frequency === "WEEKLY" ? 7 : frequency === "TRIWEEKLY" ? 21 : 14;
   const nextDate = new Date(currentPickupDate);
   nextDate.setDate(nextDate.getDate() + increment);
 

@@ -263,7 +263,7 @@ model SubscriptionPickup {
   preferredTimeSlot   String // e.g., "12:00 PM - 2:00 PM"
   preferredTimeSlotStart String? // "12:00" - extracted start time for billing calc
   frequency           String // "WEEKLY", "BIWEEKLY"
-  discountPercent     Int // 10 for weekly, 5 for biweekly
+  discountPercent     Float // 10 for weekly, 5 for biweekly, 2.5 for triweekly
   nextPickupDate      DateTime?
   nextBillingDate     DateTime? // Calculated based on billingLeadHours
   status              SubStatus @default(ACTIVE)
