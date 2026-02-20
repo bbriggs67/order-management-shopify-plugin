@@ -39,3 +39,14 @@
 ### 6. Potential duplicate subscriptions from dual webhook handlers — FIXED
 - Added 5-minute duplicate check in `subscription_contracts/create` webhook
 - If `orders/create` already created a subscription for the same customer, skips creation
+
+## PRE-LAUNCH TODO — Required Before Going Fully Live
+
+### 7. Customer Account Subscription Management Extension — TODO
+- **Problem**: The customer-facing "Subscription management" page on Shopify account shows "No subscriptions purchased" for SSMA orders. This page is powered by the legacy Shopify Subscriptions app, which only displays contracts it owns. SSMA-owned subscription contracts are invisible there.
+- **Solution**: Build a Customer Account UI Extension (`customer-account.page.render`) for SSMA that:
+  - Queries SSMA subscription data via app proxy
+  - Displays active/paused subscriptions with frequency, next pickup date, items
+  - Provides skip/pause/cancel/reschedule actions
+- **Reference**: [Shopify Customer Account UI Extensions](https://shopify.dev/docs/api/customer-account-ui-extensions), [Subscription Extensions](https://shopify.dev/docs/apps/build/purchase-options/subscriptions/subscriptions-app/extensions)
+- **Priority**: Must be done before decommissioning the legacy Shopify Subscriptions app and going live on the production theme

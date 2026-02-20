@@ -96,7 +96,36 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   console.log("Shopify Topic Header:", request.headers.get("x-shopify-topic"));
   console.log("Shopify Shop Header:", request.headers.get("x-shopify-shop-domain"));
 
-  const { shop, topic, payload } = await authenticate.webhook(request);
+  // Authenticate the webhook — HMAC validation + session loading.
+  // With expiringOfflineAccessTokens enabled, session token refresh may fail
+  // (e.g. during Railway cold starts or token expiry edge cases).
+  // We must handle this gracefully to avoid losing webhooks entirely.
+  let shop: string;
+  let topic: string;
+  let payload: unknown;
+  try {
+    const authResult = await authenticate.webhook(request);
+    shop = authResult.shop;
+    topic = authResult.topic;
+    payload = authResult.payload;
+  } catch (authError) {
+    console.error("=== WEBHOOK AUTHENTICATION FAILED ===");
+    console.error("Error:", authError);
+    // If authentication fails, we can't process the webhook securely.
+    // Return 200 to prevent Shopify from retrying indefinitely if the
+    // error is due to token refresh failure (not HMAC). But log it so
+    // we can investigate.
+    // Check if this is likely an HMAC failure vs a token refresh failure.
+    const errorMsg = String(authError);
+    if (errorMsg.includes("HMAC") || errorMsg.includes("signature") || errorMsg.includes("unauthorized")) {
+      console.error("HMAC validation failed - rejecting webhook");
+      return json({ error: "Authentication failed" }, { status: 401 });
+    }
+    // Token refresh failure — return 500 so Shopify retries later
+    // (when the session may have been refreshed by a page load)
+    console.error("Session/token error during webhook auth - returning 500 for retry");
+    return json({ error: "Session error, will retry" }, { status: 500 });
+  }
 
   console.log(`Authenticated webhook: ${topic} for shop: ${shop}`);
 
@@ -127,6 +156,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.log(`Webhook already processed for order ${order.id}`);
     return json({ message: "Already processed" });
   }
+
+  // Save WebhookEvent EARLY for idempotency and debugging.
+  // This ensures we track every webhook we receive, even if processing fails later.
+  await prisma.webhookEvent.create({
+    data: {
+      shop,
+      topic: "orders/create",
+      shopifyId: order.id.toString(),
+      payload: payload as object,
+    },
+  });
+  console.log(`Saved webhook event for order ${order.name} (ID: ${order.id})`);
 
   // Extract pickup attributes from the order
   // Try both note_attributes (REST API) and check for any custom attributes format
@@ -282,17 +323,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!pickupDateRaw || !pickupTimeSlot) {
     if (!isSubscriptionOrderEarly) {
       console.log(`Order ${order.name} has no pickup info and is not a subscription, skipping`);
-
-      // Log the webhook for idempotency
-      await prisma.webhookEvent.create({
-        data: {
-          shop,
-          topic: "orders/create",
-          shopifyId: order.id.toString(),
-          payload: payload as object,
-        },
-      });
-
+      // WebhookEvent already saved above
       return json({ message: "No pickup info" });
     }
     // For subscription orders without pickup info, continue processing below.
@@ -582,16 +613,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Non-critical — continue even if tagging fails
     }
 
-    // Log the webhook for idempotency
-    await prisma.webhookEvent.create({
-      data: {
-        shop,
-        topic: "orders/create",
-        shopifyId: order.id.toString(),
-        payload: payload as object,
-      },
-    });
-
+    // WebhookEvent already saved at top of handler
     return json({ success: true, pickupScheduleId: pickupSchedule.id });
   } catch (error) {
     console.error("Error creating pickup schedule:", error);

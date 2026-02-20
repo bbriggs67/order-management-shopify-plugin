@@ -202,30 +202,58 @@
       // Save pickup attributes to cart via AJAX before redirecting to checkout.
       // Hidden form inputs only work on normal form POST — since we intercept and
       // redirect with window.location.href, we must persist them via /cart/update.js.
+      //
+      // IMPORTANT: /cart/update.js REPLACES all attributes (does not merge).
+      // We must first read the existing cart attributes (e.g. Subscription Enabled,
+      // Subscription Discount set by subscribe-save-product.js) and merge them
+      // with our pickup attributes to avoid overwriting subscription data.
       e.preventDefault();
       e.stopPropagation();
 
-      const pickupAttributes = {
+      var pickupAttributes = {
         'Pickup Date': dateInput.value,
         'Pickup Time Slot': timeInput.value,
       };
-      const locationInput = document.getElementById('ps-location-input');
-      if (locationInput && locationInput.value) {
-        pickupAttributes['Pickup Location ID'] = locationInput.value;
+      var locInput = document.getElementById('ps-location-input');
+      if (locInput && locInput.value) {
+        pickupAttributes['Pickup Location ID'] = locInput.value;
       }
 
       console.log('Pickup Scheduler: Saving attributes to cart before checkout:', pickupAttributes);
 
-      fetch('/cart/update.js', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ attributes: pickupAttributes }),
-      })
+      // First fetch existing cart attributes, then merge with pickup attributes
+      fetch('/cart.js')
+        .then(function(cartResponse) {
+          return cartResponse.json();
+        })
+        .then(function(cartData) {
+          // Merge: start with existing attributes, overlay pickup attributes
+          var mergedAttributes = {};
+          if (cartData.attributes) {
+            var existingKeys = Object.keys(cartData.attributes);
+            for (var i = 0; i < existingKeys.length; i++) {
+              var key = existingKeys[i];
+              mergedAttributes[key] = cartData.attributes[key];
+            }
+          }
+          var pickupKeys = Object.keys(pickupAttributes);
+          for (var j = 0; j < pickupKeys.length; j++) {
+            var pKey = pickupKeys[j];
+            mergedAttributes[pKey] = pickupAttributes[pKey];
+          }
+
+          console.log('Pickup Scheduler: Merged attributes (existing + pickup):', mergedAttributes);
+
+          return fetch('/cart/update.js', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ attributes: mergedAttributes }),
+          });
+        })
         .then(function(response) {
           if (!response.ok) {
             console.error('Pickup Scheduler: Failed to save cart attributes:', response.status);
           }
-          // Redirect to checkout regardless — attributes may already be set from form
           window.location.href = '/checkout';
         })
         .catch(function(err) {
