@@ -164,59 +164,71 @@
       schedulerContainer.appendChild(validationMsg);
     }
 
-    // Intercept form submission to validate pickup selection
-    if (cartForm) {
-      cartForm.addEventListener('submit', function(e) {
-        const hasDate = dateInput && dateInput.value && dateInput.value.trim() !== '';
-        const hasTime = timeInput && timeInput.value && timeInput.value.trim() !== '';
+    // Intercept checkout to validate pickup selection and apply discount code.
+    // We intercept the checkout button click directly (not the form submit) because
+    // the Dawn theme's checkout button is outside the form DOM (uses form="cart" attr)
+    // and the theme's own JS may handle form submission separately.
+    const checkoutHandler = function(e) {
+      const hasDate = dateInput && dateInput.value && dateInput.value.trim() !== '';
+      const hasTime = timeInput && timeInput.value && timeInput.value.trim() !== '';
 
-        if (!hasDate || !hasTime) {
-          e.preventDefault();
-          e.stopPropagation();
-
-          // Show validation message
-          if (validationMsg) {
-            if (!hasDate && !hasTime) {
-              validationMsg.textContent = '⚠️ Please select a pickup date and time slot before proceeding to checkout.';
-            } else if (!hasDate) {
-              validationMsg.textContent = '⚠️ Please select a pickup date before proceeding to checkout.';
-            } else {
-              validationMsg.textContent = '⚠️ Please select a time slot before proceeding to checkout.';
-            }
-            validationMsg.style.display = 'block';
-
-            // Scroll to the scheduler
-            schedulerContainer?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-
-          return false;
-        }
-
-        // Hide validation message if valid
-        if (validationMsg) {
-          validationMsg.style.display = 'none';
-        }
-
-        // Check for subscription discount code and redirect to checkout with it
-        // The checkout UI extension isn't rendering, so apply discount via URL param
+      if (!hasDate || !hasTime) {
         e.preventDefault();
-        fetch('/cart.js')
-          .then(function(r) { return r.json(); })
-          .then(function(cart) {
-            var attrs = cart.attributes || {};
-            var discountCode = attrs['Subscription Discount Code'];
-            if (discountCode) {
-              console.log('Pickup Scheduler: Redirecting to checkout with discount code:', discountCode);
-              window.location.href = '/checkout?discount=' + encodeURIComponent(discountCode);
-            } else {
-              window.location.href = '/checkout';
-            }
-          })
-          .catch(function() {
-            // Fallback: just go to checkout
+        e.stopPropagation();
+
+        // Show validation message
+        if (validationMsg) {
+          if (!hasDate && !hasTime) {
+            validationMsg.textContent = '⚠️ Please select a pickup date and time slot before proceeding to checkout.';
+          } else if (!hasDate) {
+            validationMsg.textContent = '⚠️ Please select a pickup date before proceeding to checkout.';
+          } else {
+            validationMsg.textContent = '⚠️ Please select a time slot before proceeding to checkout.';
+          }
+          validationMsg.style.display = 'block';
+
+          // Scroll to the scheduler
+          schedulerContainer?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        return false;
+      }
+
+      // Hide validation message if valid
+      if (validationMsg) {
+        validationMsg.style.display = 'none';
+      }
+
+      // Always intercept checkout to apply subscription discount code via URL param.
+      // The checkout UI extension doesn't render on one-page checkout, so we redirect
+      // to /checkout?discount=CODE instead of letting the form submit normally.
+      e.preventDefault();
+      e.stopPropagation();
+      fetch('/cart.js')
+        .then(function(r) { return r.json(); })
+        .then(function(cart) {
+          var attrs = cart.attributes || {};
+          var discountCode = attrs['Subscription Discount Code'];
+          if (discountCode) {
+            console.log('Pickup Scheduler: Redirecting to checkout with discount code:', discountCode);
+            window.location.href = '/checkout?discount=' + encodeURIComponent(discountCode);
+          } else {
             window.location.href = '/checkout';
-          });
-      });
+          }
+        })
+        .catch(function() {
+          // Fallback: just go to checkout
+          window.location.href = '/checkout';
+        });
+    };
+
+    // Attach handler to both the checkout button click AND the form submit
+    // to cover all checkout pathways (button click, form submit, keyboard enter, etc.)
+    if (checkoutBtn) {
+      checkoutBtn.addEventListener('click', checkoutHandler);
+    }
+    if (cartForm) {
+      cartForm.addEventListener('submit', checkoutHandler);
     }
 
     // Setup calendar navigation
