@@ -1,0 +1,17 @@
+# Customer Account Profile Block — Subscription Summary
+# Shows subscription count and link to full management page
+
+api_version = "2025-04"
+
+[[extensions]]
+type = "ui_extension"
+name = "Subscription Summary"
+handle = "sub-manager-profile"
+
+[[extensions.targeting]]
+module = "./src/ProfileBlock.tsx"
+target = "customer-account.profile.block.render"
+
+[extensions.capabilities]
+api_access = true
+network_access = true

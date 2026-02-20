@@ -1,0 +1,15 @@
+{
+  "name": "customer-account-page",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@shopify/ui-extensions": "^2025.1.0",
+    "@shopify/ui-extensions-react": "^2025.1.0",
+    "react": "^18.2.0",
+    "react-reconciler": "^0.29.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "typescript": "^5.0.0"
+  }
+}

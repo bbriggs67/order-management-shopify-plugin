@@ -1,0 +1,17 @@
+# Customer Account Full Page — Subscription Management
+# Full-page subscription management interface in customer account
+
+api_version = "2025-04"
+
+[[extensions]]
+type = "ui_extension"
+name = "Manage Subscriptions"
+handle = "sub-manager-page"
+
+[[extensions.targeting]]
+module = "./src/SubscriptionPage.tsx"
+target = "customer-account.page.render"
+
+[extensions.capabilities]
+api_access = true
+network_access = true
