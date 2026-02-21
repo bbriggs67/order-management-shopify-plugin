@@ -85,6 +85,8 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 8. **Webhook attributes**: Shopify REST webhooks use `name` (not `key`) for note_attributes.
 9. **Express checkout hidden on product pages** via CSS in `subscribe-save-product.css` (Shop Pay, Apple Pay, Google Pay bypass cart/date-picker flow).
 10. **Discount codes via URL param**: Cart page `pickup-scheduler.js` redirects to `/checkout?discount=CODE`. Never use `/discount/CODE` fetch (cookies unreliable). Checkout UI extension exists but doesn't render on one-page checkout.
+11. **Billing lead time**: Default is **85 hours** (~3.5 days before pickup). Constant in `constants.server.ts`. First subscription order is paid at checkout (no double-billing); recurring billing starts from second pickup.
+12. **Calendar print**: Daily view has a Print button that opens a new window with clean printable layout (prep summary, pickups by time slot, extra orders).
 
 ## SSMA Subscription Plan Groups (v2)
 
