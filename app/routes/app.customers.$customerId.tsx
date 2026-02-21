@@ -4,6 +4,7 @@ import {
   useLoaderData,
   useSubmit,
   useNavigation,
+  useActionData,
   Link,
 } from "@remix-run/react";
 import {
@@ -23,8 +24,9 @@ import {
   Select,
   Collapsible,
   EmptyState,
+  Thumbnail,
 } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
+import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import {
@@ -35,8 +37,14 @@ import {
   togglePinNote,
   syncNotesToShopify,
 } from "../services/customer-crm.server";
+import {
+  createDraftOrder,
+  sendDraftOrderInvoice,
+  sendPaymentLinkViaSMS,
+} from "../services/draft-orders.server";
+import { isIntegrationConfigured } from "../utils/env.server";
 import { NOTE_CATEGORIES } from "../types/customer-crm";
-import type { CustomerDetail, CustomerNoteData } from "../types/customer-crm";
+import type { CustomerDetail, CustomerNoteData, DraftOrderResult } from "../types/customer-crm";
 
 // ============================================
 // HELPERS
@@ -110,7 +118,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Customer not found", { status: 404 });
   }
 
-  return json({ customer });
+  return json({
+    customer,
+    isTwilioConfigured: isIntegrationConfigured("twilio"),
+    isSendGridConfigured: isIntegrationConfigured("sendgrid"),
+  });
 };
 
 // ============================================
@@ -171,6 +183,78 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({ success: true, synced: true });
   }
 
+  // ---- Draft Order Actions ----
+
+  if (intent === "createDraftOrder") {
+    try {
+      const lineItemsJson = formData.get("lineItems") as string;
+      const note = formData.get("note") as string;
+      const shopifyCustomerGid = formData.get("shopifyCustomerId") as string;
+
+      if (!lineItemsJson || !shopifyCustomerGid) {
+        return json({ error: "Line items and customer ID required" }, { status: 400 });
+      }
+
+      const lineItems = JSON.parse(lineItemsJson) as Array<{
+        variantId: string;
+        quantity: number;
+      }>;
+
+      if (lineItems.length === 0) {
+        return json({ error: "At least one line item is required" }, { status: 400 });
+      }
+
+      const draftOrder = await createDraftOrder(admin, {
+        customerId: shopifyCustomerGid,
+        lineItems,
+        note: note || undefined,
+        tags: ["crm-order"],
+      });
+
+      return json({ success: true, draftOrder });
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Failed to create draft order" },
+        { status: 500 }
+      );
+    }
+  }
+
+  if (intent === "sendInvoice") {
+    try {
+      const draftOrderId = formData.get("draftOrderId") as string;
+      const method = formData.get("method") as string;
+      const phone = formData.get("phone") as string;
+      const customerName = formData.get("customerName") as string;
+      const invoiceUrl = formData.get("invoiceUrl") as string;
+      const orderName = formData.get("orderName") as string;
+
+      if (!draftOrderId || !method) {
+        return json({ error: "Draft order ID and method required" }, { status: 400 });
+      }
+
+      if (method === "shopify_email") {
+        const result = await sendDraftOrderInvoice(admin, draftOrderId);
+        return json({ success: result.success, invoiceError: result.error, invoiceMethod: "email" });
+      }
+
+      if (method === "sms") {
+        if (!phone || !customerName || !invoiceUrl || !orderName) {
+          return json({ error: "Phone, customer name, invoice URL, and order name required for SMS" }, { status: 400 });
+        }
+        const result = await sendPaymentLinkViaSMS(phone, customerName, invoiceUrl, orderName);
+        return json({ success: result.success, invoiceError: result.error, invoiceMethod: "sms" });
+      }
+
+      return json({ error: "Invalid send method" }, { status: 400 });
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Failed to send invoice" },
+        { status: 500 }
+      );
+    }
+  }
+
   return json({ error: "Unknown action" }, { status: 400 });
 };
 
@@ -178,15 +262,206 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 // MAIN COMPONENT
 // ============================================
 
+// ============================================
+// SELECTED PRODUCT TYPE (from resource picker)
+// ============================================
+
+interface LineItem {
+  productTitle: string;
+  variantId: string;
+  variantTitle: string;
+  quantity: number;
+  price: string;
+  imageUrl?: string;
+}
+
 export default function CustomerDetailPage() {
-  const { customer } = useLoaderData<{ customer: CustomerDetail }>();
+  const { customer, isTwilioConfigured, isSendGridConfigured } = useLoaderData<{
+    customer: CustomerDetail;
+    isTwilioConfigured: boolean;
+    isSendGridConfigured: boolean;
+  }>();
+  const actionData = useActionData<{
+    success?: boolean;
+    error?: string;
+    draftOrder?: DraftOrderResult;
+    invoiceError?: string;
+    invoiceMethod?: string;
+    synced?: boolean;
+  }>();
   const submit = useSubmit();
   const navigation = useNavigation();
+  const shopify = useAppBridge();
   const isSubmitting = navigation.state === "submitting";
+
+  // --- Create Order state ---
+  const [createOrderOpen, setCreateOrderOpen] = useState(false);
+  const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [orderNote, setOrderNote] = useState("");
+
+  // --- Invoice Sending state ---
+  const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
+  const [currentDraftOrder, setCurrentDraftOrder] = useState<DraftOrderResult | null>(null);
+  const [invoiceBanner, setInvoiceBanner] = useState<{ status: "success" | "critical"; message: string } | null>(null);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   const fullName = [customer.firstName, customer.lastName]
     .filter(Boolean)
     .join(" ") || customer.email || "Unknown Customer";
+
+  // React to actionData changes (render-time state sync)
+  const [lastActionData, setLastActionData] = useState(actionData);
+  if (actionData !== lastActionData) {
+    setLastActionData(actionData);
+    if (actionData?.draftOrder) {
+      setCurrentDraftOrder(actionData.draftOrder);
+      setCreateOrderOpen(false);
+      setLineItems([]);
+      setOrderNote("");
+      setInvoiceModalOpen(true);
+      setInvoiceBanner(null);
+    }
+    if (actionData?.invoiceMethod) {
+      if (actionData.success) {
+        setInvoiceBanner({
+          status: "success",
+          message: actionData.invoiceMethod === "email"
+            ? "Shopify invoice email sent successfully!"
+            : "Payment link sent via SMS!",
+        });
+      } else {
+        setInvoiceBanner({
+          status: "critical",
+          message: actionData.invoiceError || "Failed to send invoice",
+        });
+      }
+    }
+  }
+
+  // --- Product Picker ---
+  const handlePickProducts = useCallback(async () => {
+    try {
+      const selected = await (shopify as any).resourcePicker({
+        type: "product",
+        multiple: true,
+        filter: { variants: true },
+      });
+
+      if (selected && selected.length > 0) {
+        const newItems: LineItem[] = [];
+        for (const product of selected) {
+          const p = product as {
+            id: string;
+            title: string;
+            images?: Array<{ originalSrc?: string }>;
+            variants?: Array<{
+              id: string;
+              title: string;
+              price: string;
+            }>;
+          };
+          // For each product, add its first variant (or all variants if multi-variant)
+          const variants = p.variants || [];
+          if (variants.length === 0) continue;
+
+          // If product has only a "Default Title" variant, use the product title
+          for (const v of variants) {
+            // Skip if this variant is already in the list
+            if (lineItems.some((li) => li.variantId === v.id)) continue;
+            if (newItems.some((li) => li.variantId === v.id)) continue;
+
+            newItems.push({
+              productTitle: p.title,
+              variantId: v.id,
+              variantTitle: v.title === "Default Title" ? "" : v.title,
+              quantity: 1,
+              price: v.price,
+              imageUrl: p.images?.[0]?.originalSrc,
+            });
+          }
+        }
+        setLineItems((prev) => [...prev, ...newItems]);
+      }
+    } catch (err) {
+      console.error("Resource picker error:", err);
+    }
+  }, [shopify, lineItems]);
+
+  // --- Line Item Quantity ---
+  const handleQuantityChange = useCallback((variantId: string, delta: number) => {
+    setLineItems((prev) =>
+      prev.map((item) =>
+        item.variantId === variantId
+          ? { ...item, quantity: Math.max(1, item.quantity + delta) }
+          : item
+      )
+    );
+  }, []);
+
+  const handleRemoveItem = useCallback((variantId: string) => {
+    setLineItems((prev) => prev.filter((item) => item.variantId !== variantId));
+  }, []);
+
+  // --- Create Draft Order ---
+  const handleCreateDraftOrder = useCallback(() => {
+    if (lineItems.length === 0) return;
+    const formData = new FormData();
+    formData.set("_action", "createDraftOrder");
+    formData.set("shopifyCustomerId", customer.shopifyCustomerId);
+    formData.set(
+      "lineItems",
+      JSON.stringify(lineItems.map((li) => ({ variantId: li.variantId, quantity: li.quantity })))
+    );
+    if (orderNote.trim()) {
+      formData.set("note", orderNote.trim());
+    }
+    submit(formData, { method: "post" });
+  }, [lineItems, orderNote, customer.shopifyCustomerId, submit]);
+
+  // --- Send Invoice ---
+  const handleSendInvoice = useCallback(
+    (method: "shopify_email" | "sms") => {
+      if (!currentDraftOrder) return;
+      const formData = new FormData();
+      formData.set("_action", "sendInvoice");
+      formData.set("draftOrderId", currentDraftOrder.id);
+      formData.set("method", method);
+      if (method === "sms") {
+        formData.set("phone", customer.phone || "");
+        formData.set("customerName", fullName);
+        formData.set("invoiceUrl", currentDraftOrder.invoiceUrl);
+        formData.set("orderName", currentDraftOrder.name);
+      }
+      submit(formData, { method: "post" });
+    },
+    [currentDraftOrder, customer.phone, fullName, submit]
+  );
+
+  // --- Copy Invoice Link ---
+  const handleCopyLink = useCallback(async () => {
+    if (!currentDraftOrder) return;
+    try {
+      await navigator.clipboard.writeText(currentDraftOrder.invoiceUrl);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch {
+      // Fallback: select text in a temporary input
+      const input = document.createElement("input");
+      input.value = currentDraftOrder.invoiceUrl;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      document.body.removeChild(input);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    }
+  }, [currentDraftOrder]);
+
+  // Calculate order total
+  const orderTotal = lineItems.reduce(
+    (sum, item) => sum + parseFloat(item.price || "0") * item.quantity,
+    0
+  );
 
   // Shopify admin URL for customer
   const shopifyCustomerUrl = customer.shopifyCustomerId.startsWith("local:")
@@ -224,6 +499,15 @@ export default function CustomerDetailPage() {
             {/* ACTIONS CARD */}
             <Card>
               <InlineStack gap="300" wrap>
+                {!customer.shopifyCustomerId.startsWith("local:") && (
+                  <Button
+                    variant="primary"
+                    onClick={() => setCreateOrderOpen(true)}
+                    size="slim"
+                  >
+                    Create Order
+                  </Button>
+                )}
                 {customer.email && (
                   <Button
                     url={`mailto:${customer.email}`}
@@ -244,6 +528,19 @@ export default function CustomerDetailPage() {
                 )}
               </InlineStack>
             </Card>
+
+            {/* DRAFT ORDER SUCCESS BANNER */}
+            {actionData?.draftOrder && !createOrderOpen && (
+              <Banner tone="success">
+                Draft order {actionData.draftOrder.name} created
+                ({formatCurrency(actionData.draftOrder.totalPrice, actionData.draftOrder.currencyCode)})
+              </Banner>
+            )}
+
+            {/* DRAFT ORDER ERROR BANNER */}
+            {actionData?.error && !actionData?.invoiceMethod && !actionData?.synced && (
+              <Banner tone="critical">{actionData.error}</Banner>
+            )}
 
             {/* ORDERS CARD */}
             <OrdersSection orders={customer.orders} />
@@ -389,6 +686,236 @@ export default function CustomerDetailPage() {
           </BlockStack>
         </Layout.Section>
       </Layout>
+
+      {/* ============================================ */}
+      {/* CREATE ORDER MODAL                          */}
+      {/* ============================================ */}
+      <Modal
+        open={createOrderOpen}
+        onClose={() => setCreateOrderOpen(false)}
+        title="Create Order"
+        primaryAction={{
+          content: "Create Draft Order",
+          onAction: handleCreateDraftOrder,
+          disabled: lineItems.length === 0 || isSubmitting,
+          loading: isSubmitting,
+        }}
+        secondaryActions={[
+          { content: "Cancel", onAction: () => setCreateOrderOpen(false) },
+        ]}
+        size="large"
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Button onClick={handlePickProducts} size="slim">
+              Add Products
+            </Button>
+
+            {lineItems.length === 0 ? (
+              <Text as="p" variant="bodyMd" tone="subdued">
+                No products selected. Click "Add Products" to browse the catalog.
+              </Text>
+            ) : (
+              <BlockStack gap="300">
+                {lineItems.map((item) => (
+                  <Box
+                    key={item.variantId}
+                    padding="300"
+                    background="bg-surface-secondary"
+                    borderRadius="200"
+                  >
+                    <InlineStack align="space-between" blockAlign="center" wrap>
+                      <InlineStack gap="300" blockAlign="center">
+                        {item.imageUrl && (
+                          <Thumbnail
+                            source={item.imageUrl}
+                            alt={item.productTitle}
+                            size="small"
+                          />
+                        )}
+                        <BlockStack gap="050">
+                          <Text as="span" variant="bodyMd" fontWeight="bold">
+                            {item.productTitle}
+                          </Text>
+                          {item.variantTitle && (
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {item.variantTitle}
+                            </Text>
+                          )}
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {formatCurrency(item.price, customer.currency)} each
+                          </Text>
+                        </BlockStack>
+                      </InlineStack>
+
+                      <InlineStack gap="200" blockAlign="center">
+                        <Button
+                          onClick={() => handleQuantityChange(item.variantId, -1)}
+                          size="slim"
+                          disabled={item.quantity <= 1}
+                        >
+                          −
+                        </Button>
+                        <Text as="span" variant="bodyMd" fontWeight="bold">
+                          {item.quantity}
+                        </Text>
+                        <Button
+                          onClick={() => handleQuantityChange(item.variantId, 1)}
+                          size="slim"
+                        >
+                          +
+                        </Button>
+                        <Button
+                          onClick={() => handleRemoveItem(item.variantId)}
+                          size="slim"
+                          tone="critical"
+                        >
+                          Remove
+                        </Button>
+                      </InlineStack>
+                    </InlineStack>
+                  </Box>
+                ))}
+
+                <Divider />
+                <InlineStack align="space-between">
+                  <Text as="p" variant="bodyMd" fontWeight="bold">
+                    Estimated Total
+                  </Text>
+                  <Text as="p" variant="bodyMd" fontWeight="bold">
+                    {formatCurrency(orderTotal.toFixed(2), customer.currency)}
+                  </Text>
+                </InlineStack>
+              </BlockStack>
+            )}
+
+            <TextField
+              label="Order Note (optional)"
+              value={orderNote}
+              onChange={setOrderNote}
+              multiline={2}
+              autoComplete="off"
+              maxLength={500}
+              placeholder="Phone order, special request, etc."
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* ============================================ */}
+      {/* INVOICE SENDING MODAL                       */}
+      {/* ============================================ */}
+      <Modal
+        open={invoiceModalOpen}
+        onClose={() => {
+          setInvoiceModalOpen(false);
+          setInvoiceBanner(null);
+          setCopySuccess(false);
+        }}
+        title="Send Payment Link"
+        secondaryActions={[
+          {
+            content: "Done",
+            onAction: () => {
+              setInvoiceModalOpen(false);
+              setInvoiceBanner(null);
+              setCopySuccess(false);
+            },
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            {/* Draft Order Summary */}
+            {currentDraftOrder && (
+              <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+                <BlockStack gap="200">
+                  <InlineStack align="space-between">
+                    <Text as="p" variant="bodyMd" fontWeight="bold">
+                      {currentDraftOrder.name}
+                    </Text>
+                    <Text as="p" variant="bodyMd" fontWeight="bold">
+                      {formatCurrency(currentDraftOrder.totalPrice, currentDraftOrder.currencyCode)}
+                    </Text>
+                  </InlineStack>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    For: {fullName}
+                  </Text>
+                </BlockStack>
+              </Box>
+            )}
+
+            {/* Status Banner */}
+            {invoiceBanner && (
+              <Banner tone={invoiceBanner.status}>
+                {invoiceBanner.message}
+              </Banner>
+            )}
+
+            {/* Send Options */}
+            <BlockStack gap="300">
+              {/* Shopify Invoice Email */}
+              <Button
+                onClick={() => handleSendInvoice("shopify_email")}
+                size="slim"
+                loading={isSubmitting}
+                fullWidth
+              >
+                Send Shopify Invoice Email
+              </Button>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Sends Shopify's built-in invoice email to {customer.email || "the customer"}
+              </Text>
+
+              <Divider />
+
+              {/* SMS */}
+              {customer.phone ? (
+                <>
+                  <Button
+                    onClick={() => handleSendInvoice("sms")}
+                    size="slim"
+                    loading={isSubmitting}
+                    disabled={!isTwilioConfigured}
+                    fullWidth
+                  >
+                    Send Payment Link via Text
+                  </Button>
+                  {!isTwilioConfigured ? (
+                    <Text as="p" variant="bodySm" tone="caution">
+                      Twilio is not configured. Set up Twilio in Settings to enable SMS.
+                    </Text>
+                  ) : (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Sends SMS with payment link to {customer.phone}
+                    </Text>
+                  )}
+                </>
+              ) : (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  No phone number on file — SMS not available
+                </Text>
+              )}
+
+              <Divider />
+
+              {/* Copy Link */}
+              <Button
+                onClick={handleCopyLink}
+                size="slim"
+                fullWidth
+              >
+                {copySuccess ? "Copied!" : "Copy Payment Link"}
+              </Button>
+              {currentDraftOrder && (
+                <Text as="p" variant="bodySm" tone="subdued" breakWord>
+                  {currentDraftOrder.invoiceUrl}
+                </Text>
+              )}
+            </BlockStack>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }

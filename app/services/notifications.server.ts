@@ -38,7 +38,7 @@ function replaceTemplateVariables(template: string, variables: TemplateVariables
 /**
  * Send SMS via Twilio
  */
-async function sendSMS(to: string, message: string): Promise<{ success: boolean; error?: string }> {
+export async function sendSMS(to: string, message: string): Promise<{ success: boolean; error?: string }> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_PHONE_NUMBER;
