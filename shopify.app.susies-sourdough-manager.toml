@@ -49,8 +49,8 @@ api_version = "2025-04"
   uri = "/webhooks/orders/cancelled"
 
 [access_scopes]
-# Full subscription scopes to access contracts created via native Shopify subscription UI
-scopes = "read_orders,write_orders,read_products,write_products,read_customers,read_own_subscription_contracts,write_own_subscription_contracts,read_discounts,write_discounts"
+# Full subscription scopes + customer write + draft orders for CRM portal
+scopes = "read_orders,write_orders,read_products,write_products,read_customers,write_customers,read_own_subscription_contracts,write_own_subscription_contracts,read_discounts,write_discounts,read_draft_orders,write_draft_orders"
 
 [auth]
 redirect_urls = [ "https://order-management-shopify-plugin-production.up.railway.app/auth/callback" ]

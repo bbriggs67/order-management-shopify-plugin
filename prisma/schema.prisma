@@ -513,3 +513,63 @@ model ExtraBakeOrder {
   @@index([shop])
   @@index([shop, date])
 }
+
+// ============================================
+// CRM: CUSTOMER (local cache of Shopify customer data)
+// ============================================
+
+model Customer {
+  id                String   @id @default(cuid())
+  shop              String
+  shopifyCustomerId String   // "gid://shopify/Customer/123456"
+  email             String?
+  firstName         String?
+  lastName          String?
+  phone             String?
+
+  // Cached stats from Shopify
+  totalOrderCount   Int      @default(0)
+  totalSpent        String?  // e.g., "647.58"
+  currency          String   @default("USD")
+
+  // CRM-specific fields
+  tags              String[] @default([])
+
+  // Shopify sync tracking
+  lastSyncedAt      DateTime?
+
+  // Relations
+  notes             CustomerNote[]
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([shop, shopifyCustomerId])
+  @@unique([shop, email])
+  @@index([shop])
+  @@index([shop, lastName])
+}
+
+// ============================================
+// CRM: CUSTOMER NOTES (admin notes per customer)
+// ============================================
+
+model CustomerNote {
+  id         String   @id @default(cuid())
+  shop       String
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  content    String   // The note text
+  category   String?  // "preference", "family", "allergy", "delivery", "general"
+  isPinned   Boolean  @default(false)
+  createdBy  String?  // Admin user who created the note
+
+  // Shopify sync
+  syncedToShopify Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([shop])
+}

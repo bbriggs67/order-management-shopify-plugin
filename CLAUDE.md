@@ -19,6 +19,7 @@ Shopify app for managing sourdough bread subscriptions with local pickup schedul
 - Customer self-service subscription portal
 - Pickup date/time scheduling on cart page
 - Order management dashboard
+- Customer CRM with notes, order history, and Shopify sync
 
 ## Architecture
 
@@ -48,6 +49,7 @@ prisma/schema.prisma     → Database schema
 | `selling-plans.server.ts` | Shopify Selling Plan Groups integration |
 | `pickup-availability.server.ts` | Available dates/times calculation |
 | `google-calendar.server.ts` | Calendar event sync |
+| `customer-crm.server.ts` | Customer CRM: search, detail, notes, Shopify sync |
 
 ## Subscription Flow (SSMA-Controlled)
 
@@ -87,6 +89,7 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 10. **Discount codes via URL param**: Cart page `pickup-scheduler.js` redirects to `/checkout?discount=CODE`. Never use `/discount/CODE` fetch (cookies unreliable). Checkout UI extension exists but doesn't render on one-page checkout.
 11. **Billing lead time**: Default is **85 hours** (~3.5 days before pickup). Constant in `constants.server.ts`. First subscription order is paid at checkout (no double-billing); recurring billing starts from second pickup.
 12. **Calendar print**: Daily view has a Print button that opens a new window with clean printable layout (prep summary, pickups by time slot, extra orders).
+13. **Customer CRM portal**: 5th admin page (`/app/customers`). Customer model synced from Shopify via webhook + manual sync. Detail page shows orders (collapsible), subscriptions, admin notes with categories, Shopify contact info. Notes can sync to Shopify customer note field.
 
 ## SSMA Subscription Plan Groups (v2)
 

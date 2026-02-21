@@ -4,6 +4,7 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { createPickupEvent } from "../services/google-calendar.server";
 import { createSubscriptionFromOrder } from "../services/subscription.server";
+import { upsertCustomer } from "../services/customer-crm.server";
 import { unauthenticated } from "../shopify.server";
 
 /**
@@ -743,6 +744,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     } catch (tagError) {
       console.error("Failed to add tags to order:", tagError);
       // Non-critical — continue even if tagging fails
+    }
+
+    // Upsert CRM Customer record from order data
+    try {
+      if (order.customer?.id) {
+        const shopifyCustomerGid = order.customer.admin_graphql_api_id ||
+          `gid://shopify/Customer/${order.customer.id}`;
+        await upsertCustomer(shop, {
+          shopifyCustomerId: shopifyCustomerGid,
+          email: customerEmail,
+          firstName: order.customer.first_name || null,
+          lastName: order.customer.last_name || null,
+          phone: customerPhone,
+        });
+        console.log(`Upserted CRM customer for order ${order.name}`);
+      }
+    } catch (crmError) {
+      console.error("Failed to upsert CRM customer (non-critical):", crmError);
+      // Non-critical — continue even if CRM upsert fails
     }
 
     // Save WebhookEvent AFTER successful processing.

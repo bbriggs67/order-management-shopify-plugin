@@ -2,6 +2,57 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-21 - Customer CRM Portal (Phase 1-2)
+
+**Context:** Customer data was scattered across Orders and Subscriptions pages with no unified view. Added a Customer Management portal as the 5th admin page in SSMA.
+
+**New Prisma Models:**
+- `Customer` — local cache of Shopify customer data (shopifyCustomerId, email, name, phone, totalOrderCount, totalSpent, tags). Unique on `[shop, shopifyCustomerId]` and `[shop, email]`.
+- `CustomerNote` — admin notes per customer with category (Preference/Family/Allergy/Delivery/General), pinning, and Shopify sync flag.
+
+**New Service (`app/services/customer-crm.server.ts`):**
+- `searchCustomers()` — paginated search with sort, enriched with subscription counts and last order dates
+- `getCustomerDetail()` — local data + Shopify GraphQL enrichment (note, tags, addresses)
+- `upsertCustomer()` — create/update from webhook data, handles email conflicts
+- `syncCustomersFromLocalData()` — one-time migration from existing PickupSchedule + SubscriptionPickup data
+- Note CRUD: `addCustomerNote`, `updateCustomerNote`, `deleteCustomerNote`, `togglePinNote`
+- `syncNotesToShopify()` — push pinned notes to Shopify customer note field
+
+**Customer List Page (`app/routes/app.customers._index.tsx`):**
+- Search by name, email, or phone
+- Sortable columns: Customer, Email, Phone, Orders, Subscriptions, Last Order, Total Spent
+- Cursor-based pagination
+- "Sync Customers from Shopify" button
+
+**Customer Detail Page (`app/routes/app.customers.$customerId.tsx`):**
+- Two-column layout following `app.subscriptions.$contractId.tsx` pattern
+- Main section: Actions (Send Email/Text), Orders (collapsible, shows 3 by default), Subscriptions, Notes (CRUD with categories, pinning, Shopify sync)
+- Sidebar: Contact Info, Customer Stats, Shopify Tags, Shopify Note
+- Note Add/Edit modal with category selector
+
+**Webhook Enhancement:**
+- `webhooks.orders.create.tsx` now calls `upsertCustomer()` after order processing to keep Customer model current
+
+**API Scopes:**
+- Added `write_customers`, `read_draft_orders`, `write_draft_orders` (requires `shopify app deploy`)
+
+**New Files:**
+- `app/types/customer-crm.ts` — TypeScript interfaces for CRM
+- `app/services/customer-crm.server.ts` — CRM service layer
+- `app/routes/app.customers._index.tsx` — Customer list page
+- `app/routes/app.customers.$customerId.tsx` — Customer detail page
+- `prisma/migrations/20260221_add_customer_crm/migration.sql` — Customer + CustomerNote tables
+
+**Modified Files:**
+- `prisma/schema.prisma` — Added Customer + CustomerNote models
+- `app/routes/app.tsx` — Added Customers nav link (between Calendar and Settings)
+- `app/routes/webhooks.orders.create.tsx` — upsertCustomer call
+- `shopify.app.susies-sourdough-manager.toml` — New API scopes
+- `CLAUDE.md` — CRM service + note #13
+- `CHANGE_HISTORY.md` — This entry
+
+---
+
 ### 2026-02-21 - Billing Lead Time 85h + Calendar Print
 
 **Fix 1: Billing lead time default changed from 48h to 85h (~3.5 days)**
