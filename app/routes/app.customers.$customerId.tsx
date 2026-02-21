@@ -635,46 +635,26 @@ export default function CustomerDetailPage() {
                   </Button>
                 )}
                 {customer.email && (
-                  isSendGridConfigured ? (
-                    <Button
-                      onClick={() => {
-                        setComposeBanner(null);
-                        setEmailModalOpen(true);
-                      }}
-                      size="slim"
-                    >
-                      Send Email
-                    </Button>
-                  ) : (
-                    <Button
-                      url={`mailto:${customer.email}`}
-                      external
-                      size="slim"
-                    >
-                      Send Email
-                    </Button>
-                  )
+                  <Button
+                    onClick={() => {
+                      setComposeBanner(null);
+                      setEmailModalOpen(true);
+                    }}
+                    size="slim"
+                  >
+                    Send Email
+                  </Button>
                 )}
                 {customer.phone && (
-                  isTwilioConfigured ? (
-                    <Button
-                      onClick={() => {
-                        setComposeBanner(null);
-                        setSmsModalOpen(true);
-                      }}
-                      size="slim"
-                    >
-                      Send Text
-                    </Button>
-                  ) : (
-                    <Button
-                      url={`sms:${customer.phone}`}
-                      external
-                      size="slim"
-                    >
-                      Send Text
-                    </Button>
-                  )
+                  <Button
+                    onClick={() => {
+                      setComposeBanner(null);
+                      setSmsModalOpen(true);
+                    }}
+                    size="slim"
+                  >
+                    Send Text
+                  </Button>
                 )}
               </InlineStack>
             </Card>
@@ -697,15 +677,6 @@ export default function CustomerDetailPage() {
 
             {/* SUBSCRIPTIONS CARD */}
             <SubscriptionsSection subscriptions={customer.subscriptions} />
-
-            {/* NOTES CARD */}
-            <NotesSection
-              notes={customer.notes}
-              submit={submit}
-              isSubmitting={isSubmitting}
-              customerId={customer.id}
-              shopifyLinked={!customer.shopifyCustomerId.startsWith("local:")}
-            />
           </BlockStack>
         </Layout.Section>
 
@@ -807,6 +778,15 @@ export default function CustomerDetailPage() {
                 )}
               </BlockStack>
             </Card>
+
+            {/* ADMIN NOTES */}
+            <NotesSection
+              notes={customer.notes}
+              submit={submit}
+              isSubmitting={isSubmitting}
+              customerId={customer.id}
+              shopifyLinked={!customer.shopifyCustomerId.startsWith("local:")}
+            />
 
             {/* SHOPIFY TAGS */}
             {customer.shopifyTags.length > 0 && (
@@ -1077,15 +1057,15 @@ export default function CustomerDetailPage() {
           setComposeBanner(null);
         }}
         title={`Email ${fullName}`}
-        primaryAction={{
+        primaryAction={isSendGridConfigured ? {
           content: "Send Email",
           onAction: handleSendEmail,
           disabled: !emailSubject.trim() || !emailBody.trim() || isSubmitting,
           loading: isSubmitting,
-        }}
+        } : undefined}
         secondaryActions={[
           {
-            content: "Cancel",
+            content: isSendGridConfigured ? "Cancel" : "Close",
             onAction: () => {
               setEmailModalOpen(false);
               setComposeBanner(null);
@@ -1095,35 +1075,55 @@ export default function CustomerDetailPage() {
       >
         <Modal.Section>
           <BlockStack gap="400">
+            {!isSendGridConfigured && (
+              <Banner tone="warning">
+                <p>SendGrid is not configured. To send emails from this app, add the following environment variables to your Railway deployment:</p>
+                <ul>
+                  <li><strong>SENDGRID_API_KEY</strong> — Your SendGrid API key</li>
+                  <li><strong>SENDGRID_FROM_EMAIL</strong> — Verified sender email address</li>
+                </ul>
+                <p style={{ marginTop: "8px" }}>
+                  Or email the customer directly:{" "}
+                  <a href={`mailto:${customer.email}`} target="_blank" rel="noopener noreferrer">
+                    {customer.email}
+                  </a>
+                </p>
+              </Banner>
+            )}
+
             {composeBanner && (
               <Banner tone={composeBanner.status}>
                 {composeBanner.message}
               </Banner>
             )}
 
-            <Text as="p" variant="bodySm" tone="subdued">
-              To: {customer.email}
-            </Text>
+            {isSendGridConfigured && (
+              <>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  To: {customer.email}
+                </Text>
 
-            <TextField
-              label="Subject"
-              value={emailSubject}
-              onChange={setEmailSubject}
-              autoComplete="off"
-              maxLength={200}
-              placeholder="Order update, follow-up, etc."
-            />
+                <TextField
+                  label="Subject"
+                  value={emailSubject}
+                  onChange={setEmailSubject}
+                  autoComplete="off"
+                  maxLength={200}
+                  placeholder="Order update, follow-up, etc."
+                />
 
-            <TextField
-              label="Message"
-              value={emailBody}
-              onChange={setEmailBody}
-              multiline={6}
-              autoComplete="off"
-              maxLength={5000}
-              showCharacterCount
-              placeholder="Hi! Just wanted to follow up about..."
-            />
+                <TextField
+                  label="Message"
+                  value={emailBody}
+                  onChange={setEmailBody}
+                  multiline={6}
+                  autoComplete="off"
+                  maxLength={5000}
+                  showCharacterCount
+                  placeholder="Hi! Just wanted to follow up about..."
+                />
+              </>
+            )}
           </BlockStack>
         </Modal.Section>
       </Modal>
@@ -1138,15 +1138,15 @@ export default function CustomerDetailPage() {
           setComposeBanner(null);
         }}
         title={`Text ${fullName}`}
-        primaryAction={{
+        primaryAction={isTwilioConfigured ? {
           content: "Send Text",
           onAction: handleSendSMS,
           disabled: !smsMessage.trim() || isSubmitting,
           loading: isSubmitting,
-        }}
+        } : undefined}
         secondaryActions={[
           {
-            content: "Cancel",
+            content: isTwilioConfigured ? "Cancel" : "Close",
             onAction: () => {
               setSmsModalOpen(false);
               setComposeBanner(null);
@@ -1156,27 +1156,48 @@ export default function CustomerDetailPage() {
       >
         <Modal.Section>
           <BlockStack gap="400">
+            {!isTwilioConfigured && (
+              <Banner tone="warning">
+                <p>Twilio is not configured. To send text messages from this app, add the following environment variables to your Railway deployment:</p>
+                <ul>
+                  <li><strong>TWILIO_ACCOUNT_SID</strong> — Your Twilio Account SID</li>
+                  <li><strong>TWILIO_AUTH_TOKEN</strong> — Your Twilio Auth Token</li>
+                  <li><strong>TWILIO_PHONE_NUMBER</strong> — Your Twilio phone number (e.g. +1234567890)</li>
+                </ul>
+                <p style={{ marginTop: "8px" }}>
+                  Or text the customer directly:{" "}
+                  <a href={`sms:${customer.phone}`} target="_blank" rel="noopener noreferrer">
+                    {customer.phone}
+                  </a>
+                </p>
+              </Banner>
+            )}
+
             {composeBanner && (
               <Banner tone={composeBanner.status}>
                 {composeBanner.message}
               </Banner>
             )}
 
-            <Text as="p" variant="bodySm" tone="subdued">
-              To: {customer.phone}
-            </Text>
+            {isTwilioConfigured && (
+              <>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  To: {customer.phone}
+                </Text>
 
-            <TextField
-              label="Message"
-              value={smsMessage}
-              onChange={setSmsMessage}
-              multiline={4}
-              autoComplete="off"
-              maxLength={1600}
-              showCharacterCount
-              placeholder="Hi! Just wanted to let you know..."
-              helpText="Standard SMS messages are limited to 160 characters. Longer messages may be split into multiple texts."
-            />
+                <TextField
+                  label="Message"
+                  value={smsMessage}
+                  onChange={setSmsMessage}
+                  multiline={4}
+                  autoComplete="off"
+                  maxLength={1600}
+                  showCharacterCount
+                  placeholder="Hi! Just wanted to let you know..."
+                  helpText="Standard SMS messages are limited to 160 characters. Longer messages may be split into multiple texts."
+                />
+              </>
+            )}
           </BlockStack>
         </Modal.Section>
       </Modal>
@@ -1251,7 +1272,7 @@ function OrdersSection({ orders }: { orders: CustomerDetail["orders"] }) {
 
                   <InlineStack gap="200">
                     <Text as="span" variant="bodySm" tone="subdued">
-                      Pickup: {formatDate(order.pickupDate)} &bull; {order.pickupTimeSlot}
+                      Pickup: {formatDate(order.pickupDate)} • {order.pickupTimeSlot}
                     </Text>
                   </InlineStack>
 
@@ -1259,7 +1280,7 @@ function OrdersSection({ orders }: { orders: CustomerDetail["orders"] }) {
                     <BlockStack gap="050">
                       {order.items.map((item, idx) => (
                         <Text as="p" variant="bodySm" key={idx}>
-                          &bull; {item.productTitle}
+                          • {item.productTitle}
                           {item.variantTitle ? ` (${item.variantTitle})` : ""}
                           {" "}&times; {item.quantity}
                         </Text>
@@ -1331,8 +1352,8 @@ function SubscriptionsSection({
                       )}
                     </InlineStack>
                     <Text as="p" variant="bodySm" tone="subdued">
-                      {DAY_NAMES[sub.preferredDay]} &bull; {sub.preferredTimeSlot}
-                      {sub.nextPickupDate && ` &bull; Next: ${formatDate(sub.nextPickupDate)}`}
+                      {DAY_NAMES[sub.preferredDay]} • {sub.preferredTimeSlot}
+                      {sub.nextPickupDate && ` • Next: ${formatDate(sub.nextPickupDate)}`}
                     </Text>
                   </BlockStack>
                   <Link
