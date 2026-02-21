@@ -490,3 +490,26 @@ model NotificationSettings {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+// ============================================
+// EXTRA BAKE ORDERS (Manual calendar items)
+// ============================================
+
+model ExtraBakeOrder {
+  id               String   @id @default(cuid())
+  shop             String
+  date             DateTime // The bake/pickup date
+  timeSlot         String   // e.g., "12:00 PM - 2:00 PM" or "All Day"
+  shopifyProductId String   // "gid://shopify/Product/12345"
+  productTitle     String
+  variantTitle     String?
+  imageUrl         String?
+  quantity         Int
+  notes            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+  @@index([shop, date])
+}

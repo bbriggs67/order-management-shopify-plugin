@@ -2,6 +2,26 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-20 - Prep, Bake & Pick-up Calendar
+
+**Context:** Calendar was a simple monthly grid showing pickup counts per day. Susie needed it to be the
+working calendar for managing bakery production — what to prep, bake, and pick up.
+
+**New features:**
+- **Monthly view** (enhanced): Day headers (Dough Prep Day / Bake Day / Day Off), clickable days → day view, pickup + extra order count badges, condensed prep summaries on prep days
+- **Weekly view** (new): Mon–Sun columns, condensed (product totals) and expanded (full order detail) toggle, prep summaries on Mon/Thu
+- **Day view** (new): Pickups grouped by time slot with full product line items, extra bake order list + add/remove form, prominent Dough Prep Summary on Mon/Thu
+- **Dough Prep Summary**: Reusable component aggregating products across bake days (Mon→Tue+Wed, Thu→Fri+Sat), includes both pickups and extra bake orders
+- **Extra Bake Orders**: New `ExtraBakeOrder` model for manually-added items (Shopify product picker), stored in DB, included in prep summaries
+- **View selector**: Polaris Tabs (Monthly/Weekly/Daily) with per-view navigation
+
+**Files changed:**
+- `prisma/schema.prisma` — Added `ExtraBakeOrder` model
+- `prisma/migrations/20260220_add_extra_bake_order/migration.sql` — New migration
+- `app/routes/app.calendar.tsx` — Complete rewrite (~1500 lines): loader with view-based date ranges, orderItems include, extra orders, prep summaries; action handler for add/remove extra orders; MonthView, WeekView, DayView, DoughPrepSummary, DayHeaderBadge components
+
+---
+
 ### 2026-02-20 - Cold-Start Resilience (commit a3057e4)
 
 **Context:** Customer orders are mostly subscriptions with 4-6 day gaps between orders.
