@@ -32,6 +32,17 @@ function isValidStatus(status: string): status is PickupStatus {
   return VALID_STATUSES.includes(status as PickupStatus);
 }
 
+// Sortable column mapping: URL param → Prisma field
+const SORT_FIELD_MAP: Record<string, string> = {
+  order: "shopifyOrderNumber",
+  orderDate: "createdAt",
+  customer: "customerName",
+  pickupDate: "pickupDate",
+};
+
+const VALID_SORT_FIELDS = Object.keys(SORT_FIELD_MAP);
+const VALID_DIRECTIONS = ["asc", "desc"] as const;
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
@@ -41,6 +52,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const status = url.searchParams.get("status");
     const search = url.searchParams.get("search");
     const cursor = url.searchParams.get("cursor");
+    const sortParam = url.searchParams.get("sort") || "pickupDate";
+    const directionParam = url.searchParams.get("direction") || "desc";
+
+    // Validate sort params
+    const sort = VALID_SORT_FIELDS.includes(sortParam) ? sortParam : "pickupDate";
+    const direction = VALID_DIRECTIONS.includes(directionParam as typeof VALID_DIRECTIONS[number])
+      ? directionParam as "asc" | "desc"
+      : "desc";
 
     // Build where clause with proper typing
     const where: Prisma.PickupScheduleWhereInput = { shop };
@@ -61,9 +80,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Cursor-based pagination
     const cursorOption = cursor ? { id: cursor } : undefined;
 
+    // Build orderBy from validated sort params
+    const prismaField = SORT_FIELD_MAP[sort];
+    const orderBy: Prisma.PickupScheduleOrderByWithRelationInput = {
+      [prismaField]: direction,
+    };
+
     const pickups = await prisma.pickupSchedule.findMany({
       where,
-      orderBy: { pickupDate: "desc" },
+      orderBy,
       take: ITEMS_PER_PAGE + 1, // Fetch one extra to check if there's more
       skip: cursor ? 1 : 0, // Skip the cursor item itself
       cursor: cursorOption,
@@ -83,11 +108,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       pickups: results,
       hasMore,
       nextCursor,
+      sort,
+      direction,
       error: null as string | null,
     });
   } catch (error) {
     console.error("Error loading orders:", error);
-    return json({ pickups: [] as Prisma.PickupScheduleGetPayload<{ include: { subscriptionPickup: { select: { id: true } } } }>[], hasMore: false, nextCursor: null as string | null, error: "Failed to load orders" });
+    return json({ pickups: [] as Prisma.PickupScheduleGetPayload<{ include: { subscriptionPickup: { select: { id: true } } } }>[], hasMore: false, nextCursor: null as string | null, sort: "pickupDate", direction: "desc", error: "Failed to load orders" });
   }
 };
 
@@ -95,17 +122,26 @@ type PickupWithSubscription = Prisma.PickupScheduleGetPayload<{
   include: { subscriptionPickup: { select: { id: true } } }
 }>;
 
-type LoaderData = {
-  pickups: PickupWithSubscription[];
-  hasMore: boolean;
-  nextCursor: string | null;
-  error: string | null;
+// Column index → sort field mapping for onSort handler
+const COLUMN_SORT_MAP: Record<number, string> = {
+  0: "order",       // Order #
+  1: "orderDate",   // Order Date
+  2: "customer",    // Customer
+  3: "pickupDate",  // Pickup Date
+};
+
+// Sort field → column index (reverse mapping for initialSortColumnIndex)
+const SORT_TO_COLUMN: Record<string, number> = {
+  order: 0,
+  orderDate: 1,
+  customer: 2,
+  pickupDate: 3,
 };
 
 export default function OrdersIndex() {
   const data = useLoaderData<typeof loader>();
   const pickups = data.pickups as unknown as PickupWithSubscription[];
-  const { hasMore, nextCursor, error } = data;
+  const { hasMore, nextCursor, sort, direction, error } = data;
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [statusFilter, setStatusFilter] = useState<string[]>(
@@ -123,6 +159,7 @@ export default function OrdersIndex() {
     } else {
       params.delete("status");
     }
+    params.delete("cursor"); // Reset pagination on filter change
     setSearchParams(params);
   }, [searchParams, setSearchParams]);
 
@@ -137,6 +174,7 @@ export default function OrdersIndex() {
     } else {
       params.delete("search");
     }
+    params.delete("cursor"); // Reset pagination on search
     setSearchParams(params);
   }, [searchValue, searchParams, setSearchParams]);
 
@@ -145,6 +183,17 @@ export default function OrdersIndex() {
     setSearchValue("");
     setSearchParams(new URLSearchParams());
   }, [setSearchParams]);
+
+  const handleSort = useCallback((headingIndex: number, sortDirection: "ascending" | "descending") => {
+    const sortField = COLUMN_SORT_MAP[headingIndex];
+    if (!sortField) return; // Non-sortable column
+
+    const params = new URLSearchParams(searchParams);
+    params.set("sort", sortField);
+    params.set("direction", sortDirection === "ascending" ? "asc" : "desc");
+    params.delete("cursor"); // Reset pagination on sort change
+    setSearchParams(params);
+  }, [searchParams, setSearchParams]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -175,6 +224,7 @@ export default function OrdersIndex() {
 
   const tableRows = pickups.map((pickup) => [
     pickup.shopifyOrderNumber,
+    formatDate(pickup.createdAt),
     pickup.customerName,
     formatDate(pickup.pickupDate),
     pickup.pickupTimeSlot,
@@ -264,9 +314,11 @@ export default function OrdersIndex() {
                       "text",
                       "text",
                       "text",
+                      "text",
                     ]}
                     headings={[
                       "Order",
+                      "Order Date",
                       "Customer",
                       "Pickup Date",
                       "Time Slot",
@@ -274,6 +326,10 @@ export default function OrdersIndex() {
                       "Actions",
                     ]}
                     rows={tableRows}
+                    sortable={[true, true, true, true, false, false, false]}
+                    defaultSortDirection="descending"
+                    initialSortColumnIndex={SORT_TO_COLUMN[sort] ?? 3}
+                    onSort={handleSort}
                   />
                   {hasMore && nextCursor && (
                     <InlineStack align="center">
