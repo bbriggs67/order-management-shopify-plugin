@@ -81,7 +81,7 @@ export async function sendSMS(to: string, message: string): Promise<{ success: b
 /**
  * Send Email via SendGrid
  */
-async function sendEmail(
+export async function sendEmail(
   to: string,
   subject: string,
   htmlContent: string

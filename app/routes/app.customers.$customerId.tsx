@@ -42,6 +42,7 @@ import {
   sendDraftOrderInvoice,
   sendPaymentLinkViaSMS,
 } from "../services/draft-orders.server";
+import { sendSMS, sendEmail } from "../services/notifications.server";
 import { isIntegrationConfigured } from "../utils/env.server";
 import { NOTE_CATEGORIES } from "../types/customer-crm";
 import type { CustomerDetail, CustomerNoteData, DraftOrderResult } from "../types/customer-crm";
@@ -255,6 +256,76 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
   }
 
+  // ---- Communication Actions ----
+
+  if (intent === "composeEmail") {
+    try {
+      const toEmail = formData.get("toEmail") as string;
+      const subject = formData.get("subject") as string;
+      const body = formData.get("body") as string;
+
+      if (!toEmail || !subject || !body) {
+        return json({ error: "Email, subject, and body are required" }, { status: 400 });
+      }
+
+      // Convert plain text body to HTML (preserve line breaks)
+      const htmlBody = `<div style="font-family: sans-serif; line-height: 1.5;">
+        ${body
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\n/g, "<br>")}
+        <br><br>
+        <p style="color: #666; font-size: 12px;">— Susie's Sourdough</p>
+      </div>`;
+
+      const result = await sendEmail(toEmail, subject, htmlBody);
+      return json({
+        success: result.success,
+        composeResult: {
+          method: "email",
+          success: result.success,
+          error: result.error,
+        },
+      });
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Failed to send email" },
+        { status: 500 }
+      );
+    }
+  }
+
+  if (intent === "composeSMS") {
+    try {
+      const toPhone = formData.get("toPhone") as string;
+      const message = formData.get("message") as string;
+
+      if (!toPhone || !message) {
+        return json({ error: "Phone number and message are required" }, { status: 400 });
+      }
+
+      if (message.length > 1600) {
+        return json({ error: "SMS message is too long (max 1600 characters)" }, { status: 400 });
+      }
+
+      const result = await sendSMS(toPhone, message);
+      return json({
+        success: result.success,
+        composeResult: {
+          method: "sms",
+          success: result.success,
+          error: result.error,
+        },
+      });
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Failed to send SMS" },
+        { status: 500 }
+      );
+    }
+  }
+
   return json({ error: "Unknown action" }, { status: 400 });
 };
 
@@ -288,6 +359,7 @@ export default function CustomerDetailPage() {
     invoiceError?: string;
     invoiceMethod?: string;
     synced?: boolean;
+    composeResult?: { method: string; success: boolean; error?: string };
   }>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -304,6 +376,16 @@ export default function CustomerDetailPage() {
   const [currentDraftOrder, setCurrentDraftOrder] = useState<DraftOrderResult | null>(null);
   const [invoiceBanner, setInvoiceBanner] = useState<{ status: "success" | "critical"; message: string } | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
+
+  // --- Email Compose state ---
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [composeBanner, setComposeBanner] = useState<{ status: "success" | "critical"; message: string } | null>(null);
+
+  // --- SMS Compose state ---
+  const [smsModalOpen, setSmsModalOpen] = useState(false);
+  const [smsMessage, setSmsMessage] = useState("");
 
   const fullName = [customer.firstName, customer.lastName]
     .filter(Boolean)
@@ -333,6 +415,29 @@ export default function CustomerDetailPage() {
         setInvoiceBanner({
           status: "critical",
           message: actionData.invoiceError || "Failed to send invoice",
+        });
+      }
+    }
+    if (actionData?.composeResult) {
+      const cr = actionData.composeResult;
+      if (cr.success) {
+        setComposeBanner({
+          status: "success",
+          message: cr.method === "email"
+            ? "Email sent successfully!"
+            : "Text message sent successfully!",
+        });
+        // Clear form on success
+        if (cr.method === "email") {
+          setEmailSubject("");
+          setEmailBody("");
+        } else {
+          setSmsMessage("");
+        }
+      } else {
+        setComposeBanner({
+          status: "critical",
+          message: cr.error || `Failed to send ${cr.method === "email" ? "email" : "text"}`,
         });
       }
     }
@@ -457,6 +562,27 @@ export default function CustomerDetailPage() {
     }
   }, [currentDraftOrder]);
 
+  // --- Email Compose ---
+  const handleSendEmail = useCallback(() => {
+    if (!emailSubject.trim() || !emailBody.trim() || !customer.email) return;
+    const formData = new FormData();
+    formData.set("_action", "composeEmail");
+    formData.set("toEmail", customer.email);
+    formData.set("subject", emailSubject.trim());
+    formData.set("body", emailBody.trim());
+    submit(formData, { method: "post" });
+  }, [emailSubject, emailBody, customer.email, submit]);
+
+  // --- SMS Compose ---
+  const handleSendSMS = useCallback(() => {
+    if (!smsMessage.trim() || !customer.phone) return;
+    const formData = new FormData();
+    formData.set("_action", "composeSMS");
+    formData.set("toPhone", customer.phone);
+    formData.set("message", smsMessage.trim());
+    submit(formData, { method: "post" });
+  }, [smsMessage, customer.phone, submit]);
+
   // Calculate order total
   const orderTotal = lineItems.reduce(
     (sum, item) => sum + parseFloat(item.price || "0") * item.quantity,
@@ -509,22 +635,46 @@ export default function CustomerDetailPage() {
                   </Button>
                 )}
                 {customer.email && (
-                  <Button
-                    url={`mailto:${customer.email}`}
-                    external
-                    size="slim"
-                  >
-                    Send Email
-                  </Button>
+                  isSendGridConfigured ? (
+                    <Button
+                      onClick={() => {
+                        setComposeBanner(null);
+                        setEmailModalOpen(true);
+                      }}
+                      size="slim"
+                    >
+                      Send Email
+                    </Button>
+                  ) : (
+                    <Button
+                      url={`mailto:${customer.email}`}
+                      external
+                      size="slim"
+                    >
+                      Send Email
+                    </Button>
+                  )
                 )}
                 {customer.phone && (
-                  <Button
-                    url={`sms:${customer.phone}`}
-                    external
-                    size="slim"
-                  >
-                    Send Text
-                  </Button>
+                  isTwilioConfigured ? (
+                    <Button
+                      onClick={() => {
+                        setComposeBanner(null);
+                        setSmsModalOpen(true);
+                      }}
+                      size="slim"
+                    >
+                      Send Text
+                    </Button>
+                  ) : (
+                    <Button
+                      url={`sms:${customer.phone}`}
+                      external
+                      size="slim"
+                    >
+                      Send Text
+                    </Button>
+                  )
                 )}
               </InlineStack>
             </Card>
@@ -913,6 +1063,120 @@ export default function CustomerDetailPage() {
                 </Text>
               )}
             </BlockStack>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* ============================================ */}
+      {/* EMAIL COMPOSE MODAL                         */}
+      {/* ============================================ */}
+      <Modal
+        open={emailModalOpen}
+        onClose={() => {
+          setEmailModalOpen(false);
+          setComposeBanner(null);
+        }}
+        title={`Email ${fullName}`}
+        primaryAction={{
+          content: "Send Email",
+          onAction: handleSendEmail,
+          disabled: !emailSubject.trim() || !emailBody.trim() || isSubmitting,
+          loading: isSubmitting,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => {
+              setEmailModalOpen(false);
+              setComposeBanner(null);
+            },
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            {composeBanner && (
+              <Banner tone={composeBanner.status}>
+                {composeBanner.message}
+              </Banner>
+            )}
+
+            <Text as="p" variant="bodySm" tone="subdued">
+              To: {customer.email}
+            </Text>
+
+            <TextField
+              label="Subject"
+              value={emailSubject}
+              onChange={setEmailSubject}
+              autoComplete="off"
+              maxLength={200}
+              placeholder="Order update, follow-up, etc."
+            />
+
+            <TextField
+              label="Message"
+              value={emailBody}
+              onChange={setEmailBody}
+              multiline={6}
+              autoComplete="off"
+              maxLength={5000}
+              showCharacterCount
+              placeholder="Hi! Just wanted to follow up about..."
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* ============================================ */}
+      {/* SMS COMPOSE MODAL                           */}
+      {/* ============================================ */}
+      <Modal
+        open={smsModalOpen}
+        onClose={() => {
+          setSmsModalOpen(false);
+          setComposeBanner(null);
+        }}
+        title={`Text ${fullName}`}
+        primaryAction={{
+          content: "Send Text",
+          onAction: handleSendSMS,
+          disabled: !smsMessage.trim() || isSubmitting,
+          loading: isSubmitting,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => {
+              setSmsModalOpen(false);
+              setComposeBanner(null);
+            },
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            {composeBanner && (
+              <Banner tone={composeBanner.status}>
+                {composeBanner.message}
+              </Banner>
+            )}
+
+            <Text as="p" variant="bodySm" tone="subdued">
+              To: {customer.phone}
+            </Text>
+
+            <TextField
+              label="Message"
+              value={smsMessage}
+              onChange={setSmsMessage}
+              multiline={4}
+              autoComplete="off"
+              maxLength={1600}
+              showCharacterCount
+              placeholder="Hi! Just wanted to let you know..."
+              helpText="Standard SMS messages are limited to 160 characters. Longer messages may be split into multiple texts."
+            />
           </BlockStack>
         </Modal.Section>
       </Modal>
