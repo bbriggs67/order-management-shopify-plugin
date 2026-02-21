@@ -571,14 +571,21 @@ export async function resolveLocalCustomer(
           }
         }
       }`,
-      { variables: { query: `email:${customer.email}` } }
+      { variables: { query: `email:"${customer.email}"` } }
     );
 
     const result = await response.json();
+    const gqlErrors = (result as any)?.errors;
+    if (gqlErrors) {
+      console.error("resolveLocalCustomer GraphQL errors:", JSON.stringify(gqlErrors));
+      return null;
+    }
     const edges = (result as any)?.data?.customers?.edges || [];
+    console.log(`resolveLocalCustomer: searched email "${customer.email}", found ${edges.length} results`);
 
     if (edges.length > 0) {
       const node = edges[0].node;
+      console.log(`resolveLocalCustomer: resolving ${customer.email} → ${node.id}`);
       // Update the local record with the real Shopify GID
       await prisma.customer.update({
         where: { id: customerId },
