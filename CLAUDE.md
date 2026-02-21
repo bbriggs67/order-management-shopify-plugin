@@ -52,6 +52,7 @@ prisma/schema.prisma     → Database schema
 | `customer-crm.server.ts` | Customer CRM: search, detail, notes, Shopify sync |
 | `draft-orders.server.ts` | Draft order creation + invoice sending (email/SMS) |
 | `notifications.server.ts` | SMS (Twilio) + Email (SendGrid) sending |
+| `sms-conversation.server.ts` | Two-way SMS: conversation CRUD, inbound recording |
 
 ## Subscription Flow (SSMA-Controlled)
 
@@ -95,6 +96,9 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 14. **CRM Draft Orders**: Create Shopify draft orders from customer profile via product picker. Invoice sending modal: Shopify email, SMS (Twilio), or copy link. Service in `draft-orders.server.ts`.
 15. **CRM Communication**: In-app email compose (SendGrid) and SMS compose (Twilio) modals on customer profile. Falls back to `mailto:`/`sms:` links when integrations not configured.
 16. **CRM Notes cross-page**: Pinned customer notes display on Order and Subscription detail pages (sidebar). "View Profile" links on both pages.
+17. **Two-way SMS**: iMessage-style conversation on customer detail page. Outbound via Twilio, inbound via webhook at `/api/twilio-webhook`. `SmsMessage` model tracks all messages. Polling every 10s when conversation expanded. Twilio number: `+18582484996`.
+18. **Twilio webhook**: `/api/twilio-webhook` validates Twilio signature (HMAC-SHA1), rate-limited 60/min per IP. Returns empty TwiML. Dedup by `twilioSid`.
+19. **A2P 10DLC**: Required for US SMS. Registration not yet completed in Twilio console — messages may be carrier-filtered until registered.
 
 ## SSMA Subscription Plan Groups (v2)
 

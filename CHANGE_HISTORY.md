@@ -2,6 +2,72 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-21 - Two-Way SMS Messaging (commit effeb9d)
+
+**Context:** Susie communicates with customers via text. Customers reply "I am on my way" etc. SSMA had outbound-only SMS via Twilio with no way to receive or display replies. Added iMessage-style conversation thread on customer detail page with two-way messaging.
+
+**New Prisma Models:**
+- `SmsMessage` — stores all SMS messages (inbound + outbound) with direction, status, twilioSid (unique for dedup), linked to Customer via FK
+- `SmsDirection` enum (INBOUND, OUTBOUND)
+- `SmsStatus` enum (SENT, DELIVERED, FAILED, RECEIVED)
+- Indexes: `[customerId, createdAt]`, `[phone]`, `[shop]`, `[twilioSid]`
+
+**New Utilities:**
+- `app/utils/phone.server.ts` — `normalizePhone()` converts various formats to E.164 (+1XXXXXXXXXX)
+- `app/utils/twilio-signature.server.ts` — `validateTwilioSignature()` HMAC-SHA1 validation using Node crypto (no twilio npm package)
+
+**Updated Service (`app/services/notifications.server.ts`):**
+- `sendSMS()` now returns `twilioSid` from Twilio response for message tracking
+
+**New Service (`app/services/sms-conversation.server.ts`):**
+- `getConversation(customerId, limit)` — messages ordered by createdAt asc
+- `getNewMessages(customerId, afterId)` — for polling, returns messages after anchor
+- `sendAndRecordSMS(shop, customerId, phone, body)` — sends via Twilio + creates OUTBOUND record with twilioSid
+- `recordInboundSMS(phone, body, twilioSid)` — dedup by twilioSid, lookup Customer by normalized phone, create INBOUND record
+
+**New Webhook (`app/routes/api.twilio-webhook.tsx`):**
+- POST: validates Twilio signature, rate-limits 60/min per IP, parses From/Body/MessageSid, calls recordInboundSMS(), returns empty TwiML `<Response/>`
+- GET: returns endpoint info JSON for debugging
+- Always returns 200 to prevent Twilio retry loops (dedup by twilioSid is safety net)
+
+**Customer Detail Page Enhancements (`app/routes/app.customers.$customerId.tsx`):**
+- New `ConversationSection` component (collapsible card between Actions and Orders):
+  - iMessage-style bubbles: outbound=blue right-aligned, inbound=gray left-aligned
+  - Compose bar with TextField + Send button, Enter to send
+  - Optimistic updates (message appears immediately with opacity 0.7)
+  - 10-second polling via `useFetcher` when conversation expanded
+  - Auto-scroll to bottom on new messages
+  - Character count (1600 max)
+- Loader: fetches conversation + supports `?poll=1&afterId=xxx` lightweight polling mode
+- Action: `sendConversationSMS` intent calls `sendAndRecordSMS()`
+- "Send Text" button now expands conversation section (instead of opening SMS compose modal)
+- Fixed: Send Email/Send Text buttons changed from `mailto:`/`sms:` URLs (broken in Shopify iframe) to always-modal approach with config warning banners
+- Fixed: `&bull;` HTML entities replaced with Unicode `•` character
+- Admin Notes moved from main content to sidebar under Customer Stats
+
+**Types (`app/types/customer-crm.ts`):**
+- Added `SmsMessageData` interface (id, direction, body, status, createdAt)
+
+**Infrastructure (configured via browser):**
+- Railway env vars: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` (+18582484996)
+- Twilio webhook URL: `https://order-management-shopify-plugin-production.up.railway.app/api/twilio-webhook`
+
+**New Files:**
+- `app/utils/phone.server.ts`
+- `app/utils/twilio-signature.server.ts`
+- `app/services/sms-conversation.server.ts`
+- `app/routes/api.twilio-webhook.tsx`
+- `prisma/migrations/20260221_add_sms_message/migration.sql`
+
+**Modified Files:**
+- `prisma/schema.prisma` — SmsMessage model + enums + Customer relation
+- `app/services/notifications.server.ts` — sendSMS returns twilioSid
+- `app/routes/app.customers.$customerId.tsx` — ConversationSection, modal fixes, notes moved
+- `app/types/customer-crm.ts` — SmsMessageData type
+- `CLAUDE.md` — Two-way SMS notes (#17-#19), sms-conversation service
+
+---
+
 ### 2026-02-21 - CRM Phases 3-6: Navigation, Draft Orders, Communication, Notes
 
 **Phase 3: Cross-page navigation (commit 1f00713)**
