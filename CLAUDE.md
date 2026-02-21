@@ -113,6 +113,16 @@ npx prisma migrate deploy                       # Production (Railway runs this)
 1. Commit and push to `funny-leakey` → Railway auto-deploys backend
 2. Theme extension changes also need: `npx shopify app deploy --force --config shopify.app.susies-sourdough-manager.toml`
 
+## Cold-Start Resilience
+
+Railway may sleep after days of inactivity. Architecture handles this:
+
+- **Prisma connection pool**: `connection_limit=5`, `connect_timeout=30s`, `pool_timeout=30s` (configured in `db.server.ts`)
+- **DB warmup**: Async `SELECT 1` on server startup pre-warms connections (`shopify.server.ts`)
+- **Health endpoint**: `GET /health` — returns DB status + latency. Used by external uptime monitor
+- **Webhook retry**: `withRetry()` in `webhooks.orders.create.tsx` — exponential backoff for transient DB failures
+- **Hourly cron**: GitHub Actions (`.github/workflows/subscription-cron.yml`) calls `/api/cron/process-subscriptions` hourly + health check keep-alive. Requires `RAILWAY_APP_URL` and `CRON_SECRET` GitHub Secrets
+
 ## Polaris Gotchas
 
 - `Badge` does NOT have `tone="subdued"` — use no tone for neutral

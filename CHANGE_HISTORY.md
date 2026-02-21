@@ -2,6 +2,90 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-20 - Cold-Start Resilience (commit a3057e4)
+
+**Context:** Customer orders are mostly subscriptions with 4-6 day gaps between orders.
+Railway sleeps the service during inactivity, causing cold-start failures when webhooks arrive.
+
+**Fix 1: Prisma connection pooling**
+- `db.server.ts` now appends `connection_limit=5`, `connect_timeout=30`, `pool_timeout=30` to DATABASE_URL
+- Prevents stale connection errors after days of idle
+
+**Fix 2: Database warmup on startup**
+- `shopify.server.ts` calls `warmDatabaseConnection()` (async `SELECT 1`) at module load
+- Pre-warms the connection pool before the first real request
+
+**Fix 3: Enhanced health check**
+- `health.tsx` now returns DB latency, server uptime, and `Cache-Control: no-store`
+
+**Fix 4: Webhook retry logic**
+- Added `withRetry()` helper to `webhooks.orders.create.tsx` with exponential backoff (500ms → 1s → 2s)
+- Only retries transient errors (Prisma P1001/P1002/P1008/P1017, ECONNRESET, etc.)
+- Wraps idempotency checks and pickup schedule creation
+
+**Fix 5: GitHub Actions cron for subscription billing**
+- New workflow `.github/workflows/subscription-cron.yml` runs hourly
+- Calls `/api/cron/process-subscriptions` with Bearer token + `/health` keep-alive
+- Requires GitHub Secrets: `RAILWAY_APP_URL`, `CRON_SECRET` (both configured)
+
+**Files Modified:**
+- `app/db.server.ts` — Connection pool config + `warmDatabaseConnection()` export
+- `app/shopify.server.ts` — DB warmup call on startup
+- `app/routes/health.tsx` — DB latency + uptime tracking
+- `app/routes/webhooks.orders.create.tsx` — `withRetry()` wrapper on DB operations
+- `.github/workflows/subscription-cron.yml` (NEW) — Hourly cron + keep-alive
+- `CLAUDE.md` — Cold-Start Resilience section added
+
+---
+
+### 2026-02-20 - Sortable Columns + Order Date on Orders Page (commit 569a53a)
+
+**Context:** Orders & Pickups table had no user-sortable columns and no Order Date.
+
+**Changes:**
+- Server-side sorting via URL params (`sort` and `direction`) with validated field mapping
+- Columns Order #, Order Date, Customer, Pickup Date are now sortable (click column header)
+- New "Order Date" column using `createdAt` field from PickupSchedule
+- Pagination cursor resets on sort/filter/search changes
+- Default sort: Pickup Date descending
+
+**Files Modified:**
+- `app/routes/app.orders._index.tsx` — Sortable DataTable + Order Date column
+
+---
+
+### 2026-02-20 - Code Review Round 3: Low-Priority Cleanup (commit 63e68a0)
+
+10 fixes across extensions and backend:
+- Unused imports, loading skeletons, retry buttons, type safety
+- PII logging reduction, parseFloat for discount precision
+- Removed unused locale keys, customer email from API response
+
+See MEMORY.md for full item-by-item list (#18-#29).
+
+**Files Modified:**
+- `extensions/customer-account-page/src/components/PauseModal.tsx`
+- `extensions/customer-account-profile/src/ProfileBlock.tsx`
+- `extensions/customer-account-page/src/SubscriptionPage.tsx`
+- `extensions/pickup-scheduler-cart/assets/pickup-scheduler.js`
+- `extensions/pickup-scheduler-cart/assets/subscribe-save.js`
+- `extensions/pickup-scheduler-cart/locales/en.default.json`
+- `app/routes/webhooks.orders.create.tsx`
+- `extensions/purchase-options-admin/src/ActionExtension.tsx`
+- `app/routes/api.customer-subscriptions.tsx`
+
+---
+
+### 2026-02-20 - Code Review Rounds 1 & 2 (commits 3dd1ef7, 189bbc1)
+
+**Round 1 (8 critical fixes):** Cart attribute merge, billing idempotency, timezone bugs (4 files), checkout validation, submitting guard timeout.
+
+**Round 2 (9 medium fixes):** Reschedule filtering, TRIWEEKLY gaps, one-time reschedule cleanup, shopifyContractId update, error responses, express checkout hidden, email cache bounds, frequency validation, input sanitization.
+
+See MEMORY.md for full item-by-item list (#1-#17).
+
+---
+
 ### 2026-02-20 - Fix Order Tags, Calendar, and Orders Page for Subscription Orders
 
 **3 issues from live test order #1865:**
