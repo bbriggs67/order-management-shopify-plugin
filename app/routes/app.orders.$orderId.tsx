@@ -77,19 +77,29 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
   }
 
-  // Look up CRM customer by email for "View Customer Profile" link
+  // Look up CRM customer by email for "View Customer Profile" link + pinned notes
   let customerId: string | null = null;
+  let customerNotes: Array<{ id: string; content: string; category: string | null; createdAt: Date }> = [];
   if (pickup.customerEmail) {
     const customer = await prisma.customer.findFirst({
       where: { shop, email: pickup.customerEmail.toLowerCase().trim() },
-      select: { id: true },
+      select: {
+        id: true,
+        notes: {
+          where: { isPinned: true },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, content: true, category: true, createdAt: true },
+        },
+      },
     });
     customerId = customer?.id || null;
+    customerNotes = customer?.notes || [];
   }
 
   return json({
     pickup,
     customerId,
+    customerNotes,
     refundableAmount,
     cancellationReasons: CANCELLATION_REASONS,
   });
@@ -393,7 +403,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function OrderDetail() {
-  const { pickup, customerId, refundableAmount, cancellationReasons } = useLoaderData<typeof loader>();
+  const { pickup, customerId, customerNotes, refundableAmount, cancellationReasons } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -705,6 +715,49 @@ export default function OrderDetail() {
                 )}
               </BlockStack>
             </Card>
+
+            {/* Customer Notes (pinned, from CRM) */}
+            {customerNotes.length > 0 && (
+              <Card>
+                <BlockStack gap="300">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h2" variant="headingMd">
+                      Customer Notes
+                    </Text>
+                    {customerId && (
+                      <Link to={`/app/customers/${customerId}`}>
+                        <Button size="slim" variant="plain">
+                          Manage
+                        </Button>
+                      </Link>
+                    )}
+                  </InlineStack>
+                  <BlockStack gap="200">
+                    {customerNotes.map((note) => (
+                      <Box
+                        key={note.id}
+                        padding="200"
+                        background="bg-surface-success"
+                        borderRadius="100"
+                      >
+                        <BlockStack gap="100">
+                          <InlineStack gap="100">
+                            {note.category && (
+                              <Badge size="small">
+                                {note.category.charAt(0).toUpperCase() + note.category.slice(1)}
+                              </Badge>
+                            )}
+                          </InlineStack>
+                          <Text as="p" variant="bodySm">
+                            {note.content}
+                          </Text>
+                        </BlockStack>
+                      </Box>
+                    ))}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+            )}
 
             {/* Notification History */}
             <Card>
