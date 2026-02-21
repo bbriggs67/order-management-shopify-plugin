@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useSearchParams, useSubmit, useNavigation, Link } from "@remix-run/react";
+import { useLoaderData, useActionData, useSearchParams, useSubmit, useNavigation, Link } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -121,6 +121,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function CustomersIndex() {
   const { customers, hasMore, nextCursor, totalCount } =
     useLoaderData<LoaderData>();
+  const actionData = useActionData<{ synced?: number; syncError?: string | null }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -265,11 +266,21 @@ export default function CustomersIndex() {
             </InlineStack>
 
             {/* Sync result banner */}
-            {navigation.state === "idle" &&
-              (navigation as any).formData?.get?.("_action") ===
-                "sync_customers" && (
-                <Banner tone="success">Customers synced successfully.</Banner>
-              )}
+            {actionData?.synced !== undefined && actionData.synced > 0 && !actionData.syncError && (
+              <Banner tone="success">
+                {`Successfully synced ${actionData.synced} customer${actionData.synced !== 1 ? "s" : ""} from Shopify.`}
+              </Banner>
+            )}
+            {actionData?.syncError && (
+              <Banner tone="critical">
+                {`Error syncing customers: ${actionData.syncError}`}
+              </Banner>
+            )}
+            {actionData?.synced === 0 && !actionData.syncError && (
+              <Banner tone="warning">
+                No new customers found to sync. Customers are synced from existing order and subscription data.
+              </Banner>
+            )}
 
             {/* Search */}
             <Card padding="0">

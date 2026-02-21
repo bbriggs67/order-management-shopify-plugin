@@ -464,8 +464,8 @@ export async function syncCustomersFromLocalData(
                 firstName
                 lastName
                 phone
-                ordersCount
-                totalSpentV2 { amount currencyCode }
+                numberOfOrders
+                amountSpent { amount currencyCode }
               }
             }
           }
@@ -478,7 +478,7 @@ export async function syncCustomersFromLocalData(
 
       if (shopifyCustomer) {
         // Parse name from local data as fallback
-        const nameParts = data.name.split(" ");
+        const nameParts = (data.name || "").split(" ");
         const firstName = shopifyCustomer.firstName || nameParts[0] || null;
         const lastName =
           shopifyCustomer.lastName || nameParts.slice(1).join(" ") || null;
@@ -489,13 +489,13 @@ export async function syncCustomersFromLocalData(
           firstName,
           lastName,
           phone: shopifyCustomer.phone || data.phone,
-          totalOrderCount: shopifyCustomer.ordersCount || 0,
-          totalSpent: shopifyCustomer.totalSpentV2?.amount || null,
+          totalOrderCount: shopifyCustomer.numberOfOrders || 0,
+          totalSpent: shopifyCustomer.amountSpent?.amount || null,
         });
         synced++;
       } else {
         // No Shopify customer found — create local-only record with placeholder GID
-        const nameParts = data.name.split(" ");
+        const nameParts = (data.name || "").split(" ");
         await upsertCustomer(shop, {
           shopifyCustomerId: `local:${email}`,
           email,

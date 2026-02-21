@@ -749,8 +749,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Upsert CRM Customer record from order data
     try {
       if (order.customer?.id) {
-        const shopifyCustomerGid = order.customer.admin_graphql_api_id ||
-          `gid://shopify/Customer/${order.customer.id}`;
+        const shopifyCustomerGid = `gid://shopify/Customer/${order.customer.id}`;
         await upsertCustomer(shop, {
           shopifyCustomerId: shopifyCustomerGid,
           email: customerEmail,
