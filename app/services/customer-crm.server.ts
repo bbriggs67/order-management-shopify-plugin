@@ -586,20 +586,55 @@ export async function resolveLocalCustomer(
     if (edges.length > 0) {
       const node = edges[0].node;
       console.log(`resolveLocalCustomer: resolving ${customer.email} → ${node.id}`);
-      // Update the local record with the real Shopify GID
-      await prisma.customer.update({
-        where: { id: customerId },
-        data: {
-          shopifyCustomerId: node.id,
-          firstName: node.firstName || customer.firstName,
-          lastName: node.lastName || customer.lastName,
-          phone: node.phone || customer.phone,
-          totalOrderCount: node.numberOfOrders || customer.totalOrderCount,
-          totalSpent: node.amountSpent?.amount || customer.totalSpent,
-          lastSyncedAt: new Date(),
-        },
-      });
-      return node.id;
+
+      // Ensure totalOrderCount is an integer (GraphQL may return varied types)
+      const orderCount = typeof node.numberOfOrders === "number"
+        ? node.numberOfOrders
+        : parseInt(String(node.numberOfOrders || "0"), 10) || customer.totalOrderCount;
+
+      try {
+        // Check if a record with this Shopify GID already exists (unique constraint)
+        const existing = await prisma.customer.findFirst({
+          where: { shop, shopifyCustomerId: node.id },
+        });
+
+        if (existing && existing.id !== customerId) {
+          // Another record already has this Shopify GID — merge: delete local: record,
+          // update existing with any missing data, return existing GID
+          console.log(`resolveLocalCustomer: merging into existing record ${existing.id}`);
+          // Move any notes from local record to the existing one
+          await prisma.customerNote.updateMany({
+            where: { customerId },
+            data: { customerId: existing.id },
+          });
+          // Move any SMS messages from local record to the existing one
+          await prisma.smsMessage.updateMany({
+            where: { customerId },
+            data: { customerId: existing.id },
+          });
+          // Delete the local: duplicate
+          await prisma.customer.delete({ where: { id: customerId } });
+          return node.id;
+        }
+
+        // No conflict — update the local record with the real Shopify GID
+        await prisma.customer.update({
+          where: { id: customerId },
+          data: {
+            shopifyCustomerId: node.id,
+            firstName: node.firstName || customer.firstName,
+            lastName: node.lastName || customer.lastName,
+            phone: node.phone || customer.phone,
+            totalOrderCount: orderCount,
+            totalSpent: node.amountSpent?.amount || customer.totalSpent,
+            lastSyncedAt: new Date(),
+          },
+        });
+        return node.id;
+      } catch (updateError) {
+        console.error(`resolveLocalCustomer: Prisma update failed for ${customer.email}:`, updateError);
+        return null;
+      }
     }
 
     return null;
@@ -607,6 +642,20 @@ export async function resolveLocalCustomer(
     console.error(`Error resolving local customer ${customer.email}:`, error);
     return null;
   }
+}
+
+// ============================================
+// FIND CUSTOMER BY SHOPIFY GID (for merge redirects)
+// ============================================
+
+export async function findCustomerByShopifyGid(
+  shop: string,
+  shopifyGid: string
+): Promise<{ id: string } | null> {
+  return prisma.customer.findFirst({
+    where: { shop, shopifyCustomerId: shopifyGid },
+    select: { id: true },
+  });
 }
 
 // ============================================

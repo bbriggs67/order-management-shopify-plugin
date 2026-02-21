@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import {
   useLoaderData,
   useSubmit,
@@ -140,10 +140,16 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   if (customer.shopifyCustomerId.startsWith("local:")) {
     const resolvedId = await resolveLocalCustomer(admin, shop, customerId);
     if (resolvedId) {
-      // Re-fetch customer detail with updated Shopify data
+      // Re-fetch — if record was merged (deleted), find the merged record
       customer = await getCustomerDetail(admin, shop, customerId);
       if (!customer) {
-        throw new Response("Customer not found after resolve", { status: 404 });
+        // Record was deleted during merge — redirect to the merged customer
+        const { findCustomerByShopifyGid } = await import("../services/customer-crm.server");
+        const mergedCustomer = await findCustomerByShopifyGid(shop, resolvedId);
+        if (mergedCustomer) {
+          return redirect(`/app/customers/${mergedCustomer.id}`);
+        }
+        throw new Response("Customer not found after merge", { status: 404 });
       }
     }
   }
