@@ -98,7 +98,8 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 16. **CRM Notes cross-page**: Pinned customer notes display on Order and Subscription detail pages (sidebar). "View Profile" links on both pages.
 17. **Two-way SMS**: iMessage-style conversation on customer detail page. Outbound via Twilio, inbound via webhook at `/api/twilio-webhook`. `SmsMessage` model tracks all messages. Polling every 10s when conversation expanded. Twilio number: `+18582484996`.
 18. **Twilio webhook**: `/api/twilio-webhook` validates Twilio signature (HMAC-SHA1), rate-limited 60/min per IP. Returns empty TwiML. Dedup by `twilioSid`.
-19. **A2P 10DLC**: Required for US SMS. Registration not yet completed in Twilio console — messages may be carrier-filtered until registered.
+19. **A2P 10DLC**: Required for US SMS. Registration in progress — Privacy Policy (automated) and Terms of Service (custom with SMS terms) published at `susiessourdough.com/policies/`. Policy page CSS fix applied to both TEST and Dawn themes. Messages may be carrier-filtered until registration approved.
+20. **Business location**: Encinitas, CA (not Poway). Contact is email-only: info@susiessourdough.com — no phone number on public pages.
 
 ## SSMA Subscription Plan Groups (v2)
 

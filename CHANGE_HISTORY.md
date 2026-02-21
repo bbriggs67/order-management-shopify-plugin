@@ -2,6 +2,29 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-21 - A2P 10DLC Compliance: Policy Pages & Theme CSS Fix
+
+**Context:** SMS messages failing with Twilio error 30034 (unregistered number). A2P 10DLC registration requires Privacy Policy and Terms of Service URLs. Policy pages existed but had white-on-white text due to theme CSS variables.
+
+**Shopify Policy Pages (configured via Shopify Admin):**
+- Privacy Policy: Already "Automated" by Shopify at `susiessourdough.com/policies/privacy-policy`
+- Terms of Service: Created manually with 7 sections including Section 5 (SMS/TEXT MESSAGING TERMS) with all Twilio A2P required elements: Program Name, Description, Message Frequency, Data Rates, STOP opt-out, HELP, Support Contact
+- Business location: Encinitas, CA. Contact: email-only (info@susiessourdough.com), no phone number on public pages
+
+**Theme CSS Fix (both themes):**
+- Root cause: `.shopify-policy__container` inherited `color: rgba(255,255,255,0.75)` from theme variable `--color-foreground: 255,255,255`
+- Fix: Appended policy page CSS overrides to `assets/base.css` — dark text (#333333 body, #1a1a1a headings) for `.shopify-policy__container` and `.shopify-policy__title`
+- Applied to TEST theme (#159564890324) and Dawn theme (#146758893780)
+
+**Modified Files (theme assets only — pushed via Shopify CLI):**
+- TEST theme `assets/base.css` — policy page CSS fix appended
+- Dawn theme `assets/base.css` — same policy page CSS fix appended
+
+**Updated Docs:**
+- `CLAUDE.md` — Updated note #19 (A2P status), added note #20 (business location)
+
+---
+
 ### 2026-02-21 - Two-Way SMS Messaging (commit effeb9d)
 
 **Context:** Susie communicates with customers via text. Customers reply "I am on my way" etc. SSMA had outbound-only SMS via Twilio with no way to receive or display replies. Added iMessage-style conversation thread on customer detail page with two-way messaging.
