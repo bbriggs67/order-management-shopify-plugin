@@ -347,7 +347,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         subscriptions,
         availableDays,
         availableTimeSlots,
-        customerEmail,
       },
       { headers: corsHeaders }
     );

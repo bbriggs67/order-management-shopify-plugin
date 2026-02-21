@@ -4,8 +4,11 @@ import {
   Page,
   BlockStack,
   Text,
+  Button,
   Banner,
   Heading,
+  SkeletonTextBlock,
+  Divider,
 } from "@shopify/ui-extensions-react/customer-account";
 import { useState, useEffect, useCallback } from "react";
 import type {
@@ -70,8 +73,17 @@ function SubscriptionPage() {
   if (loading) {
     return (
       <Page title="My Subscriptions">
-        <BlockStack spacing="base">
-          <Text>Loading your subscriptions...</Text>
+        <BlockStack spacing="loose">
+          <BlockStack spacing="base">
+            <SkeletonTextBlock lines={2} />
+            <Divider />
+            <SkeletonTextBlock lines={3} />
+          </BlockStack>
+          <BlockStack spacing="base">
+            <SkeletonTextBlock lines={2} />
+            <Divider />
+            <SkeletonTextBlock lines={3} />
+          </BlockStack>
         </BlockStack>
       </Page>
     );
@@ -88,6 +100,9 @@ function SubscriptionPage() {
             Please try refreshing the page. If the problem persists, contact
             us for help.
           </Text>
+          <Button kind="secondary" onPress={handleRefresh}>
+            Try Again
+          </Button>
         </BlockStack>
       </Page>
     );

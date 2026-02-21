@@ -12,15 +12,24 @@ import {
 } from "@shopify/ui-extensions-react/customer-account";
 import { useState, useEffect } from "react";
 
+// NOTE: This interface mirrors CustomerSubscription from customer-account-page/src/types.ts.
+// These are separate Shopify extensions with isolated build contexts, so we can't share imports.
+// Keep in sync with the canonical types.ts if fields change.
 interface CustomerSubscription {
   id: string;
-  status: string;
-  frequency: string;
-  preferredDay: number;
+  status: "ACTIVE" | "PAUSED" | "CANCELLED";
+  frequency: "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY";
+  preferredDay: number; // 0-6 (Sun-Sat)
   preferredTimeSlot: string;
   discountPercent: number;
   nextPickupDate: string | null;
 }
+
+const FREQUENCY_LABELS: Record<string, string> = {
+  WEEKLY: "weekly",
+  BIWEEKLY: "every 2 weeks",
+  TRIWEEKLY: "every 3 weeks",
+};
 
 // Customer account extensions don't have extension.appUrl (unlike checkout extensions).
 const APP_URL = "https://order-management-shopify-plugin-production.up.railway.app";
@@ -132,7 +141,7 @@ function ProfileBlock() {
             {sub.status}
           </Badge>
           <Text>
-            {DAY_NAMES[sub.preferredDay]} Pickup ({sub.frequency.toLowerCase()})
+            {DAY_NAMES[sub.preferredDay]} Pickup ({FREQUENCY_LABELS[sub.frequency] || sub.frequency.toLowerCase()})
           </Text>
         </InlineStack>
       ))}

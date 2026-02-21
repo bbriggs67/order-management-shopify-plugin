@@ -1,7 +1,6 @@
 import {
   BlockStack,
   Button,
-  InlineStack,
   Text,
   TextField,
   Modal,

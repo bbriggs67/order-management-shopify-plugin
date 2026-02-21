@@ -448,7 +448,7 @@
       return {
         type: checked.value,
         frequency: checked.dataset.frequency || null,
-        discount: parseInt(checked.dataset.discount) || 0
+        discount: parseFloat(checked.dataset.discount) || 0
       };
     }
   }
@@ -467,9 +467,9 @@
     }
 
     // Get settings from the embed element
-    const weeklyDiscount = parseInt(embed.dataset.weeklyDiscount) || 10;
-    const biweeklyDiscount = parseInt(embed.dataset.biweeklyDiscount) || 5;
-    const triweeklyDiscount = parseInt(embed.dataset.triweeklyDiscount) || 0;
+    const weeklyDiscount = parseFloat(embed.dataset.weeklyDiscount) || 10;
+    const biweeklyDiscount = parseFloat(embed.dataset.biweeklyDiscount) || 5;
+    const triweeklyDiscount = parseFloat(embed.dataset.triweeklyDiscount) || 0;
     const shopDomain = embed.dataset.shop || window.Shopify?.shop || '';
 
     // Create the widget

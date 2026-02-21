@@ -87,6 +87,19 @@ interface SellingPlanGroup {
   plans: SellingPlan[];
 }
 
+// Shopify Admin extension API types (not fully typed in @shopify/ui-extensions-react/admin)
+interface GraphQLResult {
+  data?: Record<string, unknown>;
+  errors?: Array<{ message: string }>;
+}
+
+interface ExtensionData {
+  selected?: Array<{
+    sellingPlanId?: string;
+    id?: string;
+  }>;
+}
+
 function formatInterval(interval: string, count: number): string {
   const intervalLabel = interval.toLowerCase();
   if (count === 1) {
@@ -112,7 +125,7 @@ function PurchaseOptionsAction() {
   const { close, query } = api;
 
   // Get data from the API - structure may vary, handle gracefully
-  const data = (api as any).data || {};
+  const data = ("data" in api ? api.data : {}) as ExtensionData;
   const selected = data?.selected || [];
   const firstSelected = selected[0] || {};
 
@@ -144,17 +157,18 @@ function PurchaseOptionsAction() {
         variables: { id: sellingPlanGroupId },
       });
 
-      if ((result as any).errors) {
-        throw new Error((result as any).errors.map((e: { message: string }) => e.message).join(", "));
+      if ((result as GraphQLResult).errors) {
+        throw new Error((result as GraphQLResult).errors.map((e: { message: string }) => e.message).join(", "));
       }
 
-      const group = (result as any).data?.sellingPlanGroup;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const group = (result as GraphQLResult).data?.sellingPlanGroup as any;
       if (!group) {
         throw new Error("Selling plan group not found");
       }
 
-      const plans: SellingPlan[] = group.sellingPlans.edges.map((edge: any) => {
-        const plan = edge.node;
+      const plans: SellingPlan[] = group.sellingPlans.edges.map((edge: { node: Record<string, unknown> }) => {
+        const plan = edge.node as Record<string, any>;
         const pricingPolicy = plan.pricingPolicies?.[0];
         const discount = pricingPolicy?.adjustmentValue?.percentage || 0;
 
@@ -205,11 +219,11 @@ function PurchaseOptionsAction() {
         },
       });
 
-      if ((result as any).errors) {
-        throw new Error((result as any).errors.map((e: { message: string }) => e.message).join(", "));
+      if ((result as GraphQLResult).errors) {
+        throw new Error((result as GraphQLResult).errors.map((e: { message: string }) => e.message).join(", "));
       }
 
-      const userErrors = (result as any).data?.sellingPlanGroupUpdate?.userErrors;
+      const userErrors = (result as GraphQLResult).data?.sellingPlanGroupUpdate?.userErrors;
       if (userErrors && userErrors.length > 0) {
         throw new Error(userErrors.map((e: { message: string }) => e.message).join(", "));
       }
@@ -238,11 +252,11 @@ function PurchaseOptionsAction() {
         },
       });
 
-      if ((result as any).errors) {
-        throw new Error((result as any).errors.map((e: { message: string }) => e.message).join(", "));
+      if ((result as GraphQLResult).errors) {
+        throw new Error((result as GraphQLResult).errors.map((e: { message: string }) => e.message).join(", "));
       }
 
-      const userErrors = (result as any).data?.sellingPlanGroupRemoveProducts?.userErrors;
+      const userErrors = (result as GraphQLResult).data?.sellingPlanGroupRemoveProducts?.userErrors;
       if (userErrors && userErrors.length > 0) {
         throw new Error(userErrors.map((e: { message: string }) => e.message).join(", "));
       }

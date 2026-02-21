@@ -1,7 +1,5 @@
 {
   "pickup_scheduler": {
-    "title": "Pickup Scheduler",
-    "shipping": "Shipping",
     "store_pickup": "Store Pickup",
     "pick_a_date": "Pick a date",
     "select_time": "Select Time",

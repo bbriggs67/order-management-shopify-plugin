@@ -136,10 +136,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const order = payload as unknown as OrderWebhookPayload;
 
-  // Log the order details for debugging
-  console.log(`Processing order ${order.name} (ID: ${order.id})`);
-  console.log(`Order note_attributes:`, JSON.stringify(order.note_attributes));
-  console.log(`Order line_items count:`, order.line_items?.length);
+  // Log order details (no PII)
+  console.log(`Processing order ${order.name} (ID: ${order.id}), ${order.line_items?.length || 0} line items, ${(order.note_attributes || []).length} attributes`);
 
   // Check for idempotency — two layers:
   // 1. Check if a PickupSchedule already exists for this order (definitive)
@@ -211,7 +209,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const refetchData = await refetchResponse.json();
       const customAttrs = refetchData.data?.order?.customAttributes || [];
-      console.log(`Re-fetched ${customAttrs.length} customAttributes from GraphQL:`, JSON.stringify(customAttrs));
+      console.log(`Re-fetched ${customAttrs.length} customAttributes from GraphQL`);
 
       if (customAttrs.length > 0) {
         // GraphQL uses "key"/"value", convert to webhook format "name"/"value"
@@ -232,11 +230,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const getAttr = (key: string) => {
     // Shopify REST API uses "name" for the attribute key, not "key"
     const attr = attributes.find((a) => a.name === key);
-    if (attr) {
-      console.log(`Found attribute "${key}": ${attr.value}`);
-    } else {
-      console.log(`Attribute "${key}" not found in note_attributes`);
-    }
     return attr?.value || null;
   };
 
@@ -366,7 +359,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       const graphqlData: GraphQLOrderResponse = await graphqlResponse.json();
-      console.log(`GraphQL response for order:`, JSON.stringify(graphqlData, null, 2));
 
       const graphqlLineItem = graphqlData.data?.order?.lineItems?.nodes?.find(
         (item) => item.sellingPlanAllocation?.sellingPlan

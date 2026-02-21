@@ -479,16 +479,12 @@
           });
           timeSelect.disabled = false;
         } else {
-          // Default time slots if none from API
-          const defaultSlots = ['9:00 AM - 10:00 AM', '10:00 AM - 11:00 AM', '11:00 AM - 12:00 PM',
-                               '1:00 PM - 2:00 PM', '2:00 PM - 3:00 PM', '3:00 PM - 4:00 PM'];
-          defaultSlots.forEach(slot => {
-            const option = document.createElement('option');
-            option.value = slot;
-            option.textContent = slot;
-            timeSelect.appendChild(option);
-          });
-          timeSelect.disabled = false;
+          // No time slots available from API — show message instead of hardcoded defaults
+          const option = document.createElement('option');
+          option.value = '';
+          option.textContent = 'No time slots available for this date';
+          timeSelect.appendChild(option);
+          timeSelect.disabled = true;
         }
       }
       if (timeInput) timeInput.value = '';
