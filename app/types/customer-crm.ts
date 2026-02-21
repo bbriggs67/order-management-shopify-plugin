@@ -125,3 +125,15 @@ export interface DraftOrderResult {
   totalPrice: string;
   currencyCode: string;
 }
+
+// ============================================
+// SMS CONVERSATION
+// ============================================
+
+export interface SmsMessageData {
+  id: string;
+  direction: "INBOUND" | "OUTBOUND";
+  body: string;
+  status: string;
+  createdAt: string;
+}

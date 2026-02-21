@@ -540,6 +540,7 @@ model Customer {
 
   // Relations
   notes             CustomerNote[]
+  smsMessages       SmsMessage[]
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -571,5 +572,40 @@ model CustomerNote {
   updatedAt DateTime @updatedAt
 
   @@index([customerId])
+  @@index([shop])
+}
+
+// ============================================
+// CRM: SMS CONVERSATIONS (two-way messaging)
+// ============================================
+
+enum SmsDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum SmsStatus {
+  SENT
+  DELIVERED
+  FAILED
+  RECEIVED
+}
+
+model SmsMessage {
+  id           String       @id @default(cuid())
+  shop         String
+  customerId   String
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  phone        String       // Customer phone in E.164 format
+  direction    SmsDirection // INBOUND or OUTBOUND
+  body         String       // Message text
+  status       SmsStatus    @default(SENT)
+  twilioSid    String?      @unique // Twilio MessageSid for dedup
+  errorMessage String?      // Error details if FAILED
+
+  createdAt    DateTime     @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([phone])
   @@index([shop])
 }

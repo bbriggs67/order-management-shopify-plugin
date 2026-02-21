@@ -38,7 +38,7 @@ function replaceTemplateVariables(template: string, variables: TemplateVariables
 /**
  * Send SMS via Twilio
  */
-export async function sendSMS(to: string, message: string): Promise<{ success: boolean; error?: string }> {
+export async function sendSMS(to: string, message: string): Promise<{ success: boolean; twilioSid?: string; error?: string }> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_PHONE_NUMBER;
@@ -71,7 +71,9 @@ export async function sendSMS(to: string, message: string): Promise<{ success: b
       return { success: false, error: errorData.message || "Failed to send SMS" };
     }
 
-    return { success: true };
+    // Parse response to capture Twilio MessageSid
+    const responseData = await response.json();
+    return { success: true, twilioSid: responseData.sid };
   } catch (error) {
     console.error("SMS send error:", error);
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };

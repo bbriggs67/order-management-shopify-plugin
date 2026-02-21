@@ -5,6 +5,7 @@ import {
   useSubmit,
   useNavigation,
   useActionData,
+  useFetcher,
   Link,
 } from "@remix-run/react";
 import {
@@ -27,7 +28,7 @@ import {
   Thumbnail,
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { authenticate } from "../shopify.server";
 import {
   getCustomerDetail,
@@ -43,9 +44,14 @@ import {
   sendPaymentLinkViaSMS,
 } from "../services/draft-orders.server";
 import { sendSMS, sendEmail } from "../services/notifications.server";
+import {
+  getConversation,
+  getNewMessages,
+  sendAndRecordSMS,
+} from "../services/sms-conversation.server";
 import { isIntegrationConfigured } from "../utils/env.server";
 import { NOTE_CATEGORIES } from "../types/customer-crm";
-import type { CustomerDetail, CustomerNoteData, DraftOrderResult } from "../types/customer-crm";
+import type { CustomerDetail, CustomerNoteData, DraftOrderResult, SmsMessageData } from "../types/customer-crm";
 
 // ============================================
 // HELPERS
@@ -113,14 +119,28 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Customer ID required", { status: 400 });
   }
 
+  // Lightweight polling mode — return only new messages
+  const url = new URL(request.url);
+  const pollMode = url.searchParams.get("poll") === "1";
+  const afterId = url.searchParams.get("afterId") || "";
+
+  if (pollMode && afterId) {
+    const newMessages = await getNewMessages(customerId, afterId);
+    return json({ pollMessages: newMessages });
+  }
+
   const customer = await getCustomerDetail(admin, shop, customerId);
 
   if (!customer) {
     throw new Response("Customer not found", { status: 404 });
   }
 
+  // Fetch SMS conversation history
+  const smsMessages = await getConversation(customerId);
+
   return json({
     customer,
+    smsMessages,
     isTwilioConfigured: isIntegrationConfigured("twilio"),
     isSendGridConfigured: isIntegrationConfigured("sendgrid"),
   });
@@ -326,6 +346,38 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
   }
 
+  // ---- Conversation SMS (two-way messaging) ----
+
+  if (intent === "sendConversationSMS") {
+    try {
+      const toPhone = formData.get("toPhone") as string;
+      const message = formData.get("message") as string;
+
+      if (!toPhone || !message) {
+        return json({ error: "Phone number and message are required" }, { status: 400 });
+      }
+
+      if (message.length > 1600) {
+        return json({ error: "SMS message is too long (max 1600 characters)" }, { status: 400 });
+      }
+
+      const result = await sendAndRecordSMS(shop, customerId, toPhone, message.trim());
+      return json({
+        success: result.success,
+        smsResult: {
+          success: result.success,
+          message: result.message,
+          error: result.error,
+        },
+      });
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Failed to send SMS" },
+        { status: 500 }
+      );
+    }
+  }
+
   return json({ error: "Unknown action" }, { status: 400 });
 };
 
@@ -347,8 +399,9 @@ interface LineItem {
 }
 
 export default function CustomerDetailPage() {
-  const { customer, isTwilioConfigured, isSendGridConfigured } = useLoaderData<{
+  const { customer, smsMessages, isTwilioConfigured, isSendGridConfigured } = useLoaderData<{
     customer: CustomerDetail;
+    smsMessages: SmsMessageData[];
     isTwilioConfigured: boolean;
     isSendGridConfigured: boolean;
   }>();
@@ -360,6 +413,7 @@ export default function CustomerDetailPage() {
     invoiceMethod?: string;
     synced?: boolean;
     composeResult?: { method: string; success: boolean; error?: string };
+    smsResult?: { success: boolean; message?: SmsMessageData; error?: string };
   }>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -386,6 +440,10 @@ export default function CustomerDetailPage() {
   // --- SMS Compose state ---
   const [smsModalOpen, setSmsModalOpen] = useState(false);
   const [smsMessage, setSmsMessage] = useState("");
+
+  // --- Conversation state ---
+  const [conversationExpanded, setConversationExpanded] = useState(false);
+  const conversationRef = useRef<HTMLDivElement>(null);
 
   const fullName = [customer.firstName, customer.lastName]
     .filter(Boolean)
@@ -648,8 +706,10 @@ export default function CustomerDetailPage() {
                 {customer.phone && (
                   <Button
                     onClick={() => {
-                      setComposeBanner(null);
-                      setSmsModalOpen(true);
+                      setConversationExpanded(true);
+                      setTimeout(() => {
+                        conversationRef.current?.scrollIntoView({ behavior: "smooth" });
+                      }, 100);
                     }}
                     size="slim"
                   >
@@ -670,6 +730,20 @@ export default function CustomerDetailPage() {
             {/* DRAFT ORDER ERROR BANNER */}
             {actionData?.error && !actionData?.invoiceMethod && !actionData?.synced && (
               <Banner tone="critical">{actionData.error}</Banner>
+            )}
+
+            {/* SMS CONVERSATION */}
+            {customer.phone && (
+              <div ref={conversationRef}>
+                <ConversationSection
+                  messages={smsMessages || []}
+                  customerPhone={customer.phone}
+                  isTwilioConfigured={isTwilioConfigured}
+                  customerId={customer.id}
+                  expanded={conversationExpanded}
+                  onToggleExpanded={() => setConversationExpanded(!conversationExpanded)}
+                />
+              </div>
             )}
 
             {/* ORDERS CARD */}
@@ -1366,6 +1440,259 @@ function SubscriptionsSection({
             ))}
           </BlockStack>
         )}
+      </BlockStack>
+    </Card>
+  );
+}
+
+// ============================================
+// CONVERSATION SECTION (iMessage-style two-way SMS)
+// ============================================
+
+function ConversationSection({
+  messages,
+  customerPhone,
+  isTwilioConfigured,
+  customerId,
+  expanded,
+  onToggleExpanded,
+}: {
+  messages: SmsMessageData[];
+  customerPhone: string | null;
+  isTwilioConfigured: boolean;
+  customerId: string;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+}) {
+  const [composeText, setComposeText] = useState("");
+  const [allMessages, setAllMessages] = useState<SmsMessageData[]>(messages);
+  const submit = useSubmit();
+  const navigation = useNavigation();
+  const fetcher = useFetcher<{ pollMessages?: SmsMessageData[] }>();
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isSubmitting = navigation.state === "submitting";
+
+  // Sync initial messages when loader data changes
+  const [prevMessages, setPrevMessages] = useState(messages);
+  if (messages !== prevMessages) {
+    setPrevMessages(messages);
+    setAllMessages(messages);
+  }
+
+  // Poll every 10s when expanded
+  useEffect(() => {
+    if (!expanded) return;
+
+    const intervalId = setInterval(() => {
+      const lastMsg = allMessages[allMessages.length - 1];
+      if (lastMsg && !lastMsg.id.startsWith("optimistic-")) {
+        fetcher.load(
+          `/app/customers/${customerId}?poll=1&afterId=${lastMsg.id}`
+        );
+      }
+    }, 10_000);
+
+    return () => clearInterval(intervalId);
+  }, [expanded, allMessages, customerId]);
+
+  // Merge polled messages
+  useEffect(() => {
+    if (fetcher.data?.pollMessages && fetcher.data.pollMessages.length > 0) {
+      setAllMessages((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        const newMsgs = fetcher.data!.pollMessages!.filter(
+          (m) => !existingIds.has(m.id)
+        );
+        if (newMsgs.length === 0) return prev;
+
+        // Remove optimistic messages that now have real counterparts
+        const cleaned = prev.filter(
+          (m) =>
+            !m.id.startsWith("optimistic-") ||
+            !newMsgs.some((n) => n.body === m.body && n.direction === "OUTBOUND")
+        );
+        return [...cleaned, ...newMsgs];
+      });
+    }
+  }, [fetcher.data]);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (expanded) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [allMessages.length, expanded]);
+
+  const handleSend = useCallback(() => {
+    if (!composeText.trim() || !customerPhone) return;
+    const formData = new FormData();
+    formData.set("_action", "sendConversationSMS");
+    formData.set("toPhone", customerPhone);
+    formData.set("message", composeText.trim());
+    submit(formData, { method: "post" });
+
+    // Optimistic update
+    setAllMessages((prev) => [
+      ...prev,
+      {
+        id: `optimistic-${Date.now()}`,
+        direction: "OUTBOUND" as const,
+        body: composeText.trim(),
+        status: "SENT",
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+    setComposeText("");
+  }, [composeText, customerPhone, submit]);
+
+  // Handle Enter key to send
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    },
+    [handleSend]
+  );
+
+  const lastMessage = allMessages[allMessages.length - 1];
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        {/* Header — always visible */}
+        <InlineStack align="space-between" blockAlign="center">
+          <InlineStack gap="200" blockAlign="center">
+            <Text as="h3" variant="headingMd">
+              Messages ({allMessages.length})
+            </Text>
+            {!expanded && lastMessage && (
+              <Text as="span" variant="bodySm" tone="subdued" truncate>
+                {lastMessage.direction === "INBOUND" ? "↩ " : "↪ "}
+                {lastMessage.body.length > 50
+                  ? lastMessage.body.slice(0, 50) + "…"
+                  : lastMessage.body}
+              </Text>
+            )}
+          </InlineStack>
+          <Button onClick={onToggleExpanded} size="slim">
+            {expanded ? "Collapse" : "Expand"}
+          </Button>
+        </InlineStack>
+
+        {/* Conversation thread — visible when expanded */}
+        <Collapsible open={expanded} id="sms-conversation">
+          {!customerPhone ? (
+            <Banner tone="warning">
+              No phone number on file. Add a phone number to send texts.
+            </Banner>
+          ) : !isTwilioConfigured ? (
+            <Banner tone="warning">
+              Twilio is not configured. Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER to Railway to enable messaging.
+            </Banner>
+          ) : (
+            <BlockStack gap="300">
+              {/* Message thread */}
+              <div
+                style={{
+                  maxHeight: "400px",
+                  overflowY: "auto",
+                  padding: "12px",
+                  backgroundColor: "#f6f6f7",
+                  borderRadius: "8px",
+                }}
+              >
+                {allMessages.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "24px 0" }}>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      No messages yet. Send a text to start a conversation.
+                    </Text>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {allMessages.map((msg) => (
+                      <div
+                        key={msg.id}
+                        style={{
+                          display: "flex",
+                          justifyContent:
+                            msg.direction === "OUTBOUND" ? "flex-end" : "flex-start",
+                        }}
+                      >
+                        <div
+                          style={{
+                            maxWidth: "75%",
+                            padding: "8px 12px",
+                            borderRadius: msg.direction === "OUTBOUND"
+                              ? "16px 16px 4px 16px"
+                              : "16px 16px 16px 4px",
+                            backgroundColor:
+                              msg.direction === "OUTBOUND" ? "#0066cc" : "#e5e5ea",
+                            color: msg.direction === "OUTBOUND" ? "#fff" : "#1a1a1a",
+                            opacity: msg.id.startsWith("optimistic-") ? 0.7 : 1,
+                          }}
+                        >
+                          <div style={{ fontSize: "14px", lineHeight: "1.4", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                            {msg.body}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: "11px",
+                              marginTop: "4px",
+                              opacity: 0.7,
+                              color: msg.direction === "OUTBOUND" ? "#cce0ff" : "#666",
+                            }}
+                          >
+                            {new Date(msg.createdAt).toLocaleString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              hour: "numeric",
+                              minute: "2-digit",
+                            })}
+                            {msg.status === "FAILED" && " • Failed ✕"}
+                            {msg.id.startsWith("optimistic-") && " • Sending…"}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <div ref={messagesEndRef} />
+                  </div>
+                )}
+              </div>
+
+              {/* Compose bar */}
+              <div onKeyDown={handleKeyDown}>
+                <InlineStack gap="200" blockAlign="end">
+                  <div style={{ flex: 1 }}>
+                    <TextField
+                      label=""
+                      labelHidden
+                      value={composeText}
+                      onChange={setComposeText}
+                      placeholder="Type a message…"
+                      autoComplete="off"
+                      maxLength={1600}
+                      multiline={1}
+                    />
+                  </div>
+                  <Button
+                    variant="primary"
+                    onClick={handleSend}
+                    disabled={!composeText.trim() || isSubmitting}
+                    loading={isSubmitting}
+                    size="slim"
+                  >
+                    Send
+                  </Button>
+                </InlineStack>
+              </div>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {composeText.length}/1600 • Enter to send, Shift+Enter for new line
+              </Text>
+            </BlockStack>
+          )}
+        </Collapsible>
       </BlockStack>
     </Card>
   );
