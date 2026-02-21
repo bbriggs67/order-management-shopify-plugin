@@ -37,6 +37,7 @@ import {
   deleteCustomerNote,
   togglePinNote,
   syncNotesToShopify,
+  resolveLocalCustomer,
 } from "../services/customer-crm.server";
 import {
   createDraftOrder,
@@ -129,10 +130,22 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return json({ pollMessages: newMessages });
   }
 
-  const customer = await getCustomerDetail(admin, shop, customerId);
+  let customer = await getCustomerDetail(admin, shop, customerId);
 
   if (!customer) {
     throw new Response("Customer not found", { status: 404 });
+  }
+
+  // Auto-resolve local: customers to their Shopify GID
+  if (customer.shopifyCustomerId.startsWith("local:")) {
+    const resolvedId = await resolveLocalCustomer(admin, shop, customerId);
+    if (resolvedId) {
+      // Re-fetch customer detail with updated Shopify data
+      customer = await getCustomerDetail(admin, shop, customerId);
+      if (!customer) {
+        throw new Response("Customer not found after resolve", { status: 404 });
+      }
+    }
   }
 
   // Fetch SMS conversation history

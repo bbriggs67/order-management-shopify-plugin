@@ -440,6 +440,10 @@ export async function syncCustomersFromLocalData(
       );
 
       const result = await response.json();
+      const errors = (result as any)?.errors;
+      if (errors) {
+        console.error("Shopify GraphQL errors in customer sync:", JSON.stringify(errors));
+      }
       const edges = (result as any)?.data?.customers?.edges || [];
       const pageInfo = (result as any)?.data?.customers?.pageInfo;
 
@@ -522,6 +526,80 @@ export async function syncCustomersFromLocalData(
   }
 
   return synced;
+}
+
+// ============================================
+// RESOLVE LOCAL CUSTOMER → SHOPIFY GID
+// ============================================
+
+/**
+ * For customers with `local:` prefix shopifyCustomerId, look them up
+ * in Shopify by email and update the record with the real Shopify GID.
+ * Returns the updated shopifyCustomerId, or null if not found in Shopify.
+ */
+export async function resolveLocalCustomer(
+  admin: { graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response> },
+  shop: string,
+  customerId: string
+): Promise<string | null> {
+  const customer = await prisma.customer.findFirst({
+    where: { id: customerId, shop },
+  });
+
+  if (!customer) return null;
+  if (!customer.shopifyCustomerId.startsWith("local:")) {
+    return customer.shopifyCustomerId; // Already resolved
+  }
+
+  if (!customer.email) return null;
+
+  try {
+    // Search Shopify for customer by email
+    const response = await admin.graphql(
+      `query findCustomerByEmail($query: String!) {
+        customers(first: 1, query: $query) {
+          edges {
+            node {
+              id
+              email
+              firstName
+              lastName
+              phone
+              numberOfOrders
+              amountSpent { amount currencyCode }
+            }
+          }
+        }
+      }`,
+      { variables: { query: `email:${customer.email}` } }
+    );
+
+    const result = await response.json();
+    const edges = (result as any)?.data?.customers?.edges || [];
+
+    if (edges.length > 0) {
+      const node = edges[0].node;
+      // Update the local record with the real Shopify GID
+      await prisma.customer.update({
+        where: { id: customerId },
+        data: {
+          shopifyCustomerId: node.id,
+          firstName: node.firstName || customer.firstName,
+          lastName: node.lastName || customer.lastName,
+          phone: node.phone || customer.phone,
+          totalOrderCount: node.numberOfOrders || customer.totalOrderCount,
+          totalSpent: node.amountSpent?.amount || customer.totalSpent,
+          lastSyncedAt: new Date(),
+        },
+      });
+      return node.id;
+    }
+
+    return null;
+  } catch (error) {
+    console.error(`Error resolving local customer ${customer.email}:`, error);
+    return null;
+  }
 }
 
 // ============================================
