@@ -1,8 +1,12 @@
 import { useApi } from "@shopify/ui-extensions-react/customer-account";
 import type { SubscriptionData, ActionResult } from "../types";
 
+// Customer account extensions don't have extension.appUrl (unlike checkout extensions).
+// Hardcode the app URL for fetch requests back to the app server.
+const APP_URL = "https://order-management-shopify-plugin-production.up.railway.app";
+
 export function useSubscriptionApi() {
-  const { sessionToken, extension } = useApi<"customer-account.page.render">();
+  const { sessionToken } = useApi<"customer-account.page.render">();
 
   async function getAuthHeaders(): Promise<Record<string, string>> {
     const token = await sessionToken.get();
@@ -15,7 +19,7 @@ export function useSubscriptionApi() {
   async function fetchSubscriptions(): Promise<SubscriptionData> {
     const headers = await getAuthHeaders();
     const response = await fetch(
-      `${extension.appUrl}/api/customer-subscriptions`,
+      `${APP_URL}/api/customer-subscriptions`,
       { headers }
     );
 
@@ -36,7 +40,7 @@ export function useSubscriptionApi() {
   ): Promise<ActionResult> {
     const headers = await getAuthHeaders();
     const response = await fetch(
-      `${extension.appUrl}/api/customer-subscriptions`,
+      `${APP_URL}/api/customer-subscriptions`,
       {
         method: "POST",
         headers,

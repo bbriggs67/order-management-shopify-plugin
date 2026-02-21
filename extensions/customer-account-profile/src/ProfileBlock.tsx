@@ -22,6 +22,9 @@ interface CustomerSubscription {
   nextPickupDate: string | null;
 }
 
+// Customer account extensions don't have extension.appUrl (unlike checkout extensions).
+const APP_URL = "https://order-management-shopify-plugin-production.up.railway.app";
+
 const DAY_NAMES = [
   "Sunday",
   "Monday",
@@ -38,7 +41,7 @@ export default reactExtension(
 );
 
 function ProfileBlock() {
-  const { sessionToken, extension } = useApi<"customer-account.profile.block.render">();
+  const { sessionToken } = useApi<"customer-account.profile.block.render">();
   const [subscriptions, setSubscriptions] = useState<CustomerSubscription[]>(
     []
   );
@@ -55,10 +58,9 @@ function ProfileBlock() {
       setError(null);
 
       const token = await sessionToken.get();
-      const appUrl = extension.appUrl;
 
       const response = await fetch(
-        `${appUrl}/api/customer-subscriptions`,
+        `${APP_URL}/api/customer-subscriptions`,
         {
           headers: {
             Authorization: `Bearer ${token}`,

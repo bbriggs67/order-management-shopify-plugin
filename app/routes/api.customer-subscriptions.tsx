@@ -146,7 +146,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Rate limit
     const rateLimitKey = `customer-api:${session.shop}:${customerEmail}`;
-    const rateCheck = checkRateLimit(rateLimitKey, RATE_LIMITS.formSubmission);
+    const rateCheck = checkRateLimit(rateLimitKey, RATE_LIMITS.FORM_SUBMISSION);
     if (!rateCheck.allowed) {
       return json(
         {
@@ -300,7 +300,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     // Rate limit
     const rateLimitKey = `customer-api-read:${session.shop}:${customerEmail}`;
-    const rateCheck = checkRateLimit(rateLimitKey, RATE_LIMITS.customerPortal);
+    const rateCheck = checkRateLimit(rateLimitKey, RATE_LIMITS.CUSTOMER_PORTAL);
     if (!rateCheck.allowed) {
       return json(
         { error: "Too many requests" },

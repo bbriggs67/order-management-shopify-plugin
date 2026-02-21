@@ -4,6 +4,7 @@
 api_version = "2025-04"
 
 [[extensions]]
+uid = "d58a9bb5-c9ac-1175-d114-8e9704619be804a14f3b"
 type = "ui_extension"
 name = "Manage Subscriptions"
 handle = "sub-manager-page"

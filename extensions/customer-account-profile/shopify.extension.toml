@@ -4,6 +4,7 @@
 api_version = "2025-04"
 
 [[extensions]]
+uid = "584ebcc0-74bc-3454-e9c0-ad7cbae0ecf7ffdb4e03"
 type = "ui_extension"
 name = "Subscription Summary"
 handle = "sub-manager-profile"
