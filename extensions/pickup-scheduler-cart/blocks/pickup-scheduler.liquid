@@ -1,0 +1,54 @@
+{% comment %}
+  Pickup Scheduler App Embed
+  Injects the pickup scheduler into cart pages
+{% endcomment %}
+
+{% if block.settings.enabled %}
+  {% if block.settings.dev_url != blank %}
+    <meta name="pickup-scheduler-dev-url" content="{{ block.settings.dev_url }}">
+  {% endif %}
+  <div
+    id="pickup-scheduler-embed"
+    data-shop="{{ shop.permanent_domain }}"
+    data-enabled="true"
+    data-location-name="{{ block.settings.location_name }}"
+    data-location-address="{{ block.settings.location_address }}"
+    style="display: none;"
+  ></div>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Pickup Scheduler",
+  "target": "body",
+  "javascript": "pickup-scheduler.js",
+  "stylesheet": "pickup-scheduler.css",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enabled",
+      "label": "Enable Pickup Scheduler",
+      "default": true,
+      "info": "Shows the pickup date/time selector on cart pages"
+    },
+    {
+      "type": "text",
+      "id": "location_name",
+      "label": "Default Location Name",
+      "default": "Store Pickup"
+    },
+    {
+      "type": "text",
+      "id": "location_address",
+      "label": "Default Location Address",
+      "default": "123 Main Street"
+    },
+    {
+      "type": "text",
+      "id": "dev_url",
+      "label": "Development URL (optional)",
+      "info": "For testing only - enter your cloudflare tunnel URL"
+    }
+  ]
+}
+{% endschema %}

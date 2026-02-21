@@ -1,0 +1,75 @@
+# Susies Sourdough Manager - PRODUCTION Configuration
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "cb5582248cfb2bce91bc6d860154b57c"
+name = "Susies Sourdough Manager"
+application_url = "https://order-management-shopify-plugin-production.up.railway.app"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = false
+
+[webhooks]
+api_version = "2025-04"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled"]
+  uri = "/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/scopes_update"]
+  uri = "/webhooks/app/scopes_update"
+
+  [[webhooks.subscriptions]]
+  topics = ["subscription_contracts/create"]
+  uri = "/webhooks/subscription_contracts/create"
+
+  [[webhooks.subscriptions]]
+  topics = ["subscription_contracts/update"]
+  uri = "/webhooks/subscription_contracts/update"
+
+  [[webhooks.subscriptions]]
+  topics = ["subscription_billing_attempts/success"]
+  uri = "/webhooks/subscription_billing_attempts/success"
+
+  [[webhooks.subscriptions]]
+  topics = ["subscription_billing_attempts/failure"]
+  uri = "/webhooks/subscription_billing_attempts/failure"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "/webhooks/orders/create"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/updated"]
+  uri = "/webhooks/orders/updated"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/cancelled"]
+  uri = "/webhooks/orders/cancelled"
+
+[access_scopes]
+# Full subscription scopes + customer write + draft orders for CRM portal
+scopes = "read_orders,write_orders,read_products,write_products,read_customers,write_customers,read_own_subscription_contracts,write_own_subscription_contracts,read_discounts,write_discounts,read_draft_orders,write_draft_orders"
+
+[auth]
+redirect_urls = [ "https://order-management-shopify-plugin-production.up.railway.app/auth/callback" ]
+
+[app_proxy]
+url = "https://order-management-shopify-plugin-production.up.railway.app/apps"
+subpath = "my-subscription"
+prefix = "apps"
+
+[pos]
+embedded = false
+
+[[extensions.admin_link]]
+label = "Susies Sourdough Manager"
+destination = "/"
+
+[[extensions.admin_link]]
+label = "Subscription Settings"
+destination = "/app/settings/subscriptions"
+
+# Note: The purchase-options-admin extension handles the edit button on selling plan groups
+# See extensions/purchase-options-admin/

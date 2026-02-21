@@ -1,0 +1,43 @@
+{% comment %}
+  Subscribe and Save - Product Page App Embed
+  SSMA-controlled subscription options on the product page.
+  Replaces Shopify's native selling plan selector so SSMA handles
+  the full subscription lifecycle via cart attributes.
+{% endcomment %}
+
+{% if block.settings.enabled %}
+  {% if block.settings.dev_url != blank %}
+    <meta name="subscribe-save-dev-url" content="{{ block.settings.dev_url }}">
+  {% endif %}
+  <div
+    id="subscribe-save-product-embed"
+    data-shop="{{ shop.permanent_domain }}"
+    data-enabled="true"
+    data-product-id="{% if product %}{{ product.id }}{% endif %}"
+    style="display: none;"
+  ></div>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Sub & Save - Product",
+  "target": "body",
+  "javascript": "subscribe-save-product.js",
+  "stylesheet": "subscribe-save-product.css",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enabled",
+      "label": "Enable Subscribe & Save on Product Pages",
+      "default": true,
+      "info": "Shows SSMA subscription options on product pages"
+    },
+    {
+      "type": "text",
+      "id": "dev_url",
+      "label": "Development URL (optional)",
+      "info": "For testing only - enter your cloudflare tunnel URL"
+    }
+  ]
+}
+{% endschema %}

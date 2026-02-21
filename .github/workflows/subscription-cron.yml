@@ -1,0 +1,40 @@
+name: Subscription Processing Cron
+
+# Run every hour to process subscription billing, resumptions, and pickups.
+# Also serves as a keep-alive to prevent Railway from sleeping the service.
+on:
+  schedule:
+    # Every hour at :00
+    - cron: '0 * * * *'
+  # Allow manual trigger from GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  process-subscriptions:
+    name: Process Subscriptions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger subscription processing
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.RAILWAY_APP_URL }}/api/cron/process-subscriptions" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "Subscription processing completed successfully"
+          else
+            echo "Subscription processing failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Health check (keep-alive)
+        run: |
+          curl -sf "${{ secrets.RAILWAY_APP_URL }}/health" || echo "Health check warning (non-fatal)"

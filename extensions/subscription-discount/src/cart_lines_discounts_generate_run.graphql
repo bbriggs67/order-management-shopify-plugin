@@ -1,0 +1,21 @@
+query CartLinesDiscountsGenerateRun {
+  cart {
+    lines {
+      id
+      cost {
+        subtotalAmount {
+          amount
+        }
+      }
+    }
+    subscriptionEnabled: attribute(key: "Subscription Enabled") {
+      value
+    }
+    subscriptionDiscount: attribute(key: "Subscription Discount") {
+      value
+    }
+  }
+  discount {
+    discountClasses
+  }
+}

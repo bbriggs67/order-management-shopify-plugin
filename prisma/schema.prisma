@@ -1,0 +1,575 @@
+// Susie Sourdough Shopify App - Database Schema
+// PostgreSQL database for production (Railway)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// SHOPIFY SESSION MANAGEMENT (Required)
+// ============================================
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+// ============================================
+// GOOGLE CALENDAR INTEGRATION
+// ============================================
+
+model GoogleCalendarAuth {
+  id           String   @id @default(cuid())
+  shop         String   @unique
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  calendarId   String   @default("primary")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ============================================
+// PREPARATION TIME CONFIGURATION
+// ============================================
+
+model PrepTimeConfig {
+  id             String  @id @default(cuid())
+  shop           String  @unique
+  isEnabled      Boolean @default(true)
+  cutOffTime     String  @default("12:00") // 24hr format
+  leadTimeBefore Int     @default(3) // Days for orders BEFORE cut-off
+  leadTimeAfter  Int     @default(4) // Days for orders AFTER cut-off
+  maxBookingDays Int     @default(14) // How far in advance customers can book
+
+  // Optional: customize by day of week
+  customByDay     Boolean @default(false)
+  mondayBefore    Int?
+  mondayAfter     Int?
+  tuesdayBefore   Int?
+  tuesdayAfter    Int?
+  wednesdayBefore Int?
+  wednesdayAfter  Int?
+  thursdayBefore  Int?
+  thursdayAfter   Int?
+  fridayBefore    Int?
+  fridayAfter     Int?
+  saturdayBefore  Int?
+  saturdayAfter   Int?
+  sundayBefore    Int?
+  sundayAfter     Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================
+// PICKUP AVAILABILITY CONFIGURATION
+// ============================================
+
+// Global pickup configuration
+model PickupConfig {
+  id               String @id @default(cuid())
+  shop             String @unique
+  availabilityMode String @default("customize_by_day") // "customize_by_day" | "same_for_all"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Per-day pickup configuration (normalized - one row per day)
+model PickupDayConfig {
+  id        String  @id @default(cuid())
+  shop      String
+  dayOfWeek Int // 0=Sun, 1=Mon, ..., 6=Sat
+  isEnabled Boolean @default(false)
+  maxOrders Int? // Optional daily capacity limit
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, dayOfWeek])
+  @@index([shop])
+}
+
+// ============================================
+// TIME SLOTS
+// ============================================
+
+model TimeSlot {
+  id        String  @id @default(cuid())
+  shop      String
+  label     String // "12:00 PM - 2:00 PM"
+  startTime String // "12:00" (24hr format)
+  endTime   String // "14:00" (24hr format)
+  dayOfWeek Int? // null = all days, 0=Sun, 1=Mon, ..., 6=Sat
+  maxOrders Int? // Optional per-slot capacity limit
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+  @@index([shop, isActive])
+  @@index([shop, dayOfWeek])
+}
+
+// ============================================
+// PICKUP LOCATIONS
+// ============================================
+
+model PickupLocation {
+  id        String  @id @default(cuid())
+  shop      String
+  name      String // "Olivenhain Porch Pick-up"
+  address   String // "3637 Copper Crest Road, Encinitas, 92024"
+  isActive  Boolean @default(true)
+  isDefault Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pickupSchedules PickupSchedule[]
+
+  @@index([shop])
+}
+
+// ============================================
+// BLACKOUT DATES
+// ============================================
+
+model BlackoutDate {
+  id          String    @id @default(cuid())
+  shop        String
+  date        DateTime? // Specific date (null for recurring weekly)
+  dateEnd     DateTime? // End date for date ranges
+  dayOfWeek   Int? // 0=Sun, 1=Mon... for recurring weekly
+  startTime   String? // Optional: partial day blackout start "16:15"
+  endTime     String? // Optional: partial day blackout end "18:00"
+  reason      String?
+  isRecurring Boolean   @default(false)
+  isActive    Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+  @@index([shop, date])
+  @@index([shop, dayOfWeek])
+}
+
+// ============================================
+// PICKUP SCHEDULES (Orders)
+// ============================================
+
+model PickupSchedule {
+  id                 String       @id @default(cuid())
+  shop               String
+  shopifyOrderId     String // Shopify order GID
+  shopifyOrderNumber String // Human-readable order number
+  customerName       String
+  customerEmail      String?
+  customerPhone      String?
+  pickupDate         DateTime
+  pickupTimeSlot     String // e.g., "12:00 PM - 2:00 PM"
+  pickupStatus       PickupStatus @default(SCHEDULED)
+  googleEventId      String? // Synced Google Calendar event ID
+  notes              String?
+
+  // Relations
+  pickupLocationId String?
+  pickupLocation   PickupLocation? @relation(fields: [pickupLocationId], references: [id])
+
+  subscriptionPickupId String?
+  subscriptionPickup   SubscriptionPickup? @relation(fields: [subscriptionPickupId], references: [id])
+
+  orderItems       OrderItem[]
+  notificationLogs NotificationLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, shopifyOrderId])
+  @@index([shop])
+  @@index([shop, pickupDate])
+  @@index([shop, pickupStatus])
+}
+
+enum PickupStatus {
+  SCHEDULED
+  READY
+  PICKED_UP
+  CANCELLED
+  NO_SHOW
+}
+
+// ============================================
+// ORDER ITEMS (Line items in an order)
+// ============================================
+
+model OrderItem {
+  id               String         @id @default(cuid())
+  pickupScheduleId String
+  pickupSchedule   PickupSchedule @relation(fields: [pickupScheduleId], references: [id], onDelete: Cascade)
+  shopifyProductId String
+  shopifyVariantId String?
+  productTitle     String
+  variantTitle     String?
+  quantity         Int
+  prepDays         Int // Snapshot of prep days at order time
+
+  createdAt DateTime @default(now())
+
+  @@index([pickupScheduleId])
+}
+
+// ============================================
+// SUBSCRIPTION PICKUPS
+// ============================================
+
+model SubscriptionPickup {
+  id                  String    @id @default(cuid())
+  shop                String
+  shopifyContractId   String // Subscription contract GID
+  shopifyOrderId      String? // Original order GID that created this subscription
+  shopifyOrderNumber  String? // Human-readable order number (e.g., "#1847")
+  customerName        String
+  customerEmail       String?
+  customerPhone       String?
+  preferredDay        Int // Day of week (0-6)
+  preferredTimeSlot   String // e.g., "12:00 PM - 2:00 PM"
+  preferredTimeSlotStart String? // "12:00" - extracted start time for billing calc
+  frequency           String // "WEEKLY", "BIWEEKLY"
+  discountPercent     Float // 10 for weekly, 5 for biweekly, 2.5 for triweekly
+  nextPickupDate      DateTime?
+  nextBillingDate     DateTime? // Calculated based on billingLeadHours
+  status              SubStatus @default(ACTIVE)
+  pausedUntil         DateTime?
+  pauseReason         String?
+  googleRecurEventId  String? // Recurring event ID if synced
+
+  // Billing configuration (customizable per subscription)
+  billingLeadHours    Int       @default(85) // Hours before pickup to charge (1-168, default 85 = ~3.5 days)
+
+  // Billing tracking
+  lastBillingAttemptId  String? // Shopify billing attempt GID
+  lastBillingAttemptAt  DateTime?
+  lastBillingStatus     String? // "SUCCESS", "FAILED", "PENDING"
+  billingFailureCount   Int       @default(0)
+  billingFailureReason  String?
+  billingCycleCount     Int       @default(0) // Number of successful billing cycles
+
+  // Admin notes
+  adminNotes          String? // Internal notes for admin use
+
+  // One-time reschedule for next pickup only
+  // When set, overrides preferredDay/preferredTimeSlot for the NEXT pickup only
+  // After that pickup is processed, these fields are cleared
+  oneTimeRescheduleDate     DateTime? // Override date for next pickup
+  oneTimeRescheduleTimeSlot String?   // Override time slot for next pickup
+  oneTimeRescheduleReason   String?   // Reason for the one-time change
+  oneTimeRescheduleBy       String?   // "ADMIN" or "CUSTOMER"
+  oneTimeRescheduleAt       DateTime? // When the reschedule was requested
+
+  pickupSchedules    PickupSchedule[]
+  billingAttemptLogs BillingAttemptLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, shopifyContractId])
+  @@index([shop])
+  @@index([shop, status])
+  @@index([shop, nextPickupDate])
+  @@index([shop, nextBillingDate])
+}
+
+enum SubStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+// ============================================
+// BILLING ATTEMPT LOG
+// ============================================
+
+model BillingAttemptLog {
+  id                   String   @id @default(cuid())
+  shop                 String
+  subscriptionPickupId String
+  shopifyBillingId     String? // Shopify billing attempt GID
+  idempotencyKey       String   @unique
+  status               String // "PENDING", "SUCCESS", "FAILED"
+  errorCode            String?
+  errorMessage         String?
+  orderId              String? // Created order GID on success
+  billingCycle         Int // Which billing cycle this attempt is for
+  attemptedAt          DateTime @default(now())
+
+  subscriptionPickup SubscriptionPickup @relation(fields: [subscriptionPickupId], references: [id], onDelete: Cascade)
+
+  @@index([shop])
+  @@index([subscriptionPickupId])
+  @@index([status])
+}
+
+// ============================================
+// NOTIFICATION LOG
+// ============================================
+
+model NotificationLog {
+  id               String         @id @default(cuid())
+  shop             String
+  pickupScheduleId String
+  pickupSchedule   PickupSchedule @relation(fields: [pickupScheduleId], references: [id], onDelete: Cascade)
+  type             String // "SMS" or "EMAIL"
+  recipient        String // Phone number or email address
+  status           String // "SENT", "FAILED", "PENDING"
+  sentAt           DateTime?
+  errorMessage     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([shop])
+  @@index([pickupScheduleId])
+}
+
+// ============================================
+// WEBHOOK EVENT LOG (Idempotency)
+// ============================================
+
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  shop        String
+  topic       String // e.g., "orders/create"
+  shopifyId   String // ID from webhook payload
+  payload     Json
+  processedAt DateTime @default(now())
+
+  @@unique([shop, topic, shopifyId])
+  @@index([shop])
+  @@index([processedAt])
+}
+
+// ============================================
+// SELLING PLAN CONFIGURATION
+// ============================================
+
+model SellingPlanConfig {
+  id                    String   @id @default(cuid())
+  shop                  String   @unique
+  sellingPlanGroupId    String // Shopify selling plan group GID
+  weeklySellingPlanId   String? // Shopify selling plan GID for weekly
+  biweeklySellingPlanId String? // Shopify selling plan GID for biweekly
+  weeklyDiscount        Int      @default(10)
+  biweeklyDiscount      Int      @default(5)
+
+  // Relationship to additional selling plans
+  additionalPlans SellingPlan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Store additional selling plans beyond the default weekly/biweekly
+model SellingPlan {
+  id            String   @id @default(cuid())
+  shopifyPlanId String   // Shopify selling plan GID
+  name          String   // Plan display name
+  interval      String   // WEEK, MONTH, etc.
+  intervalCount Int      // 1, 2, 3, etc.
+  discount      Float    // Discount percentage or amount
+  discountType  String   @default("PERCENTAGE") // PERCENTAGE or FIXED_AMOUNT
+
+  // Link to config
+  configId String
+  config   SellingPlanConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([configId, shopifyPlanId])
+}
+
+// ============================================
+// SSMA SUBSCRIPTION PLAN GROUPS
+// A group (e.g., "Subscribe & Save - Porch Pick Up") contains
+// multiple frequency options and has products associated with it.
+// ============================================
+
+model SubscriptionPlanGroup {
+  id               String   @id @default(cuid())
+  shop             String
+  name             String   // e.g., "Subscribe & Save - Porch Pick Up"
+  billingLeadHours Int      @default(85) // Hours before pickup to charge customer (~3.5 days)
+  isActive         Boolean  @default(true)
+  sortOrder        Int      @default(0)
+
+  frequencies SubscriptionPlanFrequency[]
+  products    SubscriptionPlanProduct[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+  @@index([shop, isActive])
+}
+
+model SubscriptionPlanFrequency {
+  id              String  @id @default(cuid())
+  groupId         String
+  group           SubscriptionPlanGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name            String  // "Weekly Delivery (10% off)"
+  interval        String  // "WEEK" or "MONTH"
+  intervalCount   Int     // 1 = every week, 2 = every 2 weeks, etc.
+  discountPercent Float   // Discount percentage (e.g., 10.0 for 10%)
+  discountCode    String? // Shopify discount code, e.g., "SUBSCRIBE-WEEKLY-10"
+  shopifyDiscountId String? // Shopify discount GID (auto-created by SSMA)
+  isActive        Boolean @default(true)
+  sortOrder       Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([groupId, interval, intervalCount])
+  @@index([groupId])
+}
+
+model SubscriptionPlanProduct {
+  id               String  @id @default(cuid())
+  groupId          String
+  group            SubscriptionPlanGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  shopifyProductId String  // "gid://shopify/Product/12345"
+  title            String  // Cached product title
+  imageUrl         String? // Cached product image URL
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([groupId, shopifyProductId])
+  @@index([groupId])
+}
+
+// ============================================
+// NOTIFICATION SETTINGS
+// ============================================
+
+model NotificationSettings {
+  id               String  @id @default(cuid())
+  shop             String  @unique
+  smsEnabled       Boolean @default(true)
+  emailEnabled     Boolean @default(true)
+  smsTemplate      String  @default("Hi {name}! Your Susie's Sourdough order #{number} is ready for pickup at {location}. Time slot: {time_slot}")
+  emailSubject     String  @default("Your Susie's Sourdough Order is Ready!")
+  emailTemplate    String? // HTML template
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================
+// EXTRA BAKE ORDERS (Manual calendar items)
+// ============================================
+
+model ExtraBakeOrder {
+  id               String   @id @default(cuid())
+  shop             String
+  date             DateTime // The bake/pickup date
+  timeSlot         String   // e.g., "12:00 PM - 2:00 PM" or "All Day"
+  shopifyProductId String   // "gid://shopify/Product/12345"
+  productTitle     String
+  variantTitle     String?
+  imageUrl         String?
+  quantity         Int
+  notes            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+  @@index([shop, date])
+}
+
+// ============================================
+// CRM: CUSTOMER (local cache of Shopify customer data)
+// ============================================
+
+model Customer {
+  id                String   @id @default(cuid())
+  shop              String
+  shopifyCustomerId String   // "gid://shopify/Customer/123456"
+  email             String?
+  firstName         String?
+  lastName          String?
+  phone             String?
+
+  // Cached stats from Shopify
+  totalOrderCount   Int      @default(0)
+  totalSpent        String?  // e.g., "647.58"
+  currency          String   @default("USD")
+
+  // CRM-specific fields
+  tags              String[] @default([])
+
+  // Shopify sync tracking
+  lastSyncedAt      DateTime?
+
+  // Relations
+  notes             CustomerNote[]
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([shop, shopifyCustomerId])
+  @@unique([shop, email])
+  @@index([shop])
+  @@index([shop, lastName])
+}
+
+// ============================================
+// CRM: CUSTOMER NOTES (admin notes per customer)
+// ============================================
+
+model CustomerNote {
+  id         String   @id @default(cuid())
+  shop       String
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  content    String   // The note text
+  category   String?  // "preference", "family", "allergy", "delivery", "general"
+  isPinned   Boolean  @default(false)
+  createdBy  String?  // Admin user who created the note
+
+  // Shopify sync
+  syncedToShopify Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([shop])
+}

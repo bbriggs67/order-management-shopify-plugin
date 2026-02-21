@@ -1,0 +1,145 @@
+# Susie's Sourdough Manager - Claude Code Context
+
+> **IMPORTANT FOR CLAUDE**: When making changes, update this file AND add an entry to `CHANGE_HISTORY.md`.
+
+## Quick Start
+
+```bash
+npm install
+npm run dev                      # Local dev (requires Shopify CLI)
+npm run build                    # Build for production
+npx shopify app deploy --config shopify.app.susies-sourdough-manager.toml
+```
+
+## Project Overview
+
+Shopify app for managing sourdough bread subscriptions with local pickup scheduling. Built for a small bakery (Susie's Sourdough).
+
+- Weekly/bi-weekly/tri-weekly subscription plans with discounts
+- Customer self-service subscription portal
+- Pickup date/time scheduling on cart page
+- Order management dashboard
+- Customer CRM with notes, order history, and Shopify sync
+
+## Architecture
+
+- **Framework**: Remix (Shopify App Template) + React + TypeScript
+- **Database**: PostgreSQL via Prisma ORM
+- **Hosting**: Railway (auto-deploys from `funny-leakey` branch)
+- **Shopify**: App Bridge, Polaris UI, Theme Extensions
+
+### Key Directories
+```
+app/routes/app.*.tsx     → Admin UI pages (embedded in Shopify admin)
+app/routes/apps.*.tsx    → App proxy routes (customer-facing)
+app/routes/api.*.tsx     → Internal API endpoints
+app/routes/webhooks.*.tsx→ Webhook handlers
+app/services/            → Business logic
+extensions/              → Theme extensions (pickup scheduler, subscribe widgets)
+prisma/schema.prisma     → Database schema
+```
+
+### Key Services
+| Service | Purpose |
+|---------|---------|
+| `subscription.server.ts` | Core subscription CRUD + pickup generation |
+| `subscription-plans.server.ts` | SSMA plan groups, frequencies & product CRUD |
+| `subscription-billing.server.ts` | Billing lead time calculation + attempts |
+| `shopify-discounts.server.ts` | Auto-create/sync discount codes in Shopify |
+| `selling-plans.server.ts` | Shopify Selling Plan Groups integration |
+| `pickup-availability.server.ts` | Available dates/times calculation |
+| `google-calendar.server.ts` | Calendar event sync |
+| `customer-crm.server.ts` | Customer CRM: search, detail, notes, Shopify sync |
+| `draft-orders.server.ts` | Draft order creation + invoice sending (email/SMS) |
+| `notifications.server.ts` | SMS (Twilio) + Email (SendGrid) sending |
+
+## Subscription Flow (SSMA-Controlled)
+
+**Product page** → SSMA widget shows "One-time purchase" + "Subscribe & Save" options
+→ Customer selects frequency → clicks Add to Cart
+→ Widget intercepts submit → `/cart/add.js` → `/cart/update.js` (sets SSMA attributes incl. discount code) → navigates to `/cart`
+→ **Cart page** → only date/time picker (subscription widget skips since attributes set)
+→ **Checkout** → discount code auto-applied via URL parameter `?discount=CODE` → webhook reads SSMA cart attributes → creates subscription
+
+**Discount code pipeline:**
+1. `syncDiscountsForGroup()` auto-generates codes (e.g. `SUBSCRIBE-WEEKLY-10`) for frequencies with `discountPercent > 0`
+2. API `/apps/my-subscription/selling-plans` returns `discountCode` per frequency
+3. Product/cart widget stores `Subscription Discount Code` as cart attribute
+4. Cart page `pickup-scheduler.js` reads discount code from cart attributes → redirects to `/checkout?discount=CODE`
+5. Checkout UI extension (`Checkout.tsx`) exists but does NOT render on one-page checkout (known issue). URL param approach is the working solution.
+6. Discount is NOT applied via `/discount/` endpoint (cookies unreliable) or checkout extension (doesn't render)
+
+**Two theme extension widgets:**
+- `subscribe-save-product.js/css/liquid` — Product page (primary subscription selector + hides express checkout + hides native selling plan selector)
+- `subscribe-save.js/liquid` — Cart page (fallback + date/time picker support)
+
+Cart widget auto-skips when SSMA attributes already set from product page.
+
+**Webhook fallback**: Shopify intermittently omits `note_attributes` from `orders/create` webhook (known bug). Webhook re-fetches order via GraphQL when attributes are missing.
+
+## Important Notes
+
+1. **Timezone**: All dates use Pacific Time. Use `T12:00:00` (noon) when constructing dates to avoid UTC midnight → Pacific previous-day bug.
+2. **Theme Extension schema**: Block `name` max 25 characters.
+3. **Shopify discounts**: `discountCodeBasicCreate` requires POSITIVE decimal (0.1 for 10%).
+4. **Frequency ordering**: `getActivePlanGroups()` sorts by `[sortOrder, intervalCount]`. All frequencies default to `sortOrder: 0`, so `intervalCount` is the effective sort.
+5. **Subscriptions page**: Only queries Shopify SubscriptionContract API for actual contract GIDs. SSMA-native subscriptions display frequency/discount from local DB.
+6. **App Proxy**: Configured at `/apps/my-subscription`. Shopify strips subpath when forwarding.
+7. **Test Store**: `aheajv-fg.myshopify.com`. **Live Store**: `susiessourdough.com`
+8. **Webhook attributes**: Shopify REST webhooks use `name` (not `key`) for note_attributes.
+9. **Express checkout hidden on product pages** via CSS in `subscribe-save-product.css` (Shop Pay, Apple Pay, Google Pay bypass cart/date-picker flow).
+10. **Discount codes via URL param**: Cart page `pickup-scheduler.js` redirects to `/checkout?discount=CODE`. Never use `/discount/CODE` fetch (cookies unreliable). Checkout UI extension exists but doesn't render on one-page checkout.
+11. **Billing lead time**: Default is **85 hours** (~3.5 days before pickup). Constant in `constants.server.ts`. First subscription order is paid at checkout (no double-billing); recurring billing starts from second pickup.
+12. **Calendar print**: Daily view has a Print button that opens a new window with clean printable layout (prep summary, pickups by time slot, extra orders).
+13. **Customer CRM portal**: 5th admin page (`/app/customers`). Customer model synced from Shopify via webhook + manual sync. Detail page shows orders (collapsible), subscriptions, admin notes with categories, Shopify contact info. Notes can sync to Shopify customer note field.
+14. **CRM Draft Orders**: Create Shopify draft orders from customer profile via product picker. Invoice sending modal: Shopify email, SMS (Twilio), or copy link. Service in `draft-orders.server.ts`.
+15. **CRM Communication**: In-app email compose (SendGrid) and SMS compose (Twilio) modals on customer profile. Falls back to `mailto:`/`sms:` links when integrations not configured.
+16. **CRM Notes cross-page**: Pinned customer notes display on Order and Subscription detail pages (sidebar). "View Profile" links on both pages.
+
+## SSMA Subscription Plan Groups (v2)
+
+- `SubscriptionPlanGroup` → name, billingLeadHours, isActive
+- `SubscriptionPlanFrequency` → interval, discount, discount code, shopifyDiscountId
+- `SubscriptionPlanProduct` → shopifyProductId, title, imageUrl
+- API: `/apps/my-subscription/selling-plans?shop=...` returns groups + flat plans
+- Auto-sync: Adding/updating frequencies auto-creates discount codes and selling plans
+- Settings UI at `app.settings.subscriptions.tsx` (plan groups, sync buttons, billing management)
+
+## Debug Tools
+
+- `/app/debug/test-subscription` — Create test subscriptions without live orders
+- `/app/debug/subscriptions` — View raw subscription data
+- Settings page → Advanced/Debug section
+
+## Database Migrations
+
+```bash
+npx prisma migrate dev --name migration_name   # Local
+npx prisma migrate deploy                       # Production (Railway runs this)
+```
+
+## Deploying
+
+1. Commit and push to `funny-leakey` → Railway auto-deploys backend
+2. Theme extension changes also need: `npx shopify app deploy --force --config shopify.app.susies-sourdough-manager.toml`
+
+## Cold-Start Resilience
+
+Railway may sleep after days of inactivity. Architecture handles this:
+
+- **Prisma connection pool**: `connection_limit=5`, `connect_timeout=30s`, `pool_timeout=30s` (configured in `db.server.ts`)
+- **DB warmup**: Async `SELECT 1` on server startup pre-warms connections (`shopify.server.ts`)
+- **Health endpoint**: `GET /health` — returns DB status + latency. Used by external uptime monitor
+- **Webhook retry**: `withRetry()` in `webhooks.orders.create.tsx` — exponential backoff for transient DB failures
+- **Hourly cron**: GitHub Actions (`.github/workflows/subscription-cron.yml`) calls `/api/cron/process-subscriptions` hourly + health check keep-alive. Requires `RAILWAY_APP_URL` and `CRON_SECRET` GitHub Secrets
+
+## Polaris Gotchas
+
+- `Badge` does NOT have `tone="subdued"` — use no tone for neutral
+- `InlineStack` uses `blockAlign` not `blockAlignment`
+
+## Related Docs
+
+- `CHANGE_HISTORY.md` - Detailed change log with file lists
+- `PRODUCTION_TRANSITION_PLAN.md` - Production rollout plan
+- `SHOPIFY_COMPLIANCE.md` - Shopify Dev Docs compliance report & known non-blocking issues
