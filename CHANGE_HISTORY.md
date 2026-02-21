@@ -2,6 +2,67 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-21 - CRM Phases 3-6: Navigation, Draft Orders, Communication, Notes
+
+**Phase 3: Cross-page navigation (commit 1f00713)**
+- "View Profile" buttons on Order and Subscription detail pages → links to CRM customer profile
+- Customer lookup by email in loaders for both pages
+- Fixed order link to use `shopifyOrderId` instead of internal `id`
+
+**Phase 4: Draft Orders from CRM (commit ba7bf57)**
+- New `app/services/draft-orders.server.ts` — `createDraftOrder()`, `sendDraftOrderInvoice()`, `sendPaymentLinkViaSMS()`
+- "Create Order" button on customer profile → Shopify product picker modal with quantity controls
+- Invoice Sending modal with 3 options: Shopify invoice email, SMS via Twilio, copy payment link
+- Loader passes `isTwilioConfigured` and `isSendGridConfigured` flags
+- Action intents: `createDraftOrder`, `sendInvoice`
+- Exported `sendSMS` from `notifications.server.ts`
+- Scopes deployed: `shopify app deploy` → `susies-sourdough-manager-82`
+
+**Phase 5: In-app Email & SMS Compose (commit 1cd136f)**
+- Email Compose modal: subject + body → SendGrid via `sendEmail()`
+- SMS Compose modal: message with character count → Twilio via `sendSMS()`
+- Smart button fallback: in-app modals when integrations configured, `mailto:`/`sms:` links when not
+- Action intents: `composeEmail`, `composeSMS`
+- Exported `sendEmail` from `notifications.server.ts`
+
+**Phase 6: Customer Notes on Detail Pages (commit 67bf7a1)**
+- Pinned CRM notes displayed in sidebar of Order and Subscription detail pages
+- Green background, category badges, "Manage" link to CRM profile
+- Loader queries `Customer.notes` where `isPinned=true` via email lookup
+- Notes sync to Shopify already functional via "Sync to Shopify" button on CRM profile
+
+**New Files:**
+- `app/services/draft-orders.server.ts` — Draft order service
+
+**Modified Files:**
+- `app/routes/app.customers.$customerId.tsx` — Create Order modal, Invoice Sending modal, Email/SMS Compose modals, integration flags
+- `app/routes/app.orders.$orderId.tsx` — Customer notes in sidebar, View Profile link
+- `app/routes/app.subscriptions.$contractId.tsx` — Customer notes in sidebar, View Profile link
+- `app/services/notifications.server.ts` — Exported `sendSMS` and `sendEmail`
+
+---
+
+### 2026-02-21 - CRM Sync Fixes (3 commits)
+
+**Fix 1 (commit fb95386):** Wrong Shopify GraphQL field names
+- `ordersCount` → `numberOfOrders`, `totalSpentV2` → `amountSpent`
+- Fixed sync banner: `navigation.formData` → `useActionData`
+- Fixed webhook customer GID construction
+
+**Fix 2 (commit 76df6ac):** Sync only finding local data
+- Rewrote `syncCustomersFromLocalData()` to fetch from Shopify Customers API directly (Phase 1)
+- Phase 2 fills gaps from local PickupSchedule/SubscriptionPickup data
+- Fixed Prisma filter: `AND: [{ customerEmail: { not: null } }, { customerEmail: { not: "" } }]`
+
+**Fix 3:** Scopes not activated — required `shopify app deploy` → `susies-sourdough-manager-82`
+
+**Modified Files:**
+- `app/services/customer-crm.server.ts` — Field names, two-phase sync
+- `app/routes/app.customers._index.tsx` — Sync banner fix
+- `app/routes/webhooks.orders.create.tsx` — Customer GID construction
+
+---
+
 ### 2026-02-21 - Customer CRM Portal (Phase 1-2)
 
 **Context:** Customer data was scattered across Orders and Subscriptions pages with no unified view. Added a Customer Management portal as the 5th admin page in SSMA.

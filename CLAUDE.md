@@ -50,6 +50,8 @@ prisma/schema.prisma     → Database schema
 | `pickup-availability.server.ts` | Available dates/times calculation |
 | `google-calendar.server.ts` | Calendar event sync |
 | `customer-crm.server.ts` | Customer CRM: search, detail, notes, Shopify sync |
+| `draft-orders.server.ts` | Draft order creation + invoice sending (email/SMS) |
+| `notifications.server.ts` | SMS (Twilio) + Email (SendGrid) sending |
 
 ## Subscription Flow (SSMA-Controlled)
 
@@ -90,6 +92,9 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 11. **Billing lead time**: Default is **85 hours** (~3.5 days before pickup). Constant in `constants.server.ts`. First subscription order is paid at checkout (no double-billing); recurring billing starts from second pickup.
 12. **Calendar print**: Daily view has a Print button that opens a new window with clean printable layout (prep summary, pickups by time slot, extra orders).
 13. **Customer CRM portal**: 5th admin page (`/app/customers`). Customer model synced from Shopify via webhook + manual sync. Detail page shows orders (collapsible), subscriptions, admin notes with categories, Shopify contact info. Notes can sync to Shopify customer note field.
+14. **CRM Draft Orders**: Create Shopify draft orders from customer profile via product picker. Invoice sending modal: Shopify email, SMS (Twilio), or copy link. Service in `draft-orders.server.ts`.
+15. **CRM Communication**: In-app email compose (SendGrid) and SMS compose (Twilio) modals on customer profile. Falls back to `mailto:`/`sms:` links when integrations not configured.
+16. **CRM Notes cross-page**: Pinned customer notes display on Order and Subscription detail pages (sidebar). "View Profile" links on both pages.
 
 ## SSMA Subscription Plan Groups (v2)
 
