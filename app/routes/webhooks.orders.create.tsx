@@ -6,6 +6,45 @@ import { createPickupEvent } from "../services/google-calendar.server";
 import { createSubscriptionFromOrder } from "../services/subscription.server";
 import { unauthenticated } from "../shopify.server";
 
+/**
+ * Retry helper for transient failures (DB cold-start, network blips).
+ * Uses exponential backoff: 500ms → 1s → 2s
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  { retries = 2, label = "operation" }: { retries?: number; label?: string } = {}
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const errorStr = String(error);
+      // Only retry on transient / connection errors
+      const isTransient =
+        errorStr.includes("connect") ||
+        errorStr.includes("ECONNRESET") ||
+        errorStr.includes("ECONNREFUSED") ||
+        errorStr.includes("ETIMEDOUT") ||
+        errorStr.includes("connection") ||
+        errorStr.includes("Connection") ||
+        errorStr.includes("socket hang up") ||
+        errorStr.includes("P1001") || // Prisma: Can't reach DB
+        errorStr.includes("P1002") || // Prisma: DB timeout
+        errorStr.includes("P1008") || // Prisma: Operations timed out
+        errorStr.includes("P1017");   // Prisma: Server closed connection
+      if (!isTransient || attempt === retries) {
+        throw error;
+      }
+      const delayMs = 500 * Math.pow(2, attempt); // 500ms, 1s, 2s
+      console.warn(`${label}: attempt ${attempt + 1} failed (${errorStr.slice(0, 100)}), retrying in ${delayMs}ms...`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastError;
+}
+
 // Attribute keys that match the checkout extension
 const ATTR_PICKUP_DATE = "Pickup Date";
 const ATTR_PICKUP_TIME = "Pickup Time Slot";
@@ -147,27 +186,35 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // concurrent requests will pass the check, then one PickupSchedule.create
   // succeeds while others fail with unique constraint — and retries will be
   // blocked by the existing WebhookEvent.
-  const existingPickup = await prisma.pickupSchedule.findFirst({
-    where: {
-      shop,
-      shopifyOrderId: order.admin_graphql_api_id,
-    },
-  });
+  // Wrap initial DB queries in retry logic for cold-start resilience.
+  // After days of inactivity, the first DB query may fail with a stale connection.
+  const existingPickup = await withRetry(
+    () => prisma.pickupSchedule.findFirst({
+      where: {
+        shop,
+        shopifyOrderId: order.admin_graphql_api_id,
+      },
+    }),
+    { label: "idempotency-check" }
+  );
 
   if (existingPickup) {
     console.log(`PickupSchedule already exists for order ${order.name} (${existingPickup.id}), skipping`);
     return json({ message: "Already processed" });
   }
 
-  const existingEvent = await prisma.webhookEvent.findUnique({
-    where: {
-      shop_topic_shopifyId: {
-        shop,
-        topic: "orders/create",
-        shopifyId: order.id.toString(),
+  const existingEvent = await withRetry(
+    () => prisma.webhookEvent.findUnique({
+      where: {
+        shop_topic_shopifyId: {
+          shop,
+          topic: "orders/create",
+          shopifyId: order.id.toString(),
+        },
       },
-    },
-  });
+    }),
+    { label: "webhook-event-check" }
+  );
 
   if (existingEvent) {
     // WebhookEvent exists but no PickupSchedule — previous attempt may have failed.
@@ -487,8 +534,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     null;
 
   try {
-    // Create the pickup schedule
-    const pickupSchedule = await prisma.pickupSchedule.create({
+    // Create the pickup schedule (with retry for cold-start DB failures)
+    const pickupSchedule = await withRetry(() => prisma.pickupSchedule.create({
       data: {
         shop,
         shopifyOrderId: order.admin_graphql_api_id,
@@ -511,7 +558,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           })),
         },
       },
-    });
+    }), { label: "create-pickup-schedule" });
 
     console.log(`Created pickup schedule ${pickupSchedule.id} for order ${order.name}`);
 

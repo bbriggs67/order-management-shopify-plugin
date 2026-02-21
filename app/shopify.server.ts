@@ -5,11 +5,22 @@ import {
   shopifyApp,
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
-import prisma from "./db.server";
+import prisma, { warmDatabaseConnection } from "./db.server";
 import { logEnvValidation } from "./utils/env.server";
 
 // Validate environment variables at startup
 logEnvValidation();
+
+// Warm the database connection pool on startup so the first real request
+// (often a webhook after days of inactivity) doesn't pay the cold-start penalty.
+// This runs asynchronously — it won't block module loading.
+warmDatabaseConnection().then((ok) => {
+  if (ok) {
+    console.log("Database connection warmed successfully");
+  } else {
+    console.warn("Database warmup failed — first request may be slow");
+  }
+});
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
