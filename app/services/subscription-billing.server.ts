@@ -132,12 +132,22 @@ export function calculateBillingDate(
   // Parse the time slot start
   const [hours, minutes] = timeSlotStart.split(":").map(Number);
 
-  // Create pickup datetime
-  const pickupDateTime = new Date(pickupDate);
+  // Create pickup datetime in Pacific timezone
+  // setHours() uses the server's local timezone (UTC on Railway), so we must
+  // convert the pickup date to Pacific first, then set the pickup time.
+  const pacificPickupStr = pickupDate.toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
+  const pickupDateTime = new Date(pacificPickupStr);
   pickupDateTime.setHours(hours, minutes, 0, 0);
 
-  // Subtract lead hours
-  const billingDate = new Date(pickupDateTime.getTime() - validLeadHours * 60 * 60 * 1000);
+  // Calculate the offset between Pacific and UTC to get the correct absolute time
+  const utcStr = pickupDate.toLocaleString("en-US", { timeZone: "UTC" });
+  const utcDate = new Date(utcStr);
+  const pacificDate = new Date(pacificPickupStr);
+  const offsetMs = utcDate.getTime() - pacificDate.getTime();
+
+  // Convert Pacific pickup time back to UTC, then subtract lead hours
+  const pickupDateTimeUTC = new Date(pickupDateTime.getTime() + offsetMs);
+  const billingDate = new Date(pickupDateTimeUTC.getTime() - validLeadHours * 60 * 60 * 1000);
 
   return billingDate;
 }
@@ -287,7 +297,7 @@ async function processSingleBilling(
 ): Promise<void> {
   // Generate idempotency key
   const billingCycle = subscription.billingCycleCount + 1;
-  const idempotencyKey = `${subscription.id}-cycle-${billingCycle}-${Date.now()}`;
+  const idempotencyKey = `${subscription.id}-cycle-${billingCycle}`;
 
   // Check if we already attempted this billing (idempotency)
   const existingAttempt = await prisma.billingAttemptLog.findFirst({

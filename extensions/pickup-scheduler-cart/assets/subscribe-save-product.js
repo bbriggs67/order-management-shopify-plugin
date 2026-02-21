@@ -479,16 +479,22 @@
         // subscription record when the order is placed. The discount is handled
         // natively by the Shopify selling plan pricing policy — no discount
         // codes needed.
-        const cartAttributes = {
+        //
+        // IMPORTANT: /cart/update.js REPLACES all attributes (does not merge).
+        // We must first read the existing cart attributes (e.g. Pickup Date,
+        // Pickup Time Slot) and merge them to avoid overwriting other data.
+        const cartResponse = await fetch('/cart.js');
+        const cartData = await cartResponse.json();
+        const mergedAttributes = Object.assign({}, cartData.attributes || {}, {
           'Subscription Enabled': 'true',
           'Subscription Frequency': this.selectedPlan.frequency,
           'Subscription Discount': this.selectedPlan.discount,
-        };
+        });
 
         await fetch('/cart/update.js', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ attributes: cartAttributes }),
+          body: JSON.stringify({ attributes: mergedAttributes }),
         });
 
         // 5. Save selection to sessionStorage
@@ -497,6 +503,9 @@
         statusEl.textContent = 'Redirecting to cart...';
 
         // 6. Navigate to cart page
+        // Safety: reset _submitting after 10s in case navigation fails
+        // (popup blocker, URL intercepted, etc.) so user isn't locked out.
+        setTimeout(() => { this._submitting = false; }, 10000);
         window.location.href = '/cart';
       } catch (error) {
         console.error('Subscribe & Save Product: Error during add to cart:', error);
@@ -509,19 +518,24 @@
     /**
      * Silently clear subscription attributes if user switches back to one-time.
      * Non-blocking — fire and forget.
+     * IMPORTANT: Merges with existing attributes to avoid overwriting pickup data.
      */
     clearSubscriptionAttributesQuietly() {
-      fetch('/cart/update.js', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          attributes: {
+      fetch('/cart.js')
+        .then(r => r.json())
+        .then(cartData => {
+          const merged = Object.assign({}, cartData.attributes || {}, {
             'Subscription Enabled': '',
             'Subscription Frequency': '',
             'Subscription Discount': '',
-          },
-        }),
-      }).catch(() => { /* ignore */ });
+          });
+          return fetch('/cart/update.js', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ attributes: merged }),
+          });
+        })
+        .catch(() => { /* ignore */ });
     }
 
     saveSelection(value) {

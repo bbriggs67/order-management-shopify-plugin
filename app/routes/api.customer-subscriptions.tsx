@@ -216,11 +216,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             { status: 400, headers: corsHeaders }
           );
         }
+        // Ensure date string has time component to avoid UTC midnight → wrong day in Pacific
+        const safeDateStr = newPickupDate.includes("T")
+          ? newPickupDate
+          : `${newPickupDate}T12:00:00`;
         result = await customerOneTimeReschedule(
           session.shop,
           subscriptionId,
           customerEmail,
-          new Date(newPickupDate),
+          new Date(safeDateStr),
           newTimeSlot,
           reason
         );

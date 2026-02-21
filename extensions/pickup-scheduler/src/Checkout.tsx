@@ -3,6 +3,7 @@ import {
   useApi,
   useApplyAttributeChange,
   useAttributeValues,
+  useBuyerJourneyIntercept,
   useSettings,
   BlockStack,
   InlineStack,
@@ -127,6 +128,41 @@ function PickupScheduler() {
   const subtitle =
     (settings.subtitle as string) ||
     "Choose when you'd like to pick up your order";
+
+  // Block checkout progress if pickup date/time not selected
+  useBuyerJourneyIntercept(({ canBlockProgress }) => {
+    if (!canBlockProgress) {
+      return { behavior: "allow" as const };
+    }
+
+    if (!selectedDate) {
+      return {
+        behavior: "block" as const,
+        reason: "Pickup date is required",
+        errors: [
+          {
+            message:
+              "Please select a pickup date before proceeding to checkout.",
+          },
+        ],
+      };
+    }
+
+    if (!selectedTimeSlot) {
+      return {
+        behavior: "block" as const,
+        reason: "Pickup time slot is required",
+        errors: [
+          {
+            message:
+              "Please select a time slot before proceeding to checkout.",
+          },
+        ],
+      };
+    }
+
+    return { behavior: "allow" as const };
+  });
 
   // Fetch availability data
   useEffect(() => {

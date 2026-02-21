@@ -35,16 +35,17 @@ export function RescheduleModal({
   if (!open) return null;
 
   // Generate next 4 weeks of dates for selection
+  // Use Pacific timezone for display since Susie's is a Pacific timezone bakery
   const dateOptions: { label: string; value: string }[] = [];
   const today = new Date();
   for (let i = 3; i <= 28; i++) {
     const date = new Date(today);
     date.setDate(date.getDate() + i);
-    const dayName = date.toLocaleDateString("en-US", { weekday: "long" });
     const display = date.toLocaleDateString("en-US", {
       weekday: "long",
       month: "long",
       day: "numeric",
+      timeZone: "America/Los_Angeles",
     });
     // Use T12:00:00 to avoid timezone date shift
     const isoDate = `${date.getFullYear()}-${String(

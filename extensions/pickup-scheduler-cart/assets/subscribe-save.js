@@ -350,13 +350,21 @@
     }
 
     async updateCartAttributes(attributes) {
+      // IMPORTANT: /cart/update.js REPLACES all attributes (does not merge).
+      // We must first read the existing cart attributes (e.g. Pickup Date,
+      // Pickup Time Slot set by pickup-scheduler.js) and merge them
+      // with our subscription attributes to avoid overwriting pickup data.
+      const cartResponse = await fetch('/cart.js');
+      const cartData = await cartResponse.json();
+      const merged = Object.assign({}, cartData.attributes || {}, attributes);
+
       const response = await fetch('/cart/update.js', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          attributes: attributes
+          attributes: merged
         })
       });
 
