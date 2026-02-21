@@ -30,7 +30,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const health = await checkWebhookHealth(admin);
 
   // Get app URL from env
-  const appUrl = process.env.SHOPIFY_APP_URL || "https://order-management-shopify-plugin-production.up.railway.app";
+  const appUrl = process.env.SHOPIFY_APP_URL || "(SHOPIFY_APP_URL not set)";
 
   // Get recent webhook events from database
   const recentWebhookEvents = await prisma.webhookEvent.findMany({

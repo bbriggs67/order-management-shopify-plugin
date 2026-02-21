@@ -41,7 +41,11 @@ interface RegisterResult {
  * Get the app URL from environment
  */
 function getAppUrl(): string {
-  return process.env.SHOPIFY_APP_URL || "https://order-management-shopify-plugin-production.up.railway.app";
+  const url = process.env.SHOPIFY_APP_URL;
+  if (!url) {
+    throw new Error("SHOPIFY_APP_URL environment variable is not set");
+  }
+  return url;
 }
 
 /**
