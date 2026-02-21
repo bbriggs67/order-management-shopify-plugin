@@ -84,7 +84,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     if (recentDuplicateCheck) {
-      console.log(`Subscription already exists for customer ${contract.customer.email} (created by orders/create webhook: ${recentDuplicateCheck.id}). Skipping duplicate from subscription_contracts/create.`);
+      console.log(`Subscription already exists for customer ${contract.customer.email} (created by orders/create webhook: ${recentDuplicateCheck.id}). Updating shopifyContractId and skipping duplicate.`);
+
+      // Update the existing subscription with the real contract GID
+      // (orders/create webhook stores the order GID as a placeholder)
+      await prisma.subscriptionPickup.update({
+        where: { id: recentDuplicateCheck.id },
+        data: { shopifyContractId: contract.admin_graphql_api_id },
+      });
 
       // Still log the webhook for idempotency
       await prisma.webhookEvent.create({
@@ -96,7 +103,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
-      return json({ message: "Duplicate - subscription already created by orders/create webhook" });
+      return json({ message: "Updated shopifyContractId on existing subscription" });
     }
 
     // Extract customer info

@@ -544,7 +544,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         if (isSSMASubscription) {
           console.log(`Detected SSMA subscription order via cart attributes: ${subscriptionFrequencyAttr}`);
-          frequency = subscriptionFrequencyAttr as "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY";
+          const validFrequencies = ["WEEKLY", "BIWEEKLY", "TRIWEEKLY"];
+          if (validFrequencies.includes(subscriptionFrequencyAttr!)) {
+            frequency = subscriptionFrequencyAttr as "WEEKLY" | "BIWEEKLY" | "TRIWEEKLY";
+          } else {
+            console.warn(`Invalid frequency attribute "${subscriptionFrequencyAttr}", defaulting to WEEKLY`);
+            frequency = "WEEKLY";
+          }
           preferredDay = subscriptionPreferredDayAttr
             ? parseInt(subscriptionPreferredDayAttr, 10)
             : pickupDate.getDay();

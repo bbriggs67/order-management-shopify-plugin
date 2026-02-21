@@ -1,5 +1,20 @@
 /* Pickup Scheduler Styles */
 
+/*
+ * Hide express checkout buttons (Shop Pay, Apple Pay, Google Pay) on
+ * the cart page. These bypass the date picker validation flow which breaks
+ * the pickup scheduling pipeline. Same rules as subscribe-save-product.css
+ * but applied on the cart page via this block's CSS.
+ */
+shopify-payment-button,
+.shopify-payment-button,
+.cart__dynamic-checkout-buttons,
+.dynamic-checkout__content,
+.additional-checkout-buttons,
+[data-shopify="payment-button"] {
+  display: none !important;
+}
+
 /* Container - proper sizing and ensure it's in its own row */
 #pickup-scheduler-container {
   width: 100%;

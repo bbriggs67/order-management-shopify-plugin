@@ -94,13 +94,20 @@ export async function processSubscriptions(shop: string): Promise<{
         subscription.billingLeadHours
       );
 
-      // Update subscription with next dates
+      // Update subscription with next dates and clear any one-time reschedule
+      // (so it doesn't persist as a permanent shift to future pickups)
       await prisma.subscriptionPickup.update({
         where: { id: subscription.id },
         data: {
           nextPickupDate,
           nextBillingDate,
           preferredTimeSlotStart: timeSlotStart, // Store for future use
+          // Clear one-time reschedule after processing
+          oneTimeRescheduleDate: null,
+          oneTimeRescheduleTimeSlot: null,
+          oneTimeRescheduleReason: null,
+          oneTimeRescheduleBy: null,
+          oneTimeRescheduleAt: null,
         },
       });
 
@@ -391,6 +398,10 @@ export async function createSubscriptionFromOrder(
   // Calculate billing date using plan-specified lead hours
   const nextBillingDate = calculateBillingDate(nextPickupDate, preferredTimeSlotStart, billingLeadHours);
 
+  // Note: shopifyContractId is set to orderId as a temporary placeholder for
+  // deduplication. The subscription_contracts.create webhook should update this
+  // to the actual contract GID when it fires. Using order GID here because we
+  // don't have the contract ID yet at order creation time.
   const subscription = await prisma.subscriptionPickup.create({
     data: {
       shop,

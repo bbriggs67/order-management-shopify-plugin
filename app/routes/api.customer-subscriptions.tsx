@@ -48,6 +48,7 @@ const customerEmailCache = new Map<
   { email: string; expiresAt: number }
 >();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_MAX_SIZE = 500; // Prevent unbounded memory growth
 
 async function resolveCustomerEmail(
   shop: string,
@@ -76,6 +77,18 @@ async function resolveCustomerEmail(
     const email = data?.data?.customer?.email;
 
     if (email) {
+      // Evict expired entries if cache is at max size
+      if (customerEmailCache.size >= CACHE_MAX_SIZE) {
+        const now = Date.now();
+        for (const [key, val] of customerEmailCache) {
+          if (val.expiresAt < now) customerEmailCache.delete(key);
+        }
+        // If still at max after eviction, delete oldest entry
+        if (customerEmailCache.size >= CACHE_MAX_SIZE) {
+          const firstKey = customerEmailCache.keys().next().value;
+          if (firstKey) customerEmailCache.delete(firstKey);
+        }
+      }
       customerEmailCache.set(cacheKey, {
         email: email.toLowerCase().trim(),
         expiresAt: Date.now() + CACHE_TTL_MS,
@@ -157,17 +170,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    // Parse body
+    // Parse body and sanitize text inputs
     const body = await request.json();
+    const sanitizeText = (val: unknown): string | undefined =>
+      typeof val === "string" ? val.slice(0, 500).trim() : undefined;
     const {
       action: actionType,
       subscriptionId,
-      comment,
       newPickupDate,
       newTimeSlot,
       newPreferredDay,
-      reason,
     } = body;
+    const comment = sanitizeText(body.comment);
+    const reason = sanitizeText(body.reason);
 
     if (!actionType || !subscriptionId) {
       return json(
@@ -270,9 +285,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const message =
       error instanceof Error ? error.message : "Authentication failed";
     console.error("Customer subscription API error:", error);
+    // Distinguish auth errors (JWT/token) from server errors
+    const isAuthError =
+      error instanceof Error &&
+      (error.message.includes("JWT") ||
+        error.message.includes("token") ||
+        error.message.includes("Authentication") ||
+        error.message.includes("customer"));
     return json(
       { success: false, message },
-      { status: 401, headers: corsHeaders }
+      { status: isAuthError ? 401 : 500, headers: corsHeaders }
     );
   }
 };
@@ -333,9 +355,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const message =
       error instanceof Error ? error.message : "Authentication failed";
     console.error("Customer subscription API error:", error);
+    const isAuthError =
+      error instanceof Error &&
+      (error.message.includes("JWT") ||
+        error.message.includes("token") ||
+        error.message.includes("Authentication") ||
+        error.message.includes("customer"));
     return json(
       { error: message },
-      { status: 401, headers: corsHeaders }
+      { status: isAuthError ? 401 : 500, headers: corsHeaders }
     );
   }
 };

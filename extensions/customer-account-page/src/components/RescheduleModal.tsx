@@ -18,6 +18,7 @@ interface Props {
     reason: string
   ) => Promise<void>;
   loading: boolean;
+  availableDays: number[];
   availableTimeSlots: AvailableTimeSlot[];
 }
 
@@ -26,6 +27,7 @@ export function RescheduleModal({
   onClose,
   onConfirm,
   loading,
+  availableDays,
   availableTimeSlots,
 }: Props) {
   const [pickupDate, setPickupDate] = useState("");
@@ -35,12 +37,17 @@ export function RescheduleModal({
   if (!open) return null;
 
   // Generate next 4 weeks of dates for selection
+  // Only show dates that fall on available pickup days
   // Use Pacific timezone for display since Susie's is a Pacific timezone bakery
   const dateOptions: { label: string; value: string }[] = [];
   const today = new Date();
   for (let i = 3; i <= 28; i++) {
     const date = new Date(today);
     date.setDate(date.getDate() + i);
+    // Filter: only include days the bakery does pickups
+    if (availableDays.length > 0 && !availableDays.includes(date.getDay())) {
+      continue;
+    }
     const display = date.toLocaleDateString("en-US", {
       weekday: "long",
       month: "long",

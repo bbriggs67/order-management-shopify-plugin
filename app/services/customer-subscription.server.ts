@@ -683,6 +683,11 @@ function calculateNextPickupDateFromToday(
     daysUntil += 7;
   }
 
+  // For tri-weekly, ensure we're at least 14 days out
+  if (frequency === "TRIWEEKLY" && daysUntil < 14) {
+    daysUntil += 14;
+  }
+
   const nextDate = getDatePacific(daysUntil);
   return nextDate;
 }

@@ -257,6 +257,7 @@ export function SubscriptionCard({
           });
         }}
         loading={actionLoading}
+        availableDays={availableDays}
         availableTimeSlots={availableTimeSlots}
       />
 

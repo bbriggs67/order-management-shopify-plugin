@@ -723,6 +723,11 @@ function calculateNextPickupDateFromToday(
     daysUntilPreferred += 7;
   }
 
+  // For triweekly, add two extra weeks
+  if (frequency === "TRIWEEKLY") {
+    daysUntilPreferred += 14;
+  }
+
   const nextDate = new Date(today);
   nextDate.setDate(nextDate.getDate() + daysUntilPreferred);
   return nextDate;
