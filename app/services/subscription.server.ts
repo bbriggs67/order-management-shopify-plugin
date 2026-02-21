@@ -371,7 +371,7 @@ export async function createSubscriptionFromOrder(
 
   if (discountPercentOverride !== undefined) {
     discountPercent = discountPercentOverride;
-    billingLeadHours = billingLeadHoursOverride ?? 48;
+    billingLeadHours = billingLeadHoursOverride ?? 85;
   } else {
     const dbFrequency = await findFrequencyByLabel(shop, frequency);
     if (dbFrequency) {
@@ -386,7 +386,7 @@ export async function createSubscriptionFromOrder(
         case "TRIWEEKLY": discountPercent = 2.5; break;
         default: discountPercent = 5;
       }
-      billingLeadHours = billingLeadHoursOverride ?? 48;
+      billingLeadHours = billingLeadHoursOverride ?? 85;
     }
   }
 
@@ -448,7 +448,7 @@ export async function createSubscriptionFromContract(
 
   if (discountPercentOverride !== undefined) {
     discountPercent = discountPercentOverride;
-    billingLeadHours = billingLeadHoursOverride ?? 48;
+    billingLeadHours = billingLeadHoursOverride ?? 85;
   } else {
     const dbFrequency = await findFrequencyByLabel(shop, frequency);
     if (dbFrequency) {
@@ -463,7 +463,7 @@ export async function createSubscriptionFromContract(
         case "TRIWEEKLY": discountPercent = 2.5; break;
         default: discountPercent = 5;
       }
-      billingLeadHours = billingLeadHoursOverride ?? 48;
+      billingLeadHours = billingLeadHoursOverride ?? 85;
     }
   }
 

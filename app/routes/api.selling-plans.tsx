@@ -106,7 +106,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         intervalCount: 1,
         discountPercent: config.weeklyDiscount,
         discountCode: "SUBSCRIBE-WEEKLY-10",
-        billingLeadHours: 48,
+        billingLeadHours: 85,
       });
     }
 
@@ -119,7 +119,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         intervalCount: 2,
         discountPercent: config.biweeklyDiscount,
         discountCode: "SUBSCRIBE-BIWEEKLY-5",
-        billingLeadHours: 48,
+        billingLeadHours: 85,
       });
     }
 
@@ -132,7 +132,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         intervalCount: plan.intervalCount,
         discountPercent: plan.discount,
         discountCode: null,
-        billingLeadHours: 48,
+        billingLeadHours: 85,
       });
     }
 

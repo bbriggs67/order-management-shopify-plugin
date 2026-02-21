@@ -93,7 +93,7 @@ export async function updatePlanGroup(shop: string, groupId: string, input: Part
   if (input.name !== undefined || input.billingLeadHours !== undefined) {
     validateGroupInput({
       name: input.name ?? "placeholder",
-      billingLeadHours: input.billingLeadHours ?? 48,
+      billingLeadHours: input.billingLeadHours ?? 85,
       isActive: input.isActive ?? true,
     });
   }
@@ -312,7 +312,7 @@ export async function ensureDefaultPlanGroups(shop: string): Promise<void> {
     data: {
       shop,
       name: "Subscribe & Save - Porch Pick Up",
-      billingLeadHours: 48,
+      billingLeadHours: 85,
       isActive: true,
       sortOrder: 0,
       frequencies: {

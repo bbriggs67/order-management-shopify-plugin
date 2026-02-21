@@ -985,7 +985,7 @@ export default function SubscriptionsSettings() {
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<typeof planGroups[0] | null>(null);
   const [groupName, setGroupName] = useState("Subscribe & Save - Porch Pick Up");
-  const [groupBillingLeadHours, setGroupBillingLeadHours] = useState("48");
+  const [groupBillingLeadHours, setGroupBillingLeadHours] = useState("85");
   const [groupIsActive, setGroupIsActive] = useState(true);
 
   // Frequency modal state
@@ -1130,7 +1130,7 @@ export default function SubscriptionsSettings() {
     } else {
       setEditingGroup(null);
       setGroupName("Subscribe & Save - Porch Pick Up");
-      setGroupBillingLeadHours("48");
+      setGroupBillingLeadHours("85");
       setGroupIsActive(true);
     }
     setGroupModalOpen(true);
@@ -1784,7 +1784,7 @@ export default function SubscriptionsSettings() {
             Billing Management
           </Text>
           <Text as="p" tone="subdued">
-            Subscriptions are billed based on each plan's billing lead time (default 48 hours before pickup).
+            Subscriptions are billed based on each plan's billing lead time (default 85 hours before pickup).
           </Text>
         </Layout.Section>
 
@@ -1879,11 +1879,11 @@ export default function SubscriptionsSettings() {
                 <Text as="p">
                   <strong>2. Recurring Billing:</strong> For subsequent deliveries,
                   customers are automatically charged based on the plan's billing lead time
-                  (configurable per plan, default 48 hours before pickup).
+                  (configurable per plan, default 85 hours before pickup).
                 </Text>
                 <Text as="p">
                   <strong>3. Example:</strong> If a customer has a Saturday 12:00 PM
-                  pickup with 48h lead time, they will be billed Thursday at noon.
+                  pickup with 85h lead time, they will be billed Wednesday at 1:00 AM.
                 </Text>
                 <Text as="p">
                   <strong>4. Failures:</strong> If billing fails, we retry up to 3 times.

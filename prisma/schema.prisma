@@ -272,7 +272,7 @@ model SubscriptionPickup {
   googleRecurEventId  String? // Recurring event ID if synced
 
   // Billing configuration (customizable per subscription)
-  billingLeadHours    Int       @default(84) // Hours before pickup to charge (1-168, default 84 = 3.5 days)
+  billingLeadHours    Int       @default(85) // Hours before pickup to charge (1-168, default 85 = ~3.5 days)
 
   // Billing tracking
   lastBillingAttemptId  String? // Shopify billing attempt GID
@@ -425,7 +425,7 @@ model SubscriptionPlanGroup {
   id               String   @id @default(cuid())
   shop             String
   name             String   // e.g., "Subscribe & Save - Porch Pick Up"
-  billingLeadHours Int      @default(48) // Hours before pickup to charge customer
+  billingLeadHours Int      @default(85) // Hours before pickup to charge customer (~3.5 days)
   isActive         Boolean  @default(true)
   sortOrder        Int      @default(0)
 

@@ -1159,6 +1159,73 @@ function WeekView({
 }
 
 // ============================================
+// PRINT HELPERS
+// ============================================
+function buildPrintHtml({
+  title,
+  dateStr,
+  dayType,
+  sections,
+}: {
+  title: string;
+  dateStr: string;
+  dayType: string;
+  sections: Array<{
+    heading: string;
+    rows: Array<string[]>; // each row is an array of cell values
+    columns: string[];
+  }>;
+}): string {
+  const sectionHtml = sections
+    .map(
+      (s) => `
+    <h2>${s.heading}</h2>
+    ${
+      s.rows.length === 0
+        ? "<p><em>None</em></p>"
+        : `<table>
+      <thead><tr>${s.columns.map((c) => `<th>${c}</th>`).join("")}</tr></thead>
+      <tbody>${s.rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table>`
+    }`
+    )
+    .join("");
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>${title}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; color: #1a1a1a; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    .subtitle { font-size: 14px; color: #666; margin-bottom: 16px; }
+    h2 { font-size: 16px; margin-top: 24px; margin-bottom: 8px; border-bottom: 2px solid #333; padding-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 6px 8px; background: #f5f5f5; border-bottom: 1px solid #ccc; font-weight: 600; }
+    td { padding: 6px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    .print-footer { margin-top: 30px; font-size: 11px; color: #999; border-top: 1px solid #ddd; padding-top: 8px; }
+    @media print {
+      body { padding: 0; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <h1>${title}</h1>
+  <div class="subtitle">${dateStr} &mdash; ${dayType}</div>
+  ${sectionHtml}
+  <div class="print-footer">Printed from Susie's Sourdough Manager</div>
+  <script>window.onload = function() { window.print(); }</script>
+</body>
+</html>`;
+}
+
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// ============================================
 // DAY VIEW
 // ============================================
 function DayView({
@@ -1276,6 +1343,83 @@ function DayView({
 
   const dateTitle = `${formatDateLong(currentDate)} — ${header?.label || ""}`;
 
+  // Print handler — opens a new window with print-formatted content
+  const handlePrint = useCallback(() => {
+    const sections: Array<{
+      heading: string;
+      rows: Array<string[]>;
+      columns: string[];
+    }> = [];
+
+    // Dough prep summary section (on prep days)
+    if (prepItems && prepItems.length > 0) {
+      const bakeDays = PREP_TO_BAKE_DAYS[dow];
+      const bakeDayNames = bakeDays
+        ? bakeDays.map((d) => DAY_NAMES_SHORT[d]).join(" + ")
+        : "";
+      const totalItems = prepItems.reduce((sum, i) => sum + i.totalQty, 0);
+      sections.push({
+        heading: `Dough Prep Summary (for ${bakeDayNames}) — ${totalItems} total items`,
+        columns: ["Product", "Quantity"],
+        rows: prepItems.map((item) => [escHtml(item.productTitle), String(item.totalQty)]),
+      });
+    }
+
+    // Pickups section grouped by time slot
+    if (dayPickups.length > 0) {
+      Array.from(pickupsBySlot.entries()).forEach(([slot, slotPickups]) => {
+        sections.push({
+          heading: `Pickups — ${escHtml(slot)} (${slotPickups.length} order${slotPickups.length !== 1 ? "s" : ""})`,
+          columns: ["Order", "Customer", "Items", "Status"],
+          rows: slotPickups.map((pickup) => [
+            escHtml(pickup.shopifyOrderNumber),
+            escHtml(pickup.customerName),
+            pickup.orderItems
+              .map(
+                (item) =>
+                  `${escHtml(item.productTitle)}${item.variantTitle ? ` (${escHtml(item.variantTitle)})` : ""} &times; ${item.quantity}`
+              )
+              .join("<br>"),
+            escHtml(pickup.pickupStatus),
+          ]),
+        });
+      });
+    } else {
+      sections.push({
+        heading: "Pickups",
+        columns: [],
+        rows: [],
+      });
+    }
+
+    // Extra bake orders
+    if (dayExtras.length > 0) {
+      sections.push({
+        heading: `Extra Bake Orders (${dayExtras.length})`,
+        columns: ["Product", "Qty", "Time Slot", "Notes"],
+        rows: dayExtras.map((extra) => [
+          `${escHtml(extra.productTitle)}${extra.variantTitle ? ` (${escHtml(extra.variantTitle)})` : ""}`,
+          String(extra.quantity),
+          escHtml(extra.timeSlot),
+          extra.notes ? escHtml(extra.notes) : "",
+        ]),
+      });
+    }
+
+    const html = buildPrintHtml({
+      title: `Susie's Sourdough — ${header?.label || "Day View"}`,
+      dateStr: formatDateLong(currentDate),
+      dayType: header?.label || "",
+      sections,
+    });
+
+    const printWindow = window.open("", "_blank");
+    if (printWindow) {
+      printWindow.document.write(html);
+      printWindow.document.close();
+    }
+  }, [currentDate, dow, header, prepItems, dayPickups, pickupsBySlot, dayExtras]);
+
   return (
     <BlockStack gap="400">
       {/* Day Navigation */}
@@ -1288,7 +1432,10 @@ function DayView({
             </Text>
             <DayHeaderBadge dayOfWeek={dow} size="medium" />
           </BlockStack>
-          <Button onClick={() => navigateDay(1)}>Next Day &rarr;</Button>
+          <InlineStack gap="200">
+            <Button onClick={handlePrint}>Print</Button>
+            <Button onClick={() => navigateDay(1)}>Next Day &rarr;</Button>
+          </InlineStack>
         </InlineStack>
       </Card>
 

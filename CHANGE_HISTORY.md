@@ -2,6 +2,40 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-21 - Billing Lead Time 85h + Calendar Print
+
+**Fix 1: Billing lead time default changed from 48h to 85h (~3.5 days)**
+- User reported Settings page showing "48 hours" but requirement was 85 hours
+- Updated constant `DEFAULT_BILLING_LEAD_HOURS` from 48 → 85
+- Updated all hardcoded fallbacks across subscription services
+- Updated Prisma schema defaults for both `SubscriptionPlanGroup` and `SubscriptionPickup`
+- Created migration to update existing DB records from 48/84 → 85
+- Updated Settings page UI text and modal defaults
+
+**Fix 2: Confirmed first subscription order is NOT double-billed**
+- First order is paid at checkout; `nextBillingDate` is set to before the second pickup
+- Billing cron only processes when `nextBillingDate <= now`
+- Idempotency logging prevents duplicate charges
+
+**Feature: Print button on Calendar day view**
+- Print button in day navigation header opens a new window with clean print layout
+- Includes dough prep summary (on prep days), pickups by time slot, and extra bake orders
+- Auto-triggers `window.print()` on load
+- Clean table format optimized for paper printing
+
+**Files Modified:**
+- `app/utils/constants.server.ts` — DEFAULT_BILLING_LEAD_HOURS: 48 → 85
+- `prisma/schema.prisma` — Default values updated to 85
+- `prisma/migrations/20260221_billing_lead_hours_85/migration.sql` (NEW)
+- `app/services/subscription-plans.server.ts` — Fallback defaults to 85
+- `app/services/subscription.server.ts` — Fallback defaults to 85
+- `app/routes/app.settings.subscriptions.tsx` — UI text and modal defaults to 85
+- `app/routes/apps.selling-plans.tsx` — Legacy fallback to 85
+- `app/routes/api.selling-plans.tsx` — Legacy fallback to 85
+- `app/routes/app.calendar.tsx` — Print button + buildPrintHtml helper
+
+---
+
 ### 2026-02-20 - Prep, Bake & Pick-up Calendar
 
 **Context:** Calendar was a simple monthly grid showing pickup counts per day. Susie needed it to be the

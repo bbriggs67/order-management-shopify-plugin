@@ -28,8 +28,8 @@ export function getDayName(dayOfWeek: number): string {
 // Billing Constants
 // ============================================
 
-/** Default billing lead time in hours (2 days before pickup) */
-export const DEFAULT_BILLING_LEAD_HOURS = 48;
+/** Default billing lead time in hours (~3.5 days before pickup) */
+export const DEFAULT_BILLING_LEAD_HOURS = 85;
 
 /** Minimum billing lead time in hours (1 hour before pickup) */
 export const MIN_BILLING_LEAD_HOURS = 1;
