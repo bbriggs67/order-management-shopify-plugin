@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, Link } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -111,11 +111,22 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }),
   }));
 
+  // Look up CRM customer by email for "View Customer Profile" link
+  let customerId: string | null = null;
+  if (subscription.customerEmail) {
+    const customer = await prisma.customer.findFirst({
+      where: { shop, email: subscription.customerEmail.toLowerCase().trim() },
+      select: { id: true },
+    });
+    customerId = customer?.id || null;
+  }
+
   return json({
     subscription: {
       ...subscription,
       billingAttemptLogs: formattedBillingLogs,
     },
+    customerId,
     shopifyContract: shopifyContract || null,
     timeSlots,
     pickupDayConfigs,
@@ -522,7 +533,7 @@ function calculateNextPickupDateAfter(
 }
 
 export default function SubscriptionDetail() {
-  const { subscription, shopifyContract, timeSlots, pickupDayConfigs, billingLeadHoursConfig } =
+  const { subscription, customerId, shopifyContract, timeSlots, pickupDayConfigs, billingLeadHoursConfig } =
     useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -995,9 +1006,16 @@ export default function SubscriptionDetail() {
             {/* Customer Info */}
             <Card>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Customer
-                </Text>
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Customer
+                  </Text>
+                  {customerId && (
+                    <Link to={`/app/customers/${customerId}`}>
+                      <Button size="slim" variant="plain">View Profile</Button>
+                    </Link>
+                  )}
+                </InlineStack>
                 <BlockStack gap="200">
                   <Text as="p" variant="bodyMd" fontWeight="semibold">
                     {subscription.customerName}

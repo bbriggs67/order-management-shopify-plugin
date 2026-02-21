@@ -438,7 +438,7 @@ function OrdersSection({ orders }: { orders: CustomerDetail["orders"] }) {
                         to={
                           order.isSubscription && order.subscriptionContractId
                             ? `/app/subscriptions/${encodeURIComponent(order.subscriptionContractId)}`
-                            : `/app/orders/${order.id}`
+                            : `/app/orders/${encodeURIComponent(order.shopifyOrderId)}`
                         }
                         style={{ textDecoration: "none" }}
                       >

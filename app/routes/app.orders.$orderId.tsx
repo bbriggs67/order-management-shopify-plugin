@@ -77,8 +77,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
   }
 
+  // Look up CRM customer by email for "View Customer Profile" link
+  let customerId: string | null = null;
+  if (pickup.customerEmail) {
+    const customer = await prisma.customer.findFirst({
+      where: { shop, email: pickup.customerEmail.toLowerCase().trim() },
+      select: { id: true },
+    });
+    customerId = customer?.id || null;
+  }
+
   return json({
     pickup,
+    customerId,
     refundableAmount,
     cancellationReasons: CANCELLATION_REASONS,
   });
@@ -382,7 +393,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function OrderDetail() {
-  const { pickup, refundableAmount, cancellationReasons } = useLoaderData<typeof loader>();
+  const { pickup, customerId, refundableAmount, cancellationReasons } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -662,9 +673,16 @@ export default function OrderDetail() {
             {/* Customer Info */}
             <Card>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Customer
-                </Text>
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Customer
+                  </Text>
+                  {customerId && (
+                    <Link to={`/app/customers/${customerId}`}>
+                      <Button size="slim" variant="plain">View Profile</Button>
+                    </Link>
+                  )}
+                </InlineStack>
                 <BlockStack gap="200">
                   <Text as="p" variant="bodyMd" fontWeight="semibold">
                     {pickup.customerName}
