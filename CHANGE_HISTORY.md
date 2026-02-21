@@ -2,6 +2,24 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-21 - Fix: CRM Create Order Button Missing (commit 902c1ce)
+
+**Context:** The "Create Order" button was missing from the CRM customer detail page. Root cause: customer record had `shopifyCustomerId: "local:bbriggs_sd@yahoo.com"` (created from local order data in Phase 2 sync) instead of a real Shopify GID. The button is conditionally shown only for customers with real Shopify GIDs.
+
+**Root Cause:** `resolveLocalCustomer()` was deployed to auto-resolve `local:` customers by searching Shopify GraphQL API by email. It found the customer (`gid://shopify/Customer/7694967832788`) but the Prisma `update()` failed with `throwValidationException` — `numberOfOrders` from Shopify GraphQL needed explicit integer conversion.
+
+**Fix (`app/services/customer-crm.server.ts`):**
+- Explicit type coercion: `numberOfOrders` → `parseInt()` before passing to Prisma (schema expects `Int`)
+- Unique constraint handling: checks if Shopify GID already exists in another record before updating
+- Merge logic: if duplicate found, moves notes + SMS messages to existing record, deletes `local:` record
+- Added `findCustomerByShopifyGid()` helper for post-merge redirects
+
+**Fix (`app/routes/app.customers.$customerId.tsx`):**
+- Added `redirect` import from Remix
+- Loader handles merge case: if customer record was deleted during merge, redirects to merged customer's page
+
+---
+
 ### 2026-02-21 - A2P 10DLC Compliance: Policy Pages & Theme CSS Fix
 
 **Context:** SMS messages failing with Twilio error 30034 (unregistered number). A2P 10DLC registration requires Privacy Policy and Terms of Service URLs. Policy pages existed but had white-on-white text due to theme CSS variables.
