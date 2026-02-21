@@ -394,69 +394,31 @@ export async function upsertCustomer(
 }
 
 // ============================================
-// SYNC CUSTOMERS FROM LOCAL DATA
+// SYNC CUSTOMERS FROM SHOPIFY
 // ============================================
 
 /**
- * Builds Customer records from existing PickupSchedule and SubscriptionPickup data.
- * Used for initial population and "Sync" button.
- * Also fetches Shopify customer data to fill in GIDs.
+ * Syncs customers from Shopify's Customers API into the local Customer table.
+ * Primary source: Shopify Customers API (paginated, fetches all customers).
+ * Secondary enrichment: local PickupSchedule + SubscriptionPickup data for
+ * customers that exist in local orders but not yet in Shopify (edge case).
  */
 export async function syncCustomersFromLocalData(
   shop: string,
   admin: { graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response> }
 ): Promise<number> {
-  // 1. Get distinct customer emails from orders
-  const orderEmails = await prisma.pickupSchedule.findMany({
-    where: { shop, customerEmail: { not: null } },
-    select: {
-      customerEmail: true,
-      customerName: true,
-      customerPhone: true,
-    },
-    distinct: ["customerEmail"],
-    orderBy: { createdAt: "desc" },
-  });
-
-  // 2. Get distinct customer emails from subscriptions
-  const subEmails = await prisma.subscriptionPickup.findMany({
-    where: { shop, customerEmail: { not: null } },
-    select: {
-      customerEmail: true,
-      customerName: true,
-      customerPhone: true,
-    },
-    distinct: ["customerEmail"],
-    orderBy: { createdAt: "desc" },
-  });
-
-  // 3. Merge into unique email map (prefer most recent data)
-  const emailMap = new Map<
-    string,
-    { name: string; phone: string | null; email: string }
-  >();
-
-  for (const row of [...subEmails, ...orderEmails]) {
-    if (!row.customerEmail) continue;
-    const email = row.customerEmail.toLowerCase().trim();
-    if (!emailMap.has(email)) {
-      emailMap.set(email, {
-        email,
-        name: row.customerName,
-        phone: row.customerPhone || null,
-      });
-    }
-  }
-
-  // 4. For each unique email, look up Shopify customer and upsert
   let synced = 0;
+  const processedEmails = new Set<string>();
 
-  for (const [email, data] of emailMap) {
+  // === Phase 1: Fetch all customers from Shopify Customers API ===
+  let hasNextPage = true;
+  let cursor: string | null = null;
+
+  while (hasNextPage) {
     try {
-      // Try to find Shopify customer by email
       const response = await admin.graphql(
-        `query findCustomerByEmail($query: String!) {
-          customers(first: 1, query: $query) {
+        `query listCustomers($first: Int!, $after: String) {
+          customers(first: $first, after: $after) {
             edges {
               node {
                 id
@@ -467,52 +429,95 @@ export async function syncCustomersFromLocalData(
                 numberOfOrders
                 amountSpent { amount currencyCode }
               }
+              cursor
+            }
+            pageInfo {
+              hasNextPage
             }
           }
         }`,
-        { variables: { query: `email:${email}` } }
+        { variables: { first: 50, after: cursor } }
       );
 
       const result = await response.json();
-      const shopifyCustomer = (result as any)?.data?.customers?.edges?.[0]?.node;
+      const edges = (result as any)?.data?.customers?.edges || [];
+      const pageInfo = (result as any)?.data?.customers?.pageInfo;
 
-      if (shopifyCustomer) {
-        // Parse name from local data as fallback
-        const nameParts = (data.name || "").split(" ");
-        const firstName = shopifyCustomer.firstName || nameParts[0] || null;
-        const lastName =
-          shopifyCustomer.lastName || nameParts.slice(1).join(" ") || null;
-
-        await upsertCustomer(shop, {
-          shopifyCustomerId: shopifyCustomer.id,
-          email,
-          firstName,
-          lastName,
-          phone: shopifyCustomer.phone || data.phone,
-          totalOrderCount: shopifyCustomer.numberOfOrders || 0,
-          totalSpent: shopifyCustomer.amountSpent?.amount || null,
-        });
-        synced++;
-      } else {
-        // No Shopify customer found — create local-only record with placeholder GID
-        const nameParts = (data.name || "").split(" ");
-        await upsertCustomer(shop, {
-          shopifyCustomerId: `local:${email}`,
-          email,
-          firstName: nameParts[0] || null,
-          lastName: nameParts.slice(1).join(" ") || null,
-          phone: data.phone,
-        });
-        synced++;
+      if (edges.length === 0) {
+        console.log("Shopify returned 0 customers — check API scopes (read_customers required)");
+        break;
       }
 
-      // Small delay to respect Shopify API rate limits
-      if (synced % 10 === 0) {
-        await new Promise((r) => setTimeout(r, 500));
+      for (const edge of edges) {
+        const node = edge.node;
+        if (!node) continue;
+
+        try {
+          await upsertCustomer(shop, {
+            shopifyCustomerId: node.id,
+            email: node.email || null,
+            firstName: node.firstName || null,
+            lastName: node.lastName || null,
+            phone: node.phone || null,
+            totalOrderCount: node.numberOfOrders || 0,
+            totalSpent: node.amountSpent?.amount || null,
+          });
+          synced++;
+          if (node.email) {
+            processedEmails.add(node.email.toLowerCase().trim());
+          }
+        } catch (error) {
+          console.error(`Error upserting Shopify customer ${node.email || node.id}:`, error);
+        }
+      }
+
+      hasNextPage = pageInfo?.hasNextPage === true;
+      cursor = edges.length > 0 ? edges[edges.length - 1].cursor : null;
+
+      // Respect Shopify API rate limits
+      if (hasNextPage) {
+        await new Promise((r) => setTimeout(r, 300));
       }
     } catch (error) {
-      console.error(`Error syncing customer ${email}:`, error);
-      // Continue with other customers
+      console.error("Error fetching customers from Shopify:", error);
+      hasNextPage = false;
+    }
+  }
+
+  // === Phase 2: Fill gaps from local order/subscription data ===
+  // Some customers may exist in local orders but not in Shopify (e.g., deleted customers)
+  const orderEmails = await prisma.pickupSchedule.findMany({
+    where: { shop, AND: [{ customerEmail: { not: null } }, { customerEmail: { not: "" } }] },
+    select: { customerEmail: true, customerName: true, customerPhone: true },
+    distinct: ["customerEmail"],
+    orderBy: { createdAt: "desc" },
+  });
+
+  const subEmails = await prisma.subscriptionPickup.findMany({
+    where: { shop, AND: [{ customerEmail: { not: null } }, { customerEmail: { not: "" } }] },
+    select: { customerEmail: true, customerName: true, customerPhone: true },
+    distinct: ["customerEmail"],
+    orderBy: { createdAt: "desc" },
+  });
+
+  for (const row of [...orderEmails, ...subEmails]) {
+    if (!row.customerEmail) continue;
+    const email = row.customerEmail.toLowerCase().trim();
+    if (!email || processedEmails.has(email)) continue;
+    processedEmails.add(email);
+
+    try {
+      const nameParts = (row.customerName || "").split(" ");
+      await upsertCustomer(shop, {
+        shopifyCustomerId: `local:${email}`,
+        email,
+        firstName: nameParts[0] || null,
+        lastName: nameParts.slice(1).join(" ") || null,
+        phone: row.customerPhone || null,
+      });
+      synced++;
+    } catch (error) {
+      console.error(`Error syncing local customer ${email}:`, error);
     }
   }
 
