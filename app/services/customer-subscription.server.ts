@@ -321,7 +321,8 @@ export async function customerCancelSubscription(
   shop: string,
   subscriptionId: string,
   customerEmail: string,
-  comment?: string
+  comment?: string,
+  admin?: { graphql: Function }
 ): Promise<ActionResult> {
   // Verify ownership
   const subscription = await prisma.subscriptionPickup.findFirst({
@@ -350,6 +351,31 @@ export async function customerCancelSubscription(
     ? `Customer cancelled: ${comment}`
     : "Customer cancelled subscription";
 
+  // Cancel the Shopify subscription contract (if admin API available)
+  let shopifyCancelError: string | null = null;
+  if (admin && subscription.shopifyContractId) {
+    try {
+      const cancelResponse = await admin.graphql(`
+        mutation subscriptionContractCancel($contractId: ID!) {
+          subscriptionContractCancel(subscriptionContractId: $contractId) {
+            contract { id status }
+            userErrors { field message }
+          }
+        }
+      `, { variables: { contractId: subscription.shopifyContractId } });
+
+      const cancelData = await cancelResponse.json();
+      const userErrors = cancelData.data?.subscriptionContractCancel?.userErrors;
+      if (userErrors?.length > 0) {
+        shopifyCancelError = userErrors.map((e: { message: string }) => e.message).join(", ");
+        console.error(`Shopify contract cancel errors for ${subscriptionId}:`, userErrors);
+      }
+    } catch (error) {
+      shopifyCancelError = String(error);
+      console.error(`Failed to cancel Shopify contract for ${subscriptionId}:`, error);
+    }
+  }
+
   await prisma.subscriptionPickup.update({
     where: { id: subscriptionId },
     data: {
@@ -358,10 +384,10 @@ export async function customerCancelSubscription(
       pauseReason: cancelReason,
       nextPickupDate: null,
       nextBillingDate: null,
-      // Log cancellation in admin notes
+      // Log cancellation in admin notes (include Shopify error if any)
       adminNotes: subscription.adminNotes
-        ? `${subscription.adminNotes}\n${new Date().toISOString()}: ${cancelReason}`
-        : `${new Date().toISOString()}: ${cancelReason}`,
+        ? `${subscription.adminNotes}\n${new Date().toISOString()}: ${cancelReason}${shopifyCancelError ? ` (Shopify error: ${shopifyCancelError})` : ""}`
+        : `${new Date().toISOString()}: ${cancelReason}${shopifyCancelError ? ` (Shopify error: ${shopifyCancelError})` : ""}`,
     },
   });
 

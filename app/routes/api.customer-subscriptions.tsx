@@ -213,11 +213,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         break;
 
       case "cancel":
+        // Get admin API to also cancel the Shopify contract
+        const { admin: cancelAdmin } = await unauthenticated.admin(session.shop);
         result = await customerCancelSubscription(
           session.shop,
           subscriptionId,
           customerEmail,
-          comment
+          comment,
+          cancelAdmin
         );
         break;
 

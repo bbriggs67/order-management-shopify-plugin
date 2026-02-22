@@ -100,6 +100,10 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 21. **WebhookEvent TTL**: Payloads stripped to `{}` on creation. Records older than 30 days auto-deleted by hourly cron. Only idempotency key (`shop+topic+shopifyId`) is retained.
 22. **Customer stats live from Shopify**: `totalOrderCount`, `totalSpent`, `currency` removed from DB. Fetched live via `numberOfOrders` + `amountSpent` in `getCustomerDetail()` GraphQL query. Customer list page does not show these columns.
 23. **DB CHECK constraints**: `discountPercent` (0-100), `preferredDay` (0-6), `dayOfWeek` (0-6), `billingLeadHours` (1-168), `quantity` (>0) enforced at DB level. `PickupSchedule` FK relations use `onDelete: SetNull` to preserve history.
+24. **Prisma enums**: `SubscriptionFrequency` (WEEKLY/BIWEEKLY/TRIWEEKLY) and `BillingAttemptStatus` (PENDING/SUCCESS/FAILED) enforce valid values at DB level. No more freeform strings for these fields.
+25. **Customer cancel syncs Shopify**: `customerCancelSubscription` now calls `subscriptionContractCancel` mutation to keep Shopify contract in sync with local DB. Errors logged in admin notes.
+26. **Billing race condition guard**: `processSingleBilling` re-checks subscription status before calling Shopify billing API, preventing charges on just-paused subscriptions.
+27. **SMS phone lookup optimized**: `Customer.phoneNormalized` (E.164 indexed) replaces full-table scan in `recordInboundSMS`. Populated during customer upsert.
 
 ## SSMA Subscription Plan Groups (v2)
 

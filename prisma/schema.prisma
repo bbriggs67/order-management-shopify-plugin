@@ -263,7 +263,7 @@ model SubscriptionPickup {
   preferredDay        Int // Day of week (0-6)
   preferredTimeSlot   String // e.g., "12:00 PM - 2:00 PM"
   preferredTimeSlotStart String? // "12:00" - extracted start time for billing calc
-  frequency           String // "WEEKLY", "BIWEEKLY"
+  frequency           SubscriptionFrequency
   discountPercent     Float // 10 for weekly, 5 for biweekly, 2.5 for triweekly
   nextPickupDate      DateTime?
   nextBillingDate     DateTime? // Calculated based on billingLeadHours
@@ -278,7 +278,7 @@ model SubscriptionPickup {
   // Billing tracking
   lastBillingAttemptId  String? // Shopify billing attempt GID
   lastBillingAttemptAt  DateTime?
-  lastBillingStatus     String? // "SUCCESS", "FAILED", "PENDING"
+  lastBillingStatus     BillingAttemptStatus?
   billingFailureCount   Int       @default(0)
   billingFailureReason  String?
   billingCycleCount     Int       @default(0) // Number of successful billing cycles
@@ -315,17 +315,29 @@ enum SubStatus {
   CANCELLED
 }
 
+enum SubscriptionFrequency {
+  WEEKLY
+  BIWEEKLY
+  TRIWEEKLY
+}
+
 // ============================================
 // BILLING ATTEMPT LOG
 // ============================================
 
+enum BillingAttemptStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
 model BillingAttemptLog {
-  id                   String   @id @default(cuid())
+  id                   String               @id @default(cuid())
   shop                 String
   subscriptionPickupId String
   shopifyBillingId     String? // Shopify billing attempt GID
-  idempotencyKey       String   @unique
-  status               String // "PENDING", "SUCCESS", "FAILED"
+  idempotencyKey       String               @unique
+  status               BillingAttemptStatus  @default(PENDING)
   errorCode            String?
   errorMessage         String?
   orderId              String? // Created order GID on success
@@ -490,6 +502,7 @@ model Customer {
   firstName         String?
   lastName          String?
   phone             String?
+  phoneNormalized   String?  // E.164 format (e.g., "+18581234567") for indexed SMS lookup
 
   // Shopify sync tracking
   lastSyncedAt      DateTime?
@@ -505,6 +518,7 @@ model Customer {
   @@unique([shop, email])
   @@index([shop])
   @@index([shop, lastName])
+  @@index([phoneNormalized])
 }
 
 // ============================================

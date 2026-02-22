@@ -2,6 +2,54 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-21 - Audit Hardening Phase 2: Enums, Contract Sync, Race Guard, Phone Index
+
+**Context:** Deferred items from schema + API audit. Converts freeform String fields to Prisma enums, syncs Shopify contract on customer cancel, prevents billing race with pause, optimizes SMS phone lookup.
+
+**1. Customer cancel now cancels Shopify contract (`customer-subscription.server.ts`):**
+- Previously only updated local DB — Shopify SubscriptionContract stayed active
+- Now calls `subscriptionContractCancel` mutation via admin API
+- Errors logged in admin notes, local cancel proceeds regardless (matches admin cancel pattern)
+- Route passes `unauthenticated.admin(shop)` client to service function
+
+**2. Billing cron race condition guard (`subscription-billing.server.ts`):**
+- `processSingleBilling` re-checks subscription status before Shopify billing API call
+- Prevents charging a subscription that was paused/cancelled between query and processing
+- One extra DB query per billing attempt — negligible cost
+
+**3. `SubscriptionPickup.frequency` → `SubscriptionFrequency` enum:**
+- Created `SubscriptionFrequency` enum: WEEKLY, BIWEEKLY, TRIWEEKLY
+- DB migration converts existing String column using `USING "frequency"::"SubscriptionFrequency"`
+- Invalid frequency values now rejected at DB level (previously only validated in webhook)
+
+**4. `BillingAttemptLog.status` + `lastBillingStatus` → `BillingAttemptStatus` enum:**
+- Created `BillingAttemptStatus` enum: PENDING, SUCCESS, FAILED
+- Both `BillingAttemptLog.status` and `SubscriptionPickup.lastBillingStatus` converted
+- Typos like "SUCESS" now cause DB errors instead of silent data corruption
+
+**5. SMS phone lookup optimized (`sms-conversation.server.ts`, `customer-crm.server.ts`):**
+- Added `Customer.phoneNormalized` field (E.164 format, indexed)
+- `recordInboundSMS` now uses indexed `findFirst` instead of loading all customers into memory
+- `upsertCustomer` auto-populates `phoneNormalized` via `normalizePhone()` on create/update
+- Migration backfills existing phone numbers using SQL regex normalization
+
+**6. Kept `discountPercent` as Float (not Decimal):**
+- Decimal would require `Prisma.Decimal` object handling across 70+ code references
+- Current values (10, 5, 2.5) are exactly representable in IEEE 754 float
+- CHECK constraint (0-100) from Phase 1 provides the important guardrail
+
+**Files changed:**
+- `app/services/customer-subscription.server.ts` — Shopify contract cancel in customer cancel
+- `app/services/subscription-billing.server.ts` — status re-check before billing
+- `app/services/customer-crm.server.ts` — phoneNormalized in upsert, normalizePhone import
+- `app/services/sms-conversation.server.ts` — indexed phone lookup
+- `app/routes/api.customer-subscriptions.tsx` — pass admin client to cancel
+- `prisma/schema.prisma` — SubscriptionFrequency enum, BillingAttemptStatus enum, phoneNormalized field
+- `prisma/migrations/20260221_deferred_audit_enums_phone_index/migration.sql`
+- `CLAUDE.md` — notes 24-27
+
+---
+
 ### 2026-02-21 - Audit Hardening: Schema Constraints, API Validation, TRIWEEKLY Fix
 
 **Context:** Full schema + API audit identified edge cases in data integrity, input validation, and business logic. Fixes add guardrails — zero functional changes.

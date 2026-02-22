@@ -6,6 +6,7 @@
 
 import prisma from "../db.server";
 import type { Prisma } from "@prisma/client";
+import { normalizePhone } from "../utils/phone.server";
 import type {
   CustomerListItem,
   CustomerDetail,
@@ -336,7 +337,7 @@ export async function upsertCustomer(
           ...(data.email !== undefined ? { email: data.email?.toLowerCase().trim() || null } : {}),
           ...(data.firstName !== undefined ? { firstName: data.firstName } : {}),
           ...(data.lastName !== undefined ? { lastName: data.lastName } : {}),
-          ...(data.phone !== undefined ? { phone: data.phone } : {}),
+          ...(data.phone !== undefined ? { phone: data.phone, phoneNormalized: normalizePhone(data.phone) } : {}),
           lastSyncedAt: new Date(),
         },
       });
@@ -350,6 +351,7 @@ export async function upsertCustomer(
           firstName: data.firstName || null,
           lastName: data.lastName || null,
           phone: data.phone || null,
+          phoneNormalized: normalizePhone(data.phone),
           lastSyncedAt: new Date(),
         },
       });
@@ -366,13 +368,15 @@ export async function upsertCustomer(
         where: { shop, email: input.email?.toLowerCase().trim() },
       });
       if (byEmail) {
+        const mergedPhone = data.phone || byEmail.phone;
         await prisma.customer.update({
           where: { id: byEmail.id },
           data: {
             shopifyCustomerId,
             firstName: data.firstName || byEmail.firstName,
             lastName: data.lastName || byEmail.lastName,
-            phone: data.phone || byEmail.phone,
+            phone: mergedPhone,
+            phoneNormalized: normalizePhone(mergedPhone),
             lastSyncedAt: new Date(),
           },
         });

@@ -156,18 +156,11 @@ export async function recordInboundSMS(
     }
   }
 
-  // Look up customer by phone number.
-  // Phone formats vary in the Customer table, so we fetch all customers
-  // with phones and normalize for comparison.
-  // For a small bakery CRM this is fine — typically <500 customers.
-  const customers = await prisma.customer.findMany({
-    where: { phone: { not: null } },
-    select: { id: true, shop: true, phone: true },
+  // Look up customer by normalized phone (indexed for O(1) lookup)
+  const match = await prisma.customer.findFirst({
+    where: { phoneNormalized: normalized },
+    select: { id: true, shop: true },
   });
-
-  const match = customers.find(
-    (c) => normalizePhone(c.phone) === normalized
-  );
 
   if (!match) {
     console.log(`Inbound SMS from unknown phone: ${normalized.slice(0, 6)}***`);

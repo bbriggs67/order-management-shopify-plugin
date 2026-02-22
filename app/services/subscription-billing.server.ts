@@ -310,6 +310,17 @@ async function processSingleBilling(
     return;
   }
 
+  // Re-check subscription status to prevent race condition with customer pause/cancel
+  const currentStatus = await prisma.subscriptionPickup.findUnique({
+    where: { id: subscription.id },
+    select: { status: true },
+  });
+
+  if (currentStatus?.status !== "ACTIVE") {
+    console.log(`Subscription ${subscription.id} is no longer ACTIVE (now ${currentStatus?.status}), skipping billing`);
+    return;
+  }
+
   // Create billing attempt log entry
   const attemptLog = await prisma.billingAttemptLog.create({
     data: {
