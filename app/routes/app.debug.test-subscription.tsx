@@ -30,6 +30,7 @@ import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { createSubscriptionFromOrder } from "../services/subscription.server";
+import { DAY_NAMES } from "../utils/constants";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -208,8 +209,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   return json({ error: "Unknown action" }, { status: 400 });
 };
-
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export default function TestSubscription() {
   const { recentSubscriptions, recentPickups } = useLoaderData<typeof loader>();

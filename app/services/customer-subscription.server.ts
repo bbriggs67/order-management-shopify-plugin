@@ -14,6 +14,7 @@ import {
   getDayOfWeekPacific,
   getTodayPacific,
 } from "../utils/timezone.server";
+import { getDayName } from "../utils/constants";
 
 // ============================================
 // Types
@@ -707,18 +708,3 @@ export function verifyCustomerAccess(
   );
 }
 
-/**
- * Get day name from day number
- */
-export function getDayName(dayOfWeek: number): string {
-  const days = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-  ];
-  return days[dayOfWeek] || "Unknown";
-}

@@ -26,7 +26,7 @@ import type {
   ContractDeliveryPolicy,
 } from "../types/subscription-contracts";
 import { formatCurrency, getDeliveryFrequencyLabel } from "../utils/formatting";
-import { getDayName } from "../utils/constants.server";
+import { getDayName, FREQUENCY_LABELS } from "../utils/constants";
 
 interface SubscriptionWithShopifyData {
   id: string;
@@ -46,16 +46,6 @@ interface SubscriptionWithShopifyData {
   currencyCode: string;
   // SSMA source indicator
   isSSMANative: boolean;
-}
-
-/** Convert SSMA frequency enum to human-readable label */
-function getSSMAFrequencyLabel(frequency: string): string {
-  switch (frequency) {
-    case "WEEKLY": return "Every week";
-    case "BIWEEKLY": return "Every 2 weeks";
-    case "TRIWEEKLY": return "Every 3 weeks";
-    default: return frequency;
-  }
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -174,7 +164,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return json({ error: "Unknown action" }, { status: 400 });
 };
 
-// getDayName is imported from constants.server.ts
+// getDayName is imported from constants.ts
 
 export default function SubscriptionsIndex() {
   const { subscriptions, activeCount, pausedCount, cancelledCount, shop } =
@@ -316,7 +306,7 @@ export default function SubscriptionsIndex() {
       : `${sub.discountPercent}% off`,
     sub.deliveryPolicy
       ? getDeliveryFrequencyLabel(sub.deliveryPolicy)
-      : getSSMAFrequencyLabel(sub.frequency),
+      : FREQUENCY_LABELS[sub.frequency] || sub.frequency,
     formatDate(sub.nextPickupDate),
     getStatusBadge(sub.status),
     <Button

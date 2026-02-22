@@ -11,6 +11,7 @@ import {
   isBeforeTimePacific,
   SHOP_TIMEZONE,
 } from "../utils/timezone.server";
+import { DAY_NAMES } from "../utils/constants";
 
 // CORS headers for checkout extension
 const corsHeaders = {
@@ -48,9 +49,6 @@ interface PickupLocation {
   address: string;
   isDefault: boolean;
 }
-
-// Day names for reference
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Get shop from query parameter (passed by checkout extension)

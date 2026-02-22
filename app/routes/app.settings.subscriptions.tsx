@@ -57,11 +57,6 @@ import {
   ensureFrequencySortOrder,
 } from "../services/subscription-plans.server";
 import type { PlanProductInput } from "../services/subscription-plans.server";
-import {
-  syncDiscountsForGroup,
-  syncAllDiscounts,
-  deleteDiscountCode,
-} from "../services/shopify-discounts.server";
 import { ensureAutomaticDiscount } from "../services/shopify-automatic-discount.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -713,18 +708,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       case "delete_plan_group": {
         const groupId = formData.get("groupId") as string;
         if (!groupId) return json({ error: "Missing group ID" }, { status: 400 });
-        // Delete Shopify discount codes for all frequencies in this group first
-        const groupToDeleteData = await prisma.subscriptionPlanGroup.findFirst({
-          where: { id: groupId, shop },
-          include: { frequencies: true },
-        });
-        if (groupToDeleteData) {
-          for (const freq of groupToDeleteData.frequencies) {
-            if (freq.shopifyDiscountId) {
-              await deleteDiscountCode(admin, freq.shopifyDiscountId);
-            }
-          }
-        }
         await deletePlanGroup(shop, groupId);
         return json({ success: true, message: "Plan group deleted" });
       }
@@ -750,8 +733,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           : -1;
         const sortOrder = maxSortOrder + 1;
         const freq = await addFrequency(shop, groupId, { name, interval, intervalCount, discountPercent, discountCode, isActive, sortOrder });
-        // Auto-sync discount code and selling plan to Shopify
-        await syncDiscountsForGroup(admin, shop, groupId);
+        // Auto-sync selling plan to Shopify
         await syncSellingPlansFromSSMA(admin, shop);
         return json({ success: true, message: `Added frequency: ${freq.name}` });
       }
@@ -768,14 +750,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
         const freq = await updateFrequency(shop, frequencyId, { name, interval, intervalCount, discountPercent, discountCode, isActive });
-        // Auto-sync discount code to Shopify (find parent group)
-        const freqGroup = await prisma.subscriptionPlanFrequency.findFirst({
-          where: { id: frequencyId },
-          include: { group: { select: { id: true } } },
-        });
-        if (freqGroup) {
-          await syncDiscountsForGroup(admin, shop, freqGroup.group.id);
-        }
         // Auto-sync selling plans to Shopify
         await syncSellingPlansFromSSMA(admin, shop);
         return json({ success: true, message: `Updated frequency: ${freq.name}` });
@@ -784,13 +758,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       case "delete_frequency": {
         const frequencyId = formData.get("frequencyId") as string;
         if (!frequencyId) return json({ error: "Missing frequency ID" }, { status: 400 });
-        // Delete associated Shopify discount code first
-        const freqToDeleteData = await prisma.subscriptionPlanFrequency.findFirst({
-          where: { id: frequencyId },
-        });
-        if (freqToDeleteData?.shopifyDiscountId) {
-          await deleteDiscountCode(admin, freqToDeleteData.shopifyDiscountId);
-        }
         await deleteFrequency(shop, frequencyId);
         // Note: We don't auto-delete the Shopify selling plan here for safety
         // (active subscriptions may depend on it). Use the Debug page to manage selling plans manually.
@@ -805,8 +772,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
         const products: PlanProductInput[] = JSON.parse(productsJson);
         const count = await addProductsToGroup(shop, groupId, products);
-        // Re-sync discount codes with updated product targeting
-        await syncDiscountsForGroup(admin, shop, groupId);
         return json({ success: true, message: `Added ${count} product(s) to plan group` });
       }
 
@@ -817,28 +782,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ error: "Missing fields" }, { status: 400 });
         }
         await removeProductFromGroup(shop, groupId, productRecordId);
-        // Re-sync discount codes with updated product targeting
-        await syncDiscountsForGroup(admin, shop, groupId);
         return json({ success: true, message: "Product removed from plan group" });
-      }
-
-      case "sync_discounts": {
-        const syncResult = await syncAllDiscounts(admin, shop);
-        if (syncResult.failed > 0) {
-          const parts = [];
-          if (syncResult.created > 0) parts.push(`${syncResult.created} created`);
-          if (syncResult.updated > 0) parts.push(`${syncResult.updated} updated`);
-          parts.push(`${syncResult.failed} failed`);
-          return json({
-            error: `Discount sync partially failed (${parts.join(", ")}): ${syncResult.errors.join("; ")}`,
-          });
-        }
-        const parts = [];
-        if (syncResult.created > 0) parts.push(`${syncResult.created} created`);
-        if (syncResult.updated > 0) parts.push(`${syncResult.updated} updated`);
-        if (syncResult.deleted > 0) parts.push(`${syncResult.deleted} deleted`);
-        const summary = parts.length > 0 ? ` (${parts.join(", ")})` : "";
-        return json({ success: true, message: `All discount codes synced to Shopify${summary}` });
       }
 
       case "ensure_automatic_discount": {
@@ -1337,13 +1281,6 @@ export default function SubscriptionsSettings() {
                   >
                     Sync Selling Plans
                   </Button>
-                  <Button
-                    size="slim"
-                    onClick={() => submit({ intent: "sync_discounts" }, { method: "post" })}
-                    loading={isLoading}
-                  >
-                    Sync Discounts
-                  </Button>
                   <Button size="slim" onClick={() => openGroupModal()}>
                     Add Plan Group
                   </Button>
@@ -1352,7 +1289,6 @@ export default function SubscriptionsSettings() {
 
               <Text as="p" tone="subdued">
                 Each plan group contains delivery frequency options and associated products.
-                Discount codes are automatically created and managed in Shopify.
               </Text>
 
               {planGroups.length === 0 ? (
@@ -1420,14 +1356,7 @@ export default function SubscriptionsSettings() {
                                 ? freq.intervalCount === 1 ? "Every week" : `Every ${freq.intervalCount} weeks`
                                 : freq.intervalCount === 1 ? "Every month" : `Every ${freq.intervalCount} months`,
                               `${freq.discountPercent}%`,
-                              <InlineStack key={`dc-${freq.id}`} gap="200" blockAlign="center">
-                                <span>{freq.discountCode || "—"}</span>
-                                {freq.discountCode && (freq as Record<string, unknown>).shopifyDiscountId ? (
-                                  <Badge tone="success" key={`ds-${freq.id}`}>Synced</Badge>
-                                ) : freq.discountCode ? (
-                                  <Badge tone="attention" key={`ds-${freq.id}`}>Not synced</Badge>
-                                ) : null}
-                              </InlineStack>,
+                              freq.discountCode || "—",
                               freq.isActive ? (
                                 <Badge key={`fs-${freq.id}`} tone="success">Active</Badge>
                               ) : (

@@ -28,6 +28,8 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { useCallback, useState, useMemo } from "react";
+import { DAY_NAMES, DAY_NAMES_SHORT } from "../utils/constants";
+import { statusTone } from "../utils/formatting";
 
 // ============================================
 // DAY HEADERS (hardcoded bakery schedule)
@@ -53,8 +55,6 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 // ============================================
 // HELPER: format date key (YYYY-MM-DD)
@@ -83,25 +83,11 @@ function addDays(d: Date, n: number): Date {
 }
 
 function formatDateLong(d: Date): string {
-  return `${DAY_NAMES_FULL[d.getDay()]}, ${MONTH_NAMES[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+  return `${DAY_NAMES[d.getDay()]}, ${MONTH_NAMES[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
 
 function formatDateShort(d: Date): string {
   return `${MONTH_NAMES[d.getMonth()].substring(0, 3)} ${d.getDate()}`;
-}
-
-// ============================================
-// STATUS BADGE HELPER
-// ============================================
-function statusTone(status: string): "info" | "success" | "warning" | "critical" | "attention" | undefined {
-  switch (status) {
-    case "SCHEDULED": return "info";
-    case "READY": return "success";
-    case "PICKED_UP": return undefined;
-    case "CANCELLED": return "critical";
-    case "NO_SHOW": return "warning";
-    default: return undefined;
-  }
 }
 
 // ============================================

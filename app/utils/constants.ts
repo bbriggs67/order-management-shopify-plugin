@@ -130,3 +130,15 @@ export function isValidDayOfWeek(day: number): boolean {
 export function isValidFrequency(frequency: string): frequency is SubscriptionFrequency {
   return VALID_FREQUENCIES.includes(frequency as SubscriptionFrequency);
 }
+
+// ============================================
+// Display Labels
+// ============================================
+
+export const DAY_NAMES_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+export const FREQUENCY_LABELS: Record<string, string> = {
+  WEEKLY: "Weekly",
+  BIWEEKLY: "Bi-Weekly",
+  TRIWEEKLY: "Tri-Weekly",
+};

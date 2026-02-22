@@ -21,6 +21,7 @@ import {
   getDayOfWeekPacific,
   SHOP_TIMEZONE,
 } from "../utils/timezone.server";
+import { DAY_NAMES } from "../utils/constants";
 
 // CORS headers
 const corsHeaders = {
@@ -51,8 +52,6 @@ interface PickupLocation {
   address: string;
   isDefault: boolean;
 }
-
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);

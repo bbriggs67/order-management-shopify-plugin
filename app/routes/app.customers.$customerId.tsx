@@ -51,51 +51,14 @@ import {
   sendAndRecordSMS,
 } from "../services/sms-conversation.server";
 import { isIntegrationConfigured } from "../utils/env.server";
+import { DAY_NAMES, FREQUENCY_LABELS } from "../utils/constants";
+import { formatCurrency, statusTone, formatDateDisplay } from "../utils/formatting";
 import { NOTE_CATEGORIES } from "../types/customer-crm";
 import type { CustomerDetail, CustomerNoteData, DraftOrderResult, SmsMessageData } from "../types/customer-crm";
 
 // ============================================
 // HELPERS
 // ============================================
-
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-
-const FREQUENCY_LABELS: Record<string, string> = {
-  WEEKLY: "Weekly",
-  BIWEEKLY: "Bi-Weekly",
-  TRIWEEKLY: "Tri-Weekly",
-};
-
-function statusTone(status: string): "info" | "success" | "warning" | "critical" | "attention" | undefined {
-  switch (status) {
-    case "SCHEDULED": return "info";
-    case "READY": return "success";
-    case "PICKED_UP": return undefined;
-    case "CANCELLED": return "critical";
-    case "NO_SHOW": return "warning";
-    case "ACTIVE": return "success";
-    case "PAUSED": return "warning";
-    default: return undefined;
-  }
-}
-
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return "—";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function formatCurrency(amount: string | null, currency: string): string {
-  if (!amount) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-  }).format(parseFloat(amount));
-}
 
 function categoryBadgeTone(category: string | null): "info" | "success" | "warning" | "attention" | undefined {
   switch (category) {
@@ -850,7 +813,7 @@ export default function CustomerDetailPage() {
                 <InlineStack align="space-between">
                   <Text as="p" variant="bodySm" tone="subdued">Total Spent</Text>
                   <Text as="p" variant="bodyMd" fontWeight="bold">
-                    {formatCurrency(customer.totalSpent, customer.currency)}
+                    {customer.totalSpent ? formatCurrency(customer.totalSpent, customer.currency) : "—"}
                   </Text>
                 </InlineStack>
 
@@ -865,7 +828,7 @@ export default function CustomerDetailPage() {
                   <InlineStack align="space-between">
                     <Text as="p" variant="bodySm" tone="subdued">Customer Since</Text>
                     <Text as="p" variant="bodyMd">
-                      {formatDate(customer.memberSince)}
+                      {formatDateDisplay(customer.memberSince)}
                     </Text>
                   </InlineStack>
                 )}
@@ -1359,13 +1322,13 @@ function OrdersSection({ orders }: { orders: CustomerDetail["orders"] }) {
                       )}
                     </InlineStack>
                     <Text as="span" variant="bodySm" tone="subdued">
-                      {formatDate(order.createdAt)}
+                      {formatDateDisplay(order.createdAt)}
                     </Text>
                   </InlineStack>
 
                   <InlineStack gap="200">
                     <Text as="span" variant="bodySm" tone="subdued">
-                      Pickup: {formatDate(order.pickupDate)} • {order.pickupTimeSlot}
+                      Pickup: {formatDateDisplay(order.pickupDate)} • {order.pickupTimeSlot}
                     </Text>
                   </InlineStack>
 
@@ -1446,7 +1409,7 @@ function SubscriptionsSection({
                     </InlineStack>
                     <Text as="p" variant="bodySm" tone="subdued">
                       {DAY_NAMES[sub.preferredDay]} • {sub.preferredTimeSlot}
-                      {sub.nextPickupDate && ` • Next: ${formatDate(sub.nextPickupDate)}`}
+                      {sub.nextPickupDate && ` • Next: ${formatDateDisplay(sub.nextPickupDate)}`}
                     </Text>
                   </BlockStack>
                   <Link
@@ -1849,7 +1812,7 @@ function NotesSection({
                         </Badge>
                       )}
                       <Text as="span" variant="bodySm" tone="subdued">
-                        {formatDate(note.createdAt)}
+                        {formatDateDisplay(note.createdAt)}
                       </Text>
                     </InlineStack>
                     <InlineStack gap="100">

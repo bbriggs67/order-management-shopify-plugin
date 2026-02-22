@@ -44,9 +44,8 @@ prisma/schema.prisma     → Database schema
 |---------|---------|
 | `subscription.server.ts` | Core subscription CRUD + pickup generation |
 | `subscription-plans.server.ts` | SSMA plan groups, frequencies & product CRUD |
-| `subscription-billing.server.ts` | Billing lead time calculation + attempts |
-| `shopify-discounts.server.ts` | Auto-create/sync discount codes in Shopify |
-| `selling-plans.server.ts` | Shopify Selling Plan Groups sync (SSMA v2 only, legacy code removed) |
+| `subscription-billing.server.ts` | Billing processor, lead time calc, retry logic |
+| `selling-plans.server.ts` | Shopify Selling Plan Groups sync (SSMA v2 only) |
 | `pickup-availability.server.ts` | Available dates/times calculation |
 | `google-calendar.server.ts` | Calendar event sync |
 | `customer-crm.server.ts` | Customer CRM: search, detail, notes, Shopify sync |
@@ -58,17 +57,15 @@ prisma/schema.prisma     → Database schema
 
 **Product page** → SSMA widget shows "One-time purchase" + "Subscribe & Save" options
 → Customer selects frequency → clicks Add to Cart
-→ Widget intercepts submit → `/cart/add.js` → `/cart/update.js` (sets SSMA attributes incl. discount code) → navigates to `/cart`
+→ Widget intercepts submit → `/cart/add.js` → `/cart/update.js` (sets SSMA attributes incl. discount %) → navigates to `/cart`
 → **Cart page** → only date/time picker (subscription widget skips since attributes set)
-→ **Checkout** → discount code auto-applied via URL parameter `?discount=CODE` → webhook reads SSMA cart attributes → creates subscription
+→ **Checkout** → Discount Function reads cart attributes → applies % discount automatically → webhook reads SSMA cart attributes → creates subscription
 
-**Discount code pipeline:**
-1. `syncDiscountsForGroup()` auto-generates codes (e.g. `SUBSCRIBE-WEEKLY-10`) for frequencies with `discountPercent > 0`
-2. API `/apps/my-subscription/selling-plans` returns `discountCode` per frequency
-3. Product/cart widget stores `Subscription Discount Code` as cart attribute
-4. Cart page `pickup-scheduler.js` reads discount code from cart attributes → redirects to `/checkout?discount=CODE`
-5. Checkout UI extension (`Checkout.tsx`) exists but does NOT render on one-page checkout (known issue). URL param approach is the working solution.
-6. Discount is NOT applied via `/discount/` endpoint (cookies unreliable) or checkout extension (doesn't render)
+**Discount pipeline (Shopify Function):**
+1. Product widget sets cart attributes: `Subscription Enabled`, `Subscription Frequency`, `Subscription Discount` (percentage)
+2. Shopify Discount Function (`subscription-discount` extension) reads `Subscription Discount` attribute at checkout
+3. Function applies percentage discount to all cart lines automatically — no discount codes needed
+4. Checkout UI extension (`Checkout.tsx`) exists but does NOT render on one-page checkout. Discount Function works regardless.
 
 **Two theme extension widgets:**
 - `subscribe-save-product.js/css/liquid` — Product page (primary subscription selector + hides express checkout + hides native selling plan selector)
@@ -89,8 +86,8 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 7. **Test Store**: `aheajv-fg.myshopify.com`. **Live Store**: `susiessourdough.com`
 8. **Webhook attributes**: Shopify REST webhooks use `name` (not `key`) for note_attributes.
 9. **Express checkout hidden on product pages** via CSS in `subscribe-save-product.css` (Shop Pay, Apple Pay, Google Pay bypass cart/date-picker flow).
-10. **Discount codes via URL param**: Cart page `pickup-scheduler.js` redirects to `/checkout?discount=CODE`. Never use `/discount/CODE` fetch (cookies unreliable). Checkout UI extension exists but doesn't render on one-page checkout.
-11. **Billing lead time**: Default is **85 hours** (~3.5 days before pickup). Constant in `constants.server.ts`. First subscription order is paid at checkout (no double-billing); recurring billing starts from second pickup.
+10. **Discounts via Shopify Function**: `subscription-discount` extension reads cart attribute `Subscription Discount` (percentage) and applies automatically at checkout. No discount codes or URL params needed. Legacy `shopify-discounts.server.ts` deleted.
+11. **Billing lead time**: Default is **85 hours** (~3.5 days before pickup). Constant in `constants.ts`. First subscription order is paid at checkout (no double-billing); recurring billing starts from second pickup.
 12. **Calendar print**: Daily view has a Print button that opens a new window with clean printable layout (prep summary, pickups by time slot, extra orders).
 13. **Customer CRM portal**: 5th admin page (`/app/customers`). Customer model synced from Shopify via webhook + manual sync. Detail page shows orders (collapsible), subscriptions, admin notes with categories, Shopify contact info. Notes can sync to Shopify customer note field.
 14. **CRM Draft Orders**: Create Shopify draft orders from customer profile via product picker. Invoice sending modal: Shopify email, SMS (Twilio), or copy link. Service in `draft-orders.server.ts`.
@@ -106,10 +103,10 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 ## SSMA Subscription Plan Groups (v2)
 
 - `SubscriptionPlanGroup` → name, billingLeadHours, isActive
-- `SubscriptionPlanFrequency` → interval, discount, discount code, shopifyDiscountId
+- `SubscriptionPlanFrequency` → interval, discount, discount code
 - `SubscriptionPlanProduct` → shopifyProductId, title, imageUrl
 - API: `/apps/my-subscription/selling-plans?shop=...` returns groups + flat plans
-- Auto-sync: Adding/updating frequencies auto-creates discount codes and selling plans
+- Auto-sync: Adding/updating frequencies auto-syncs selling plans to Shopify
 - Settings UI at `app.settings.subscriptions.tsx` (plan groups, sync buttons, billing management)
 
 ## Debug Tools

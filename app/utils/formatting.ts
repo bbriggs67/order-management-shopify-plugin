@@ -120,6 +120,43 @@ export function formatPaymentMethod(paymentMethod: {
   return "Payment method on file";
 }
 
+// ============================================
+// Status Badge Tone
+// ============================================
+
+/**
+ * Get Polaris Badge tone for a pickup or subscription status
+ */
+export function statusTone(status: string): "info" | "success" | "warning" | "critical" | "attention" | undefined {
+  switch (status) {
+    case "SCHEDULED": return "info";
+    case "READY": return "success";
+    case "PICKED_UP": return undefined;
+    case "CANCELLED": return "critical";
+    case "NO_SHOW": return "warning";
+    case "ACTIVE": return "success";
+    case "PAUSED": return "warning";
+    default: return undefined;
+  }
+}
+
+// ============================================
+// Date Display
+// ============================================
+
+/**
+ * Format a date string for display (e.g. "Feb 21, 2026")
+ */
+export function formatDateDisplay(dateStr: string | null): string {
+  if (!dateStr) return "—";
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// ============================================
+// Payment Method Formatting
+// ============================================
+
 /**
  * Format payment method expiry for display
  */

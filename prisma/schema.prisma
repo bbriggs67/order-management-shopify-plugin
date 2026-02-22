@@ -410,7 +410,6 @@ model SubscriptionPlanFrequency {
   intervalCount   Int     // 1 = every week, 2 = every 2 weeks, etc.
   discountPercent Float   // Discount percentage (e.g., 10.0 for 10%)
   discountCode    String? // Shopify discount code, e.g., "SUBSCRIBE-WEEKLY-10"
-  shopifyDiscountId String? // Shopify discount GID (auto-created by SSMA)
   isActive        Boolean @default(true)
   sortOrder       Int     @default(0)
 

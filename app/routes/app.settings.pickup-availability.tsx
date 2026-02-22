@@ -38,8 +38,7 @@ import {
   generateTimeOptions,
   type AvailabilityMode,
 } from "../services/pickup-availability.server";
-
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+import { DAY_NAMES } from "../utils/constants";
 const DAY_ABBREVIATIONS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

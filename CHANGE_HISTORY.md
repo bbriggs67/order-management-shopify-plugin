@@ -2,6 +2,56 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-21 - DRY Cleanup: Remove Dead Code, Consolidate Utilities, Strip Portal HTML
+
+**Context:** Codebase audit found ~1,700 lines of bloat: dead discount code system, duplicate subscription action functions, utility functions copied inline across 7+ files, and 900 lines of HTML portal superseded by customer account extensions.
+
+**1. Deleted `shopify-discounts.server.ts` (~496 lines):**
+- Discount CODES (`SUBSCRIBE-WEEKLY-10`) were created and synced to Shopify but never consumed by any widget
+- Actual discount mechanism: Shopify Discount Function reads `Subscription Discount` cart attribute and applies % automatically
+- Removed all `syncDiscountsForGroup`/`deleteDiscountCode` calls from Settings page
+- Removed `shopifyDiscountId` from schema + "Sync Discounts" button from UI
+
+**2. Deleted 14 dead functions from `subscription-billing.server.ts` (~565 lines):**
+- `pauseSubscription`, `resumeSubscription`, `oneTimeReschedule`, `permanentReschedule`, `clearOneTimeReschedule`, `hasOneTimeReschedule` — exported but never imported by any route
+- `updateBillingLeadHours`, `updateAdminNotes`, `getSubscription`, `getAllSubscriptions` — admin routes use direct Prisma calls
+- `getAvailablePickupDays`, `getAvailableTimeSlots` — duplicates of `customer-subscription.server.ts`
+- `calculateNextPickupDateFromToday`, `getDayName` — private duplicates
+
+**3. Centralized shared utilities:**
+- Renamed `constants.server.ts` → `constants.ts` (pure data, safe for client/server)
+- Added `DAY_NAMES_SHORT`, `FREQUENCY_LABELS` to `constants.ts`
+- Added `statusTone()`, `formatDateDisplay()` to `formatting.ts`
+- Replaced inline copies in 7 route files with imports from shared utils
+- `customer-subscription.server.ts`: imports `getDayName` from shared utils
+
+**4. Stripped HTML portal from `apps.my-subscription.tsx` (~944 lines → 49 lines):**
+- Customer account extensions have 100% feature parity
+- Route now returns a redirect to Shopify customer account page
+- Proxy path stays (storefront widgets use `/apps/my-subscription/selling-plans`)
+
+**Modified Files:**
+- Deleted: `app/services/shopify-discounts.server.ts`
+- Renamed: `app/utils/constants.server.ts` → `app/utils/constants.ts`
+- `app/utils/constants.ts` — Added `DAY_NAMES_SHORT`, `FREQUENCY_LABELS`
+- `app/utils/formatting.ts` — Added `statusTone()`, `formatDateDisplay()`
+- `app/services/subscription-billing.server.ts` — Deleted 14 functions (~565 lines)
+- `app/services/customer-subscription.server.ts` — Import `getDayName` from shared utils
+- `app/routes/app.settings.subscriptions.tsx` — Removed discount sync imports/actions/UI
+- `app/routes/apps.my-subscription.tsx` — Replaced 993-line portal with 49-line redirect
+- `app/routes/app.customers.$customerId.tsx` — Import shared utils
+- `app/routes/app.calendar.tsx` — Import shared DAY_NAMES, statusTone
+- `app/routes/app.subscriptions._index.tsx` — Import FREQUENCY_LABELS
+- `app/routes/app.debug.test-subscription.tsx` — Import shared DAY_NAMES
+- `app/routes/apps.pickup-availability.tsx` — Import shared DAY_NAMES
+- `app/routes/api.pickup-availability.tsx` — Import shared DAY_NAMES
+- `app/routes/app.settings.pickup-availability.tsx` — Import shared DAY_NAMES
+- `prisma/schema.prisma` — Removed `shopifyDiscountId` field
+
+**Net impact:** ~1,700 lines deleted, ~30 lines added. Server bundle 40 kB smaller.
+
+---
+
 ### 2026-02-21 - Schema Cleanup: Drop Legacy Models, Strip WebhookEvent, Remove Cached Customer Fields
 
 **Context:** DB schema audit identified 3 categories of bloat from 3rd-party integration caching. All active features continue working — zero functional impact.
