@@ -140,7 +140,14 @@ export async function recordInboundSMS(
   phone: string,
   body: string,
   twilioSid: string
-): Promise<{ success: boolean; customerId?: string; error?: string }> {
+): Promise<{
+  success: boolean;
+  customerId?: string;
+  shop?: string;
+  customerName?: string;
+  isDuplicate?: boolean;
+  error?: string;
+}> {
   const normalized = normalizePhone(phone);
   if (!normalized) {
     return { success: false, error: "Invalid phone number" };
@@ -152,14 +159,14 @@ export async function recordInboundSMS(
       where: { twilioSid },
     });
     if (existing) {
-      return { success: true, customerId: existing.customerId };
+      return { success: true, customerId: existing.customerId, isDuplicate: true };
     }
   }
 
   // Look up customer by normalized phone (indexed for O(1) lookup)
   const match = await prisma.customer.findFirst({
     where: { phoneNormalized: normalized },
-    select: { id: true, shop: true },
+    select: { id: true, shop: true, firstName: true, lastName: true },
   });
 
   if (!match) {
@@ -179,5 +186,13 @@ export async function recordInboundSMS(
     },
   });
 
-  return { success: true, customerId: match.id };
+  const customerName = [match.firstName, match.lastName].filter(Boolean).join(" ") || undefined;
+
+  return {
+    success: true,
+    customerId: match.id,
+    shop: match.shop,
+    customerName,
+    isDuplicate: false,
+  };
 }

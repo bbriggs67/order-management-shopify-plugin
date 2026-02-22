@@ -15,6 +15,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { validateTwilioSignature } from "../utils/twilio-signature.server";
 import { recordInboundSMS } from "../services/sms-conversation.server";
+import { forwardInboundSMS } from "../services/sms-forwarding.server";
 import { checkRateLimit } from "../utils/rate-limiter.server";
 
 // Rate limit: 60 requests per minute per IP (generous for legitimate Twilio traffic)
@@ -92,6 +93,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       console.log(`Inbound SMS not matched: ${result.error} (from: ${from.slice(0, 6)}***)`);
     } else {
       console.log(`Inbound SMS recorded for customer ${result.customerId}`);
+
+      // Forward to admin phone if enabled (fire-and-forget, never blocks TwiML response)
+      if (!result.isDuplicate && result.shop) {
+        forwardInboundSMS(result.shop, result.customerName || "Unknown", body).catch((err) => {
+          console.error("SMS forwarding error (non-fatal):", err);
+        });
+      }
     }
   } catch (error) {
     console.error("Error recording inbound SMS:", error);

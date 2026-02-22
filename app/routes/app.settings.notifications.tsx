@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -19,6 +19,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { normalizePhone } from "../utils/phone.server";
 
 const DEFAULT_SMS_TEMPLATE = "Hi {name}! Your Susie's Sourdough order #{number} is ready for pickup at {location}. Time slot: {time_slot}";
 const DEFAULT_EMAIL_SUBJECT = "Your Susie's Sourdough Order is Ready!";
@@ -73,6 +74,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const data = Object.fromEntries(formData);
 
+  // Validate SMS forwarding phone if forwarding is enabled
+  const smsForwardingEnabled = data.smsForwardingEnabled === "true";
+  const smsForwardingPhoneRaw = (data.smsForwardingPhone as string || "").trim();
+  let smsForwardingPhone: string | null = null;
+
+  if (smsForwardingEnabled) {
+    if (!smsForwardingPhoneRaw) {
+      return json({ success: false, error: "Forwarding phone number is required when forwarding is enabled" });
+    }
+    const normalized = normalizePhone(smsForwardingPhoneRaw);
+    if (!normalized) {
+      return json({ success: false, error: "Invalid forwarding phone number. Use format: (858) 555-1234 or +18585551234" });
+    }
+    smsForwardingPhone = normalized;
+  } else if (smsForwardingPhoneRaw) {
+    // Save the phone even if forwarding is off, so it's pre-filled when re-enabled
+    smsForwardingPhone = normalizePhone(smsForwardingPhoneRaw) || smsForwardingPhoneRaw;
+  }
+
   await prisma.notificationSettings.upsert({
     where: { shop },
     create: {
@@ -82,6 +102,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       smsTemplate: data.smsTemplate as string,
       emailSubject: data.emailSubject as string,
       emailTemplate: data.emailTemplate as string,
+      smsForwardingEnabled,
+      smsForwardingPhone,
     },
     update: {
       smsEnabled: data.smsEnabled === "true",
@@ -89,6 +111,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       smsTemplate: data.smsTemplate as string,
       emailSubject: data.emailSubject as string,
       emailTemplate: data.emailTemplate as string,
+      smsForwardingEnabled,
+      smsForwardingPhone,
     },
   });
 
@@ -97,6 +121,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function NotificationsSettings() {
   const { settings, hasTwilioConfig, hasSendGridConfig } = useLoaderData<typeof loader>();
+  const actionData = useActionData<{ success?: boolean; error?: string }>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const isLoading = navigation.state === "submitting";
@@ -106,6 +131,8 @@ export default function NotificationsSettings() {
   const [smsTemplate, setSmsTemplate] = useState(settings.smsTemplate);
   const [emailSubject, setEmailSubject] = useState(settings.emailSubject);
   const [emailTemplate, setEmailTemplate] = useState(settings.emailTemplate || DEFAULT_EMAIL_TEMPLATE);
+  const [smsForwardingEnabled, setSmsForwardingEnabled] = useState(settings.smsForwardingEnabled ?? false);
+  const [smsForwardingPhone, setSmsForwardingPhone] = useState(settings.smsForwardingPhone || "");
 
   const handleSave = useCallback(() => {
     const formData = new FormData();
@@ -114,8 +141,10 @@ export default function NotificationsSettings() {
     formData.append("smsTemplate", smsTemplate);
     formData.append("emailSubject", emailSubject);
     formData.append("emailTemplate", emailTemplate);
+    formData.append("smsForwardingEnabled", smsForwardingEnabled.toString());
+    formData.append("smsForwardingPhone", smsForwardingPhone);
     submit(formData, { method: "post" });
-  }, [smsEnabled, emailEnabled, smsTemplate, emailSubject, emailTemplate, submit]);
+  }, [smsEnabled, emailEnabled, smsTemplate, emailSubject, emailTemplate, smsForwardingEnabled, smsForwardingPhone, submit]);
 
   const handleResetSms = useCallback(() => {
     setSmsTemplate(DEFAULT_SMS_TEMPLATE);
@@ -135,6 +164,12 @@ export default function NotificationsSettings() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
+            {actionData?.error && (
+              <Banner tone="critical">
+                <p>{actionData.error}</p>
+              </Banner>
+            )}
+
             <Banner tone="info">
               <p>
                 Notifications are sent when you mark an order as "Ready" for pickup.
@@ -265,6 +300,60 @@ export default function NotificationsSettings() {
               </BlockStack>
             </Card>
 
+            {/* SMS Forwarding */}
+            <Card>
+              <BlockStack gap="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingMd">
+                      SMS Forwarding
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Forward incoming customer texts to your personal phone
+                    </Text>
+                  </BlockStack>
+                  {smsForwardingEnabled && hasTwilioConfig ? (
+                    <Badge tone="success">Active</Badge>
+                  ) : (
+                    <Badge>Inactive</Badge>
+                  )}
+                </InlineStack>
+
+                <Divider />
+
+                {!hasTwilioConfig && (
+                  <Banner tone="warning">
+                    <p>
+                      Twilio credentials must be configured before enabling SMS forwarding.
+                    </p>
+                  </Banner>
+                )}
+
+                <Checkbox
+                  label="Forward incoming customer texts"
+                  checked={smsForwardingEnabled}
+                  onChange={setSmsForwardingEnabled}
+                  disabled={!hasTwilioConfig}
+                  helpText={
+                    hasTwilioConfig
+                      ? "When a customer texts your Twilio number, forward the message to your phone"
+                      : "Configure Twilio to enable SMS forwarding"
+                  }
+                />
+
+                {smsForwardingEnabled && hasTwilioConfig && (
+                  <TextField
+                    label="Forwarding phone number"
+                    value={smsForwardingPhone}
+                    onChange={setSmsForwardingPhone}
+                    autoComplete="tel"
+                    placeholder="(858) 555-1234"
+                    helpText="Your personal phone number. Messages arrive as: [SSMA] New text from Customer Name: ..."
+                  />
+                )}
+              </BlockStack>
+            </Card>
+
             <InlineStack align="end">
               <Button variant="primary" onClick={handleSave} loading={isLoading}>
                 Save
@@ -291,6 +380,11 @@ export default function NotificationsSettings() {
                 </Text>
                 <Text as="p" variant="bodySm">
                   3. If neither → No notification
+                </Text>
+                <Divider />
+                <Text as="h3" variant="headingSm">SMS Forwarding</Text>
+                <Text as="p" variant="bodySm">
+                  When enabled, customer texts to your Twilio number are forwarded to your phone as notifications. Reply via the CRM conversation thread to respond from the business number.
                 </Text>
                 <Divider />
                 <Text as="p" variant="bodySm" tone="subdued">
