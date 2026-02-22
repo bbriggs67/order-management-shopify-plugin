@@ -201,10 +201,10 @@ model PickupSchedule {
 
   // Relations
   pickupLocationId String?
-  pickupLocation   PickupLocation? @relation(fields: [pickupLocationId], references: [id])
+  pickupLocation   PickupLocation? @relation(fields: [pickupLocationId], references: [id], onDelete: SetNull)
 
   subscriptionPickupId String?
-  subscriptionPickup   SubscriptionPickup? @relation(fields: [subscriptionPickupId], references: [id])
+  subscriptionPickup   SubscriptionPickup? @relation(fields: [subscriptionPickupId], references: [id], onDelete: SetNull)
 
   orderItems       OrderItem[]
   notificationLogs NotificationLog[]
@@ -216,6 +216,7 @@ model PickupSchedule {
   @@index([shop])
   @@index([shop, pickupDate])
   @@index([shop, pickupStatus])
+  @@index([shop, customerEmail])
 }
 
 enum PickupStatus {
@@ -305,6 +306,7 @@ model SubscriptionPickup {
   @@index([shop, status])
   @@index([shop, nextPickupDate])
   @@index([shop, nextBillingDate])
+  @@index([shop, customerEmail])
 }
 
 enum SubStatus {
@@ -329,6 +331,7 @@ model BillingAttemptLog {
   orderId              String? // Created order GID on success
   billingCycle         Int // Which billing cycle this attempt is for
   attemptedAt          DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   subscriptionPickup SubscriptionPickup @relation(fields: [subscriptionPickupId], references: [id], onDelete: Cascade)
 

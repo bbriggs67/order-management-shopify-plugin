@@ -45,6 +45,7 @@ import type {
   ContractPricingSummary,
 } from "../types/subscription-contracts";
 import { formatCurrency } from "../utils/formatting";
+import { isValidFrequency, VALID_FREQUENCIES } from "../utils/constants";
 
 // Timezone constant for client-side formatting
 const SHOP_TIMEZONE = "America/Los_Angeles";
@@ -321,12 +322,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     // Validate frequency
-    if (frequency !== "WEEKLY" && frequency !== "BIWEEKLY") {
-      return json({ error: "Invalid frequency. Must be WEEKLY or BIWEEKLY." }, { status: 400 });
+    if (!isValidFrequency(frequency)) {
+      return json({ error: `Invalid frequency. Must be one of: ${VALID_FREQUENCIES.join(", ")}` }, { status: 400 });
     }
 
-    // Calculate new discount based on frequency
-    const discountPercent = frequency === "WEEKLY" ? 10 : 5;
+    // Look up discount from plan group config; fall back to defaults
+    const planFrequency = await prisma.subscriptionPlanFrequency.findFirst({
+      where: {
+        group: { shop, isActive: true },
+        interval: "WEEK",
+        intervalCount: frequency === "WEEKLY" ? 1 : frequency === "TRIWEEKLY" ? 3 : 2,
+      },
+    });
+    const discountPercent = planFrequency?.discountPercent
+      ?? (frequency === "WEEKLY" ? 10 : frequency === "TRIWEEKLY" ? 2.5 : 5);
 
     // Recalculate next pickup date if frequency changed
     const nextPickupDate = calculateNextPickupDate(preferredDay, frequency);
@@ -513,9 +522,12 @@ function calculateNextPickupDate(
     daysUntil += 7;
   }
 
-  // For bi-weekly, ensure we're at least 7 days out for the first pickup
+  // For bi-weekly/tri-weekly, ensure we're far enough out for the first pickup
   if (frequency === "BIWEEKLY" && daysUntil < 7) {
     daysUntil += 7;
+  }
+  if (frequency === "TRIWEEKLY" && daysUntil < 14) {
+    daysUntil += 14;
   }
 
   const nextDate = getDatePacific(daysUntil);
@@ -528,7 +540,7 @@ function calculateNextPickupDateAfter(
   preferredDay: number,
   frequency: string
 ): Date {
-  const increment = frequency === "WEEKLY" ? 7 : 14;
+  const increment = frequency === "WEEKLY" ? 7 : frequency === "TRIWEEKLY" ? 21 : 14;
   const nextDate = new Date(afterDate);
   nextDate.setDate(nextDate.getDate() + increment);
 

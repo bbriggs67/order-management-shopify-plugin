@@ -235,11 +235,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const safeDateStr = newPickupDate.includes("T")
           ? newPickupDate
           : `${newPickupDate}T12:00:00`;
+        const parsedDate = new Date(safeDateStr);
+        if (isNaN(parsedDate.getTime())) {
+          return json(
+            { success: false, message: "Invalid pickup date format" },
+            { status: 400, headers: corsHeaders }
+          );
+        }
         result = await customerOneTimeReschedule(
           session.shop,
           subscriptionId,
           customerEmail,
-          new Date(safeDateStr),
+          parsedDate,
           newTimeSlot,
           reason
         );
@@ -263,11 +270,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             { status: 400, headers: corsHeaders }
           );
         }
+        const parsedDay = parseInt(newPreferredDay, 10);
+        if (isNaN(parsedDay) || parsedDay < 0 || parsedDay > 6) {
+          return json(
+            { success: false, message: "Invalid preferred day (must be 0-6)" },
+            { status: 400, headers: corsHeaders }
+          );
+        }
         result = await customerPermanentReschedule(
           session.shop,
           subscriptionId,
           customerEmail,
-          parseInt(newPreferredDay, 10),
+          parsedDay,
           newTimeSlot,
           reason
         );

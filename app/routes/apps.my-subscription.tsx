@@ -18,7 +18,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const shop = url.searchParams.get("shop") || "";
 
-  // Build the customer account URL from the shop domain
+  // Validate shop matches Shopify domain pattern to prevent open redirect
+  const shopRegex = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
+  if (!shop || !shopRegex.test(shop)) {
+    const safeHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Subscription Management</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 60px 20px; color: #333; }
+  </style>
+</head>
+<body>
+  <p>Please visit your account page to manage subscriptions.</p>
+</body>
+</html>`;
+    return new Response(safeHtml, {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "public, max-age=300",
+      },
+    });
+  }
+
+  // Build the customer account URL from the validated shop domain
   // e.g., "susiessourdough.myshopify.com" -> "susiessourdough.com/account"
   const storeDomain = shop.replace(".myshopify.com", ".com");
 

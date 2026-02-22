@@ -12,6 +12,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { getActivePlanGroups } from "../services/subscription-plans.server";
+import prisma from "../db.server";
 
 /** Selling plan ID mapping cache (per shop, refreshed every 5 min) */
 const sellingPlanCache: Record<string, { data: Record<string, string>; expires: number }> = {};

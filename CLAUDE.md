@@ -99,6 +99,7 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 20. **Business location**: Encinitas, CA (not Poway). Contact is email-only: info@susiessourdough.com — no phone number on public pages.
 21. **WebhookEvent TTL**: Payloads stripped to `{}` on creation. Records older than 30 days auto-deleted by hourly cron. Only idempotency key (`shop+topic+shopifyId`) is retained.
 22. **Customer stats live from Shopify**: `totalOrderCount`, `totalSpent`, `currency` removed from DB. Fetched live via `numberOfOrders` + `amountSpent` in `getCustomerDetail()` GraphQL query. Customer list page does not show these columns.
+23. **DB CHECK constraints**: `discountPercent` (0-100), `preferredDay` (0-6), `dayOfWeek` (0-6), `billingLeadHours` (1-168), `quantity` (>0) enforced at DB level. `PickupSchedule` FK relations use `onDelete: SetNull` to preserve history.
 
 ## SSMA Subscription Plan Groups (v2)
 
