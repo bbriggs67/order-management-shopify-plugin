@@ -104,6 +104,7 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 25. **Customer cancel syncs Shopify**: `customerCancelSubscription` now calls `subscriptionContractCancel` mutation to keep Shopify contract in sync with local DB. Errors logged in admin notes.
 26. **Billing race condition guard**: `processSingleBilling` re-checks subscription status before calling Shopify billing API, preventing charges on just-paused subscriptions.
 27. **SMS phone lookup optimized**: `Customer.phoneNormalized` (E.164 indexed) replaces full-table scan in `recordInboundSMS`. Populated during customer upsert.
+28. **SMS forwarding**: Inbound customer texts are forwarded to admin's personal phone as notifications. Configurable per-shop in Settings → Notifications (enable/disable + phone number). Service: `sms-forwarding.server.ts`. Fire-and-forget from webhook — never blocks TwiML response. Forwarded messages prefixed with `[SSMA]`.
 
 ## SSMA Subscription Plan Groups (v2)
 

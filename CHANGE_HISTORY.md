@@ -2,6 +2,39 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-21 - Add SMS Forwarding to Admin Phone
+
+**Context:** Susie needs to see customer texts on her phone when away from the computer. Inbound customer SMS are now forwarded to a configurable admin phone number as notifications. Settings are per-shop for multi-tenant readiness.
+
+**Changes:**
+- New service: `sms-forwarding.server.ts` — fire-and-forget forwarding with `[SSMA]` prefix
+- `recordInboundSMS()` now returns `shop`, `customerName`, `isDuplicate` for routing
+- Twilio webhook calls `forwardInboundSMS()` after recording (never blocks TwiML response)
+- Settings UI: new "SMS Forwarding" card in Notifications settings with toggle + phone input + validation
+- Schema: `smsForwardingEnabled` and `smsForwardingPhone` on `NotificationSettings`
+- Migration: `20260221_add_sms_forwarding`
+
+**Files changed:**
+- `app/services/sms-forwarding.server.ts` — new file
+- `app/services/sms-conversation.server.ts` — expanded return type
+- `app/routes/api.twilio-webhook.tsx` — forwarding call after recording
+- `app/routes/app.settings.notifications.tsx` — forwarding card, validation, state
+- `prisma/schema.prisma` — forwarding fields on NotificationSettings
+- `prisma/migrations/20260221_add_sms_forwarding/migration.sql`
+
+---
+
+### 2026-02-21 - Fix Send Email Button (App Bridge Protocol)
+
+**Context:** "Send Email" button on CRM customer page failed with "unable to connect to shopify admin.com". The `external` URL approach doesn't work from within the embedded Shopify admin iframe.
+
+**Fix:** Replaced `url={shopifyCustomerUrl} external` with `onClick` handler using `open('shopify://admin/customers/{id}', '_top')` — the App Bridge-supported navigation protocol for embedded apps.
+
+**Files changed:**
+- `app/routes/app.customers.$customerId.tsx` — button onClick with shopify:// protocol
+
+---
+
 ### 2026-02-21 - Replace CRM Email Compose with Shopify Native Customer Email
 
 **Context:** CRM "Send Email" button opened a SendGrid compose modal that required SENDGRID_API_KEY + SENDGRID_FROM_EMAIL env vars. Since Shopify admin already has a native "Contact customer" email dialog on the customer page, we replaced the custom modal with a link to the Shopify admin customer page. This removes a third-party dependency for manual emails and makes the app multi-tenant ready with zero email configuration.
