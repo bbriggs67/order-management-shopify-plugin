@@ -36,12 +36,8 @@ interface LoaderData {
     firstName: string | null;
     lastName: string | null;
     phone: string | null;
-    totalOrderCount: number;
-    totalSpent: string | null;
-    currency: string;
     activeSubscriptionCount: number;
     lastOrderDate: string | null;
-    tags: string[];
   }>;
   hasMore: boolean;
   nextCursor: string | null;
@@ -156,7 +152,7 @@ export default function CustomersIndex() {
   // Sort handling
   const handleSort = useCallback(
     (headingIndex: number, sortDirection: string) => {
-      const sortFields = ["name", "email", "", "orders", "", "", "spent"];
+      const sortFields = ["name", "email", "", "", ""];
       const field = sortFields[headingIndex];
       if (!field) return;
 
@@ -201,14 +197,6 @@ export default function CustomersIndex() {
     });
   };
 
-  const formatCurrency = (amount: string | null, currency: string) => {
-    if (!amount) return "—";
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency,
-    }).format(parseFloat(amount));
-  };
-
   // Build DataTable rows
   const rows = customers.map((customer) => {
     const name = [customer.firstName, customer.lastName]
@@ -227,7 +215,6 @@ export default function CustomersIndex() {
       </Link>,
       customer.email || "—",
       customer.phone || "—",
-      String(customer.totalOrderCount),
       customer.activeSubscriptionCount > 0 ? (
         <Badge tone="success" key={`sub-${customer.id}`}>
           {`${customer.activeSubscriptionCount} active`}
@@ -238,12 +225,11 @@ export default function CustomersIndex() {
         </Text>
       ),
       formatDate(customer.lastOrderDate),
-      formatCurrency(customer.totalSpent, customer.currency),
     ];
   });
 
   // Sort direction for DataTable
-  const sortColumnIndex = { name: 0, email: 1, orders: 3, spent: 6 }[
+  const sortColumnIndex = { name: 0, email: 1 }[
     currentSort
   ];
   const sortDirection =
@@ -312,22 +298,18 @@ export default function CustomersIndex() {
                     "text",
                     "text",
                     "text",
-                    "numeric",
                     "text",
                     "text",
-                    "numeric",
                   ]}
                   headings={[
                     "Customer",
                     "Email",
                     "Phone",
-                    "Orders",
                     "Subscriptions",
                     "Last Order",
-                    "Total Spent",
                   ]}
                   rows={rows}
-                  sortable={[true, true, false, true, false, false, true]}
+                  sortable={[true, true, false, false, false]}
                   defaultSortDirection="ascending"
                   initialSortColumnIndex={sortColumnIndex}
                   onSort={handleSort}

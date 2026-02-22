@@ -11,7 +11,6 @@
 
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import prisma from "../db.server";
 import { getActivePlanGroups } from "../services/subscription-plans.server";
 
 /** Selling plan ID mapping cache (per shop, refreshed every 5 min) */
@@ -190,78 +189,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }, { headers: corsHeaders });
     }
 
-    // FALLBACK: Read from legacy SellingPlanConfig
-    const config = await prisma.sellingPlanConfig.findUnique({
-      where: { shop },
-      include: {
-        additionalPlans: true,
-      },
-    });
-
-    if (!config) {
-      return json({
-        enabled: false,
-        error: "No subscription plan configuration found",
-        plans: [],
-      }, { headers: corsHeaders });
-    }
-
-    // Build plans from legacy config
-    const plans: Array<{
-      id: string;
-      name: string;
-      frequency: string;
-      interval: string;
-      intervalCount: number;
-      discountPercent: number;
-      discountCode: string | null;
-      billingLeadHours: number;
-    }> = [];
-
-    if (config.weeklySellingPlanId) {
-      plans.push({
-        id: config.weeklySellingPlanId,
-        name: `Deliver every week (${config.weeklyDiscount}% off)`,
-        frequency: "WEEKLY",
-        interval: "WEEK",
-        intervalCount: 1,
-        discountPercent: config.weeklyDiscount,
-        discountCode: "SUBSCRIBE-WEEKLY-10",
-        billingLeadHours: 85,
-      });
-    }
-
-    if (config.biweeklySellingPlanId) {
-      plans.push({
-        id: config.biweeklySellingPlanId,
-        name: `Deliver every 2 weeks (${config.biweeklyDiscount}% off)`,
-        frequency: "BIWEEKLY",
-        interval: "WEEK",
-        intervalCount: 2,
-        discountPercent: config.biweeklyDiscount,
-        discountCode: "SUBSCRIBE-BIWEEKLY-5",
-        billingLeadHours: 85,
-      });
-    }
-
-    for (const plan of config.additionalPlans) {
-      plans.push({
-        id: plan.shopifyPlanId,
-        name: plan.name,
-        frequency: mapToFrequencyLabel(plan.interval, plan.intervalCount),
-        interval: plan.interval,
-        intervalCount: plan.intervalCount,
-        discountPercent: plan.discount,
-        discountCode: null,
-        billingLeadHours: 85,
-      });
-    }
-
+    // No SSMA v2 plan groups found
     return json({
-      enabled: true,
-      source: "legacy",
-      groupId: config.sellingPlanGroupId,
-      plans,
+      enabled: false,
+      error: "No subscription plan configuration found",
+      plans: [],
     }, { headers: corsHeaders });
   } catch (error) {
     console.error("Error fetching subscription plans:", error);

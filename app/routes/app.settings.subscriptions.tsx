@@ -27,10 +27,6 @@ import { ImageIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/
 import { useState, useCallback, useEffect } from "react";
 import { authenticate } from "../shopify.server";
 import {
-  ensureSellingPlanGroup,
-  getSellingPlanConfig,
-  addProductsToSellingPlanGroup,
-  removeProductsFromSellingPlanGroup,
   getAllSellingPlanGroups,
   addSellingPlanToGroup,
   deleteSellingPlan,
@@ -81,59 +77,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Get all SSMA plan groups
   const planGroups = await getPlanGroups(shop);
 
-  // Get selling plan configuration from our database
-  const sellingPlanConfig = await getSellingPlanConfig(shop);
-
   // Get ALL selling plan groups from Shopify (includes plans created outside our app)
-  let sellingPlanGroups = await getAllSellingPlanGroups(admin);
-
-  // If Shopify returns no groups but we have a local config, create a synthetic entry
-  // This handles the case where we can CREATE selling plans but can't READ them back
-  // (possibly due to eventual consistency or permission quirks)
-  let usingLocalConfig = false;
-  if (sellingPlanGroups.length === 0 && sellingPlanConfig) {
-    usingLocalConfig = true;
-
-    // Build plans array from default plans + additional plans
-    const plans = [
-      ...(sellingPlanConfig.weeklyPlanId ? [{
-        id: sellingPlanConfig.weeklyPlanId,
-        name: `Deliver every week (${sellingPlanConfig.weeklyDiscount}% off)`,
-        interval: "WEEK",
-        intervalCount: 1,
-        discount: sellingPlanConfig.weeklyDiscount,
-        discountType: "PERCENTAGE",
-        productCount: 0,
-      }] : []),
-      ...(sellingPlanConfig.biweeklyPlanId ? [{
-        id: sellingPlanConfig.biweeklyPlanId,
-        name: `Deliver every 2 weeks (${sellingPlanConfig.biweeklyDiscount}% off)`,
-        interval: "WEEK",
-        intervalCount: 2,
-        discount: sellingPlanConfig.biweeklyDiscount,
-        discountType: "PERCENTAGE",
-        productCount: 0,
-      }] : []),
-      // Include additional plans from database
-      ...(sellingPlanConfig.additionalPlans || []).map((plan) => ({
-        id: plan.shopifyPlanId,
-        name: plan.name,
-        interval: plan.interval,
-        intervalCount: plan.intervalCount,
-        discount: plan.discount,
-        discountType: plan.discountType,
-        productCount: 0,
-      })),
-    ];
-
-    sellingPlanGroups = [{
-      id: sellingPlanConfig.groupId,
-      name: sellingPlanConfig.groupName || "Subscribe & Save",
-      productCount: 0, // Unknown without API access
-      products: [], // Empty when using local config
-      plans,
-    }];
-  }
+  const sellingPlanGroups = await getAllSellingPlanGroups(admin);
 
   // Get failed billings
   const failedBillingsRaw = await getFailedBillings(shop);
@@ -183,9 +128,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
     shop,
     planGroups,
-    sellingPlanConfig,
     sellingPlanGroups,
-    usingLocalConfig,
     failedBillings,
     upcomingBillings,
     customerPortalUrl,
@@ -202,15 +145,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     switch (intent) {
-      case "create_selling_plans": {
-        const config = await ensureSellingPlanGroup(shop, admin);
-        return json({
-          success: true,
-          message: "Selling plan group created successfully",
-          config,
-        });
-      }
-
       case "add_products": {
         const productIdsStr = formData.get("productIds") as string;
         const groupId = formData.get("groupId") as string;
@@ -219,33 +153,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
         const productIds = productIdsStr.split(",").map((id) => id.trim()).filter(Boolean);
 
-        // If a specific group is specified, use direct GraphQL call
-        if (groupId) {
-          const response = await admin.graphql(`
-            mutation addProductsToSellingPlanGroup($id: ID!, $productIds: [ID!]!) {
-              sellingPlanGroupAddProducts(id: $id, productIds: $productIds) {
-                sellingPlanGroup {
-                  id
-                }
-                userErrors {
-                  field
-                  message
-                }
+        if (!groupId) {
+          return json({ error: "No selling plan group ID provided" }, { status: 400 });
+        }
+
+        // Use direct GraphQL call to add products to the specified group
+        const response = await admin.graphql(`
+          mutation addProductsToSellingPlanGroup($id: ID!, $productIds: [ID!]!) {
+            sellingPlanGroupAddProducts(id: $id, productIds: $productIds) {
+              sellingPlanGroup {
+                id
+              }
+              userErrors {
+                field
+                message
               }
             }
-          `, {
-            variables: { id: groupId, productIds },
-          });
-
-          const data = await response.json();
-          if (data.data?.sellingPlanGroupAddProducts?.userErrors?.length > 0) {
-            const errors = data.data.sellingPlanGroupAddProducts.userErrors
-              .map((e: { message: string }) => e.message)
-              .join(", ");
-            return json({ error: errors }, { status: 400 });
           }
-        } else {
-          await addProductsToSellingPlanGroup(shop, admin, productIds);
+        `, {
+          variables: { id: groupId, productIds },
+        });
+
+        const data = await response.json();
+        if (data.data?.sellingPlanGroupAddProducts?.userErrors?.length > 0) {
+          const errors = data.data.sellingPlanGroupAddProducts.userErrors
+            .map((e: { message: string }) => e.message)
+            .join(", ");
+          return json({ error: errors }, { status: 400 });
         }
 
         return json({
@@ -960,7 +894,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SubscriptionsSettings() {
-  const { planGroups, sellingPlanConfig, sellingPlanGroups, usingLocalConfig, failedBillings, upcomingBillings, customerPortalUrl, webhookHealth } = useLoaderData<typeof loader>();
+  const { planGroups, sellingPlanGroups, failedBillings, upcomingBillings, customerPortalUrl, webhookHealth } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -1065,10 +999,6 @@ export default function SubscriptionsSettings() {
       console.error("Failed to copy:", err);
     }
   }, [customerPortalUrl]);
-
-  const handleCreateSellingPlans = () => {
-    submit({ intent: "create_selling_plans" }, { method: "post" });
-  };
 
   const handleRetryBilling = (subscriptionId: string) => {
     submit({ intent: "retry_billing", subscriptionId }, { method: "post" });

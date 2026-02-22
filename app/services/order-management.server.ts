@@ -169,11 +169,7 @@ async function recordRefundProcessed(
       shop,
       topic: "refund_processed",
       shopifyId: orderId,
-      payload: {
-        refundId,
-        amount,
-        processedAt: new Date().toISOString(),
-      },
+      payload: {},
     },
   });
 }

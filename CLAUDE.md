@@ -46,7 +46,7 @@ prisma/schema.prisma     → Database schema
 | `subscription-plans.server.ts` | SSMA plan groups, frequencies & product CRUD |
 | `subscription-billing.server.ts` | Billing lead time calculation + attempts |
 | `shopify-discounts.server.ts` | Auto-create/sync discount codes in Shopify |
-| `selling-plans.server.ts` | Shopify Selling Plan Groups integration |
+| `selling-plans.server.ts` | Shopify Selling Plan Groups sync (SSMA v2 only, legacy code removed) |
 | `pickup-availability.server.ts` | Available dates/times calculation |
 | `google-calendar.server.ts` | Calendar event sync |
 | `customer-crm.server.ts` | Customer CRM: search, detail, notes, Shopify sync |
@@ -100,6 +100,8 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 18. **Twilio webhook**: `/api/twilio-webhook` validates Twilio signature (HMAC-SHA1), rate-limited 60/min per IP. Returns empty TwiML. Dedup by `twilioSid`.
 19. **A2P 10DLC**: Required for US SMS. Registration in progress — Privacy Policy (automated) and Terms of Service (custom with SMS terms) published at `susiessourdough.com/policies/`. Policy page CSS fix applied to both TEST and Dawn themes. Messages may be carrier-filtered until registration approved.
 20. **Business location**: Encinitas, CA (not Poway). Contact is email-only: info@susiessourdough.com — no phone number on public pages.
+21. **WebhookEvent TTL**: Payloads stripped to `{}` on creation. Records older than 30 days auto-deleted by hourly cron. Only idempotency key (`shop+topic+shopifyId`) is retained.
+22. **Customer stats live from Shopify**: `totalOrderCount`, `totalSpent`, `currency` removed from DB. Fetched live via `numberOfOrders` + `amountSpent` in `getCustomerDetail()` GraphQL query. Customer list page does not show these columns.
 
 ## SSMA Subscription Plan Groups (v2)
 

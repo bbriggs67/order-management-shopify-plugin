@@ -63,7 +63,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           shop,
           topic: "subscription_billing_attempts/failure",
           shopifyId: billingAttempt.admin_graphql_api_id,
-          payload: payload as object,
+          payload: {},
         },
       });
 
@@ -146,7 +146,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         shop,
         topic: "subscription_billing_attempts/failure",
         shopifyId: billingAttempt.admin_graphql_api_id,
-        payload: payload as object,
+        payload: {},
       },
     });
 

@@ -106,6 +106,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
+    // Step 4: Clean up old WebhookEvent records (older than 30 days)
+    try {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const deleted = await prisma.webhookEvent.deleteMany({
+        where: {
+          processedAt: { lt: thirtyDaysAgo },
+        },
+      });
+      if (deleted.count > 0) {
+        console.log(`Cleaned up ${deleted.count} WebhookEvent records older than 30 days`);
+      }
+    } catch (cleanupError) {
+      console.error("Error cleaning up old WebhookEvent records:", cleanupError);
+    }
+
     return json({
       success: true,
       timestamp: new Date().toISOString(),

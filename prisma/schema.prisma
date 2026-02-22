@@ -367,7 +367,7 @@ model WebhookEvent {
   shop        String
   topic       String // e.g., "orders/create"
   shopifyId   String // ID from webhook payload
-  payload     Json
+  payload     Json?
   processedAt DateTime @default(now())
 
   @@unique([shop, topic, shopifyId])
@@ -375,45 +375,7 @@ model WebhookEvent {
   @@index([processedAt])
 }
 
-// ============================================
-// SELLING PLAN CONFIGURATION
-// ============================================
-
-model SellingPlanConfig {
-  id                    String   @id @default(cuid())
-  shop                  String   @unique
-  sellingPlanGroupId    String // Shopify selling plan group GID
-  weeklySellingPlanId   String? // Shopify selling plan GID for weekly
-  biweeklySellingPlanId String? // Shopify selling plan GID for biweekly
-  weeklyDiscount        Int      @default(10)
-  biweeklyDiscount      Int      @default(5)
-
-  // Relationship to additional selling plans
-  additionalPlans SellingPlan[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-// Store additional selling plans beyond the default weekly/biweekly
-model SellingPlan {
-  id            String   @id @default(cuid())
-  shopifyPlanId String   // Shopify selling plan GID
-  name          String   // Plan display name
-  interval      String   // WEEK, MONTH, etc.
-  intervalCount Int      // 1, 2, 3, etc.
-  discount      Float    // Discount percentage or amount
-  discountType  String   @default("PERCENTAGE") // PERCENTAGE or FIXED_AMOUNT
-
-  // Link to config
-  configId String
-  config   SellingPlanConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([configId, shopifyPlanId])
-}
+// (Legacy SellingPlanConfig + SellingPlan models removed — superseded by SSMA v2 plan groups)
 
 // ============================================
 // SSMA SUBSCRIPTION PLAN GROUPS
@@ -526,14 +488,6 @@ model Customer {
   firstName         String?
   lastName          String?
   phone             String?
-
-  // Cached stats from Shopify
-  totalOrderCount   Int      @default(0)
-  totalSpent        String?  // e.g., "647.58"
-  currency          String   @default("USD")
-
-  // CRM-specific fields
-  tags              String[] @default([])
 
   // Shopify sync tracking
   lastSyncedAt      DateTime?

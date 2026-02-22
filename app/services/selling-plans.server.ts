@@ -75,7 +75,6 @@ interface ProductAddToSellingPlanGroupResponse {
 export type {
   SellingPlanDetail,
   SellingPlanGroupDetail,
-  SellingPlanConfig,
   SellingPlanProduct,
 } from "../types/selling-plans";
 
@@ -85,26 +84,6 @@ import type {
   SellingPlanGroupDetail,
   SellingPlanProduct,
 } from "../types/selling-plans";
-
-export interface AdditionalPlanInfo {
-  id: string;
-  shopifyPlanId: string;
-  name: string;
-  interval: string;
-  intervalCount: number;
-  discount: number;
-  discountType: string;
-}
-
-export interface SellingPlanInfo {
-  groupId: string;
-  groupName: string;
-  weeklyPlanId: string | null;
-  biweeklyPlanId: string | null;
-  weeklyDiscount: number;
-  biweeklyDiscount: number;
-  additionalPlans?: AdditionalPlanInfo[];
-}
 
 // ============================================
 // GraphQL Queries & Mutations
@@ -339,346 +318,6 @@ const UPDATE_SELLING_PLAN_POSITIONS_MUTATION = `
 // ============================================
 // Service Functions
 // ============================================
-
-/**
- * Get or create the Subscribe & Save selling plan group
- */
-export async function ensureSellingPlanGroup(
-  shop: string,
-  admin: AdminClient
-): Promise<SellingPlanInfo> {
-  // Check if we already have a config stored
-  const existingConfig = await prisma.sellingPlanConfig.findUnique({
-    where: { shop },
-  });
-
-  if (existingConfig) {
-    return {
-      groupId: existingConfig.sellingPlanGroupId,
-      groupName: "Subscribe & Save",
-      weeklyPlanId: existingConfig.weeklySellingPlanId,
-      biweeklyPlanId: existingConfig.biweeklySellingPlanId,
-      weeklyDiscount: existingConfig.weeklyDiscount,
-      biweeklyDiscount: existingConfig.biweeklyDiscount,
-    };
-  }
-
-  // Check Shopify for existing selling plan group
-  const existingGroup = await findExistingSellingPlanGroup(admin);
-  if (existingGroup) {
-    // Store in our database
-    await prisma.sellingPlanConfig.create({
-      data: {
-        shop,
-        sellingPlanGroupId: existingGroup.groupId,
-        weeklySellingPlanId: existingGroup.weeklyPlanId,
-        biweeklySellingPlanId: existingGroup.biweeklyPlanId,
-        weeklyDiscount: existingGroup.weeklyDiscount,
-        biweeklyDiscount: existingGroup.biweeklyDiscount,
-      },
-    });
-    return existingGroup;
-  }
-
-  // Create new selling plan group
-  return createSellingPlanGroup(shop, admin);
-}
-
-/**
- * Find existing Subscribe & Save selling plan group in Shopify
- */
-async function findExistingSellingPlanGroup(
-  admin: AdminClient
-): Promise<SellingPlanInfo | null> {
-  const response = await admin.graphql(SELLING_PLAN_GROUPS_QUERY);
-  const jsonResponse = await response.json();
-  const data: SellingPlanGroupQueryResponse = jsonResponse.data;
-
-  const groups = data.sellingPlanGroups.edges;
-  const subscribeGroup = groups.find(
-    (g) =>
-      g.node.name.toLowerCase().includes("subscribe") &&
-      g.node.name.toLowerCase().includes("save")
-  );
-
-  if (!subscribeGroup) {
-    return null;
-  }
-
-  const plans = subscribeGroup.node.sellingPlans.edges;
-  let weeklyPlanId: string | null = null;
-  let biweeklyPlanId: string | null = null;
-
-  for (const plan of plans) {
-    const policy = plan.node.billingPolicy;
-    if (policy.interval === "WEEK" && policy.intervalCount === 1) {
-      weeklyPlanId = plan.node.id;
-    } else if (policy.interval === "WEEK" && policy.intervalCount === 2) {
-      biweeklyPlanId = plan.node.id;
-    }
-  }
-
-  return {
-    groupId: subscribeGroup.node.id,
-    groupName: subscribeGroup.node.name,
-    weeklyPlanId,
-    biweeklyPlanId,
-    weeklyDiscount: 10, // Default values
-    biweeklyDiscount: 5,
-  };
-}
-
-/**
- * Create the Subscribe & Save selling plan group with weekly and bi-weekly plans
- */
-async function createSellingPlanGroup(
-  shop: string,
-  admin: AdminClient,
-  weeklyDiscount: number = 10,
-  biweeklyDiscount: number = 5
-): Promise<SellingPlanInfo> {
-  const input = {
-    name: "Subscribe & Save",
-    merchantCode: "subscribe-save",
-    options: ["Delivery frequency"],
-    sellingPlansToCreate: [
-      {
-        name: `Deliver every week (${weeklyDiscount}% off)`,
-        options: ["Weekly"],
-        position: 1,
-        category: "SUBSCRIPTION",
-        billingPolicy: {
-          recurring: {
-            interval: "WEEK",
-            intervalCount: 1,
-            anchors: [], // No anchor - flexible billing controlled by app
-          },
-        },
-        deliveryPolicy: {
-          recurring: {
-            interval: "WEEK",
-            intervalCount: 1,
-            anchors: [],
-          },
-        },
-        pricingPolicies: [
-          {
-            fixed: {
-              adjustmentType: "PERCENTAGE",
-              adjustmentValue: {
-                percentage: weeklyDiscount,
-              },
-            },
-          },
-        ],
-      },
-      {
-        name: `Deliver every 2 weeks (${biweeklyDiscount}% off)`,
-        options: ["Bi-weekly"],
-        position: 2,
-        category: "SUBSCRIPTION",
-        billingPolicy: {
-          recurring: {
-            interval: "WEEK",
-            intervalCount: 2,
-            anchors: [],
-          },
-        },
-        deliveryPolicy: {
-          recurring: {
-            interval: "WEEK",
-            intervalCount: 2,
-            anchors: [],
-          },
-        },
-        pricingPolicies: [
-          {
-            fixed: {
-              adjustmentType: "PERCENTAGE",
-              adjustmentValue: {
-                percentage: biweeklyDiscount,
-              },
-            },
-          },
-        ],
-      },
-    ],
-  };
-
-  const response = await admin.graphql(CREATE_SELLING_PLAN_GROUP_MUTATION, {
-    variables: { input },
-  });
-
-  const jsonResponse = await response.json();
-  const data: SellingPlanGroupCreateResponse = jsonResponse.data;
-
-  if (data.sellingPlanGroupCreate.userErrors.length > 0) {
-    const errors = data.sellingPlanGroupCreate.userErrors
-      .map((e) => e.message)
-      .join(", ");
-    throw new Error(`Failed to create selling plan group: ${errors}`);
-  }
-
-  const group = data.sellingPlanGroupCreate.sellingPlanGroup;
-  if (!group) {
-    throw new Error("Failed to create selling plan group: no group returned");
-  }
-
-  // Extract plan IDs
-  const plans = group.sellingPlans.edges;
-  let weeklyPlanId: string | null = null;
-  let biweeklyPlanId: string | null = null;
-
-  for (const plan of plans) {
-    if (plan.node.name.toLowerCase().includes("every week")) {
-      weeklyPlanId = plan.node.id;
-    } else if (plan.node.name.toLowerCase().includes("2 weeks")) {
-      biweeklyPlanId = plan.node.id;
-    }
-  }
-
-  // Store in database
-  await prisma.sellingPlanConfig.create({
-    data: {
-      shop,
-      sellingPlanGroupId: group.id,
-      weeklySellingPlanId: weeklyPlanId,
-      biweeklySellingPlanId: biweeklyPlanId,
-      weeklyDiscount,
-      biweeklyDiscount,
-    },
-  });
-
-  return {
-    groupId: group.id,
-    groupName: group.name,
-    weeklyPlanId,
-    biweeklyPlanId,
-    weeklyDiscount,
-    biweeklyDiscount,
-  };
-}
-
-/**
- * Add products to the selling plan group
- */
-export async function addProductsToSellingPlanGroup(
-  shop: string,
-  admin: AdminClient,
-  productIds: string[]
-): Promise<void> {
-  const config = await prisma.sellingPlanConfig.findUnique({
-    where: { shop },
-  });
-
-  if (!config) {
-    throw new Error("Selling plan group not configured. Please set up subscriptions first.");
-  }
-
-  const response = await admin.graphql(ADD_PRODUCTS_TO_SELLING_PLAN_GROUP_MUTATION, {
-    variables: {
-      id: config.sellingPlanGroupId,
-      productIds,
-    },
-  });
-
-  const data: ProductAddToSellingPlanGroupResponse = await response.json().then((r: { data: ProductAddToSellingPlanGroupResponse }) => r.data);
-
-  if (data.sellingPlanGroupAddProducts.userErrors.length > 0) {
-    const errors = data.sellingPlanGroupAddProducts.userErrors
-      .map((e) => e.message)
-      .join(", ");
-    throw new Error(`Failed to add products to selling plan group: ${errors}`);
-  }
-}
-
-/**
- * Remove products from the selling plan group
- */
-export async function removeProductsFromSellingPlanGroup(
-  shop: string,
-  admin: AdminClient,
-  productIds: string[]
-): Promise<void> {
-  const config = await prisma.sellingPlanConfig.findUnique({
-    where: { shop },
-  });
-
-  if (!config) {
-    throw new Error("Selling plan group not configured.");
-  }
-
-  const response = await admin.graphql(REMOVE_PRODUCTS_FROM_SELLING_PLAN_GROUP_MUTATION, {
-    variables: {
-      id: config.sellingPlanGroupId,
-      productIds,
-    },
-  });
-
-  const data = await response.json();
-
-  if (data.data?.sellingPlanGroupRemoveProducts?.userErrors?.length > 0) {
-    const errors = data.data.sellingPlanGroupRemoveProducts.userErrors
-      .map((e: { message: string }) => e.message)
-      .join(", ");
-    throw new Error(`Failed to remove products: ${errors}`);
-  }
-}
-
-/**
- * Get the selling plan configuration for a shop
- */
-export async function getSellingPlanConfig(shop: string): Promise<SellingPlanInfo | null> {
-  const config = await prisma.sellingPlanConfig.findUnique({
-    where: { shop },
-    include: {
-      additionalPlans: true,
-    },
-  });
-
-  if (!config) {
-    return null;
-  }
-
-  return {
-    groupId: config.sellingPlanGroupId,
-    groupName: "Subscribe & Save",
-    weeklyPlanId: config.weeklySellingPlanId,
-    biweeklyPlanId: config.biweeklySellingPlanId,
-    weeklyDiscount: config.weeklyDiscount,
-    biweeklyDiscount: config.biweeklyDiscount,
-    additionalPlans: config.additionalPlans.map((plan) => ({
-      id: plan.id,
-      shopifyPlanId: plan.shopifyPlanId,
-      name: plan.name,
-      interval: plan.interval,
-      intervalCount: plan.intervalCount,
-      discount: plan.discount,
-      discountType: plan.discountType,
-    })),
-  };
-}
-
-/**
- * Update selling plan discount percentages
- */
-export async function updateSellingPlanDiscounts(
-  shop: string,
-  weeklyDiscount: number,
-  biweeklyDiscount: number
-): Promise<void> {
-  await prisma.sellingPlanConfig.update({
-    where: { shop },
-    data: {
-      weeklyDiscount,
-      biweeklyDiscount,
-    },
-  });
-
-  // Note: This only updates our local config.
-  // To update the actual Shopify selling plans, you would need to use
-  // sellingPlanGroupUpdate mutation. For now, we store the intent.
-}
 
 /**
  * Get the current app's ID from Shopify
@@ -921,39 +560,6 @@ export async function addSellingPlanToGroup(
     const newPlan = plans.find((p: any) => p.node.name === planName);
     const planId = newPlan?.node?.id;
 
-    // Save the new plan to our local database for fallback display
-    if (planId) {
-      const config = await prisma.sellingPlanConfig.findUnique({
-        where: { shop },
-      });
-
-      if (config) {
-        await prisma.sellingPlan.upsert({
-          where: {
-            configId_shopifyPlanId: {
-              configId: config.id,
-              shopifyPlanId: planId,
-            },
-          },
-          create: {
-            configId: config.id,
-            shopifyPlanId: planId,
-            name: planName,
-            interval,
-            intervalCount,
-            discount: discountPercent,
-            discountType: "PERCENTAGE",
-          },
-          update: {
-            name: planName,
-            interval,
-            intervalCount,
-            discount: discountPercent,
-          },
-        });
-      }
-    }
-
     return {
       success: true,
       planId,
@@ -991,11 +597,6 @@ export async function deleteSellingPlan(
       return { success: false, error: errors };
     }
 
-    // Also delete from local database
-    await prisma.sellingPlan.deleteMany({
-      where: { shopifyPlanId: planId },
-    });
-
     return { success: true };
   } catch (error) {
     console.error("Error deleting selling plan:", error);
@@ -1019,31 +620,34 @@ export async function syncSellingPlansFromSSMA(
   const existing: string[] = [];
   const errors: string[] = [];
 
-  // 1. Get the selling plan config (tells us which Shopify selling plan group to use)
-  const config = await prisma.sellingPlanConfig.findUnique({
-    where: { shop },
-  });
+  // Find the existing Shopify selling plan group by searching for "Subscribe"
+  try {
+    const response = await admin.graphql(SELLING_PLAN_GROUPS_QUERY);
+    const jsonResponse = await response.json();
+    const data: SellingPlanGroupQueryResponse = jsonResponse.data;
+    const groups = data.sellingPlanGroups.edges;
+    const subscribeGroup = groups.find(
+      (g) =>
+        g.node.name.toLowerCase().includes("subscribe") &&
+        g.node.name.toLowerCase().includes("save")
+    );
 
-  if (!config) {
-    // Try to ensure the selling plan group exists
-    try {
-      await ensureSellingPlanGroup(shop, admin);
-    } catch (err) {
+    if (!subscribeGroup) {
       return {
         success: false,
-        message: "No selling plan group found and could not create one.",
-        added, existing, errors: [String(err)],
+        message: "No 'Subscribe & Save' selling plan group found in Shopify. Create one first from the Settings page.",
+        added, existing, errors,
       };
     }
-    // Re-fetch config after creation
-    const newConfig = await prisma.sellingPlanConfig.findUnique({ where: { shop } });
-    if (!newConfig) {
-      return { success: false, message: "Failed to create selling plan config.", added, existing, errors };
-    }
-    return syncSellingPlansFromSSMAWithConfig(admin, shop, newConfig.sellingPlanGroupId);
-  }
 
-  return syncSellingPlansFromSSMAWithConfig(admin, shop, config.sellingPlanGroupId);
+    return syncSellingPlansFromSSMAWithConfig(admin, shop, subscribeGroup.node.id);
+  } catch (err) {
+    return {
+      success: false,
+      message: `Failed to find Shopify selling plan group: ${err}`,
+      added, existing, errors: [String(err)],
+    };
+  }
 }
 
 async function syncSellingPlansFromSSMAWithConfig(

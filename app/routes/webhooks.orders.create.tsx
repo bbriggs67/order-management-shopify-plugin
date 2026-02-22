@@ -449,7 +449,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await prisma.webhookEvent.upsert({
         where: { shop_topic_shopifyId: { shop, topic: "orders/create", shopifyId: order.id.toString() } },
         update: {},
-        create: { shop, topic: "orders/create", shopifyId: order.id.toString(), payload: payload as object },
+        create: { shop, topic: "orders/create", shopifyId: order.id.toString(), payload: {} },
       });
       return json({ message: "No pickup info" });
     }
@@ -769,7 +769,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await prisma.webhookEvent.upsert({
       where: { shop_topic_shopifyId: { shop, topic: "orders/create", shopifyId: order.id.toString() } },
       update: {},
-      create: { shop, topic: "orders/create", shopifyId: order.id.toString(), payload: payload as object },
+      create: { shop, topic: "orders/create", shopifyId: order.id.toString(), payload: {} },
     });
     console.log(`Saved webhook event for order ${order.name}`);
 
@@ -785,7 +785,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await prisma.webhookEvent.upsert({
         where: { shop_topic_shopifyId: { shop, topic: "orders/create", shopifyId: order.id.toString() } },
         update: {},
-        create: { shop, topic: "orders/create", shopifyId: order.id.toString(), payload: payload as object },
+        create: { shop, topic: "orders/create", shopifyId: order.id.toString(), payload: {} },
       }).catch(() => {}); // Ignore if this also fails
       return json({ success: true, message: "Processed by concurrent request" });
     }

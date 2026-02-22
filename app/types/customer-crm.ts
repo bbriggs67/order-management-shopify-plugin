@@ -13,12 +13,8 @@ export interface CustomerListItem {
   firstName: string | null;
   lastName: string | null;
   phone: string | null;
-  totalOrderCount: number;
-  totalSpent: string | null;
-  currency: string;
   activeSubscriptionCount: number;
   lastOrderDate: string | null;
-  tags: string[];
 }
 
 // ============================================
@@ -26,6 +22,11 @@ export interface CustomerListItem {
 // ============================================
 
 export interface CustomerDetail extends CustomerListItem {
+  // Live stats from Shopify API
+  totalOrderCount: number;
+  totalSpent: string | null;
+  currency: string;
+
   // From Shopify API enrichment
   shopifyNote: string | null;
   shopifyTags: string[];

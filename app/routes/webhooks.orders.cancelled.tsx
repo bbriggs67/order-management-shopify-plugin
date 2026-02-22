@@ -88,7 +88,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         shop,
         topic: "orders/cancelled",
         shopifyId: order.id.toString(),
-        payload: payload as object,
+        payload: {},
       },
     });
 

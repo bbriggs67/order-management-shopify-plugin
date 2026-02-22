@@ -99,7 +99,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           shop,
           topic: "subscription_contracts/create",
           shopifyId: contract.admin_graphql_api_id,
-          payload: payload as object,
+          payload: {},
         },
       });
 
@@ -205,7 +205,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         shop,
         topic: "subscription_contracts/create",
         shopifyId: contract.admin_graphql_api_id,
-        payload: payload as object,
+        payload: {},
       },
     });
 

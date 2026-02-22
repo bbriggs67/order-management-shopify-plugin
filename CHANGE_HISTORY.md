@@ -2,6 +2,60 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-21 - Schema Cleanup: Drop Legacy Models, Strip WebhookEvent, Remove Cached Customer Fields
+
+**Context:** DB schema audit identified 3 categories of bloat from 3rd-party integration caching. All active features continue working — zero functional impact.
+
+**1. Dropped Legacy Selling Plan Models (superseded by SSMA v2):**
+- Deleted `SellingPlanConfig` and `SellingPlan` Prisma models (~33 lines of schema)
+- Deleted 7 functions from `selling-plans.server.ts`: `ensureSellingPlanGroup`, `findExistingSellingPlanGroup`, `createSellingPlanGroup`, `addProductsToSellingPlanGroup`, `removeProductsFromSellingPlanGroup`, `getSellingPlanConfig`, `updateSellingPlanDiscounts`
+- Removed legacy type exports: `SellingPlanInfo`, `AdditionalPlanInfo` interfaces, `SellingPlanConfig` type
+- Refactored `addSellingPlanToGroup()` — removed `prisma.sellingPlan.upsert()` block
+- Refactored `deleteSellingPlan()` — removed `prisma.sellingPlan.deleteMany()` call
+- Refactored `syncSellingPlansFromSSMA()` — replaced legacy DB fallback with Shopify API lookup
+- Removed legacy fallback code from `api.selling-plans.tsx` and `apps.selling-plans.tsx`
+- Cleaned up `app.settings.subscriptions.tsx`: removed `getSellingPlanConfig()` loader, `"create_selling_plans"` action, legacy product assignment branch
+- Removed `"reset_selling_plan_config"` debug action + button from `app.debug.subscriptions.tsx`
+
+**2. WebhookEvent — Stripped Payloads + 30-Day TTL:**
+- All webhook handlers now store `payload: {}` instead of full JSON (5-50KB per event)
+- `WebhookEvent.payload` changed from `Json` to `Json?` in schema
+- Added 30-day TTL cleanup to hourly cron (`api.cron.process-subscriptions.tsx`)
+- Updated debug webhooks page to show "Payload stripped" for empty payloads
+- Files: 6 webhook handlers + `order-management.server.ts` (11 payload replacements total)
+
+**3. Customer — Removed Cached Fields, Fetch Live from Shopify:**
+- Dropped 4 columns from `Customer` model: `totalOrderCount`, `totalSpent`, `currency`, `tags`
+- `getCustomerDetail()` now fetches `numberOfOrders` + `amountSpent` from existing Shopify GraphQL query (zero additional API calls)
+- Customer list page: removed "Orders" and "Total Spent" columns (5 columns remain: Customer, Email, Phone, Subscriptions, Last Order)
+- Cleaned up `upsertCustomer()`, `resolveLocalCustomer()`, `syncCustomersFromLocalData()` — removed stats field mapping
+- Removed `formatCurrency` helper from customer list page
+
+**Modified Files (18 total):**
+- `prisma/schema.prisma` — Deleted 2 models, made payload optional, removed 4 Customer fields
+- `app/services/selling-plans.server.ts` — Deleted 7 functions, refactored 3, removed legacy types (~440 lines removed)
+- `app/services/customer-crm.server.ts` — Updated 5 functions, removed cached field mapping
+- `app/services/order-management.server.ts` — Stripped webhook payload
+- `app/types/selling-plans.ts` — Removed `SellingPlanConfig` interface
+- `app/types/customer-crm.ts` — Moved stats fields from `CustomerListItem` to `CustomerDetail` (live from Shopify)
+- `app/routes/api.selling-plans.tsx` — Removed legacy fallback + prisma import
+- `app/routes/apps.selling-plans.tsx` — Removed legacy fallback
+- `app/routes/app.settings.subscriptions.tsx` — Removed legacy config logic + imports
+- `app/routes/app.debug.subscriptions.tsx` — Removed reset config action + button
+- `app/routes/app.debug.webhooks.tsx` — Updated payload display for stripped payloads
+- `app/routes/app.customers._index.tsx` — Removed 2 columns, updated sort config
+- `app/routes/api.cron.process-subscriptions.tsx` — Added 30-day TTL cleanup step
+- `app/routes/webhooks.orders.create.tsx` — Stripped payload (3 locations)
+- `app/routes/webhooks.orders.cancelled.tsx` — Stripped payload
+- `app/routes/webhooks.subscription_contracts.create.tsx` — Stripped payload (2 locations)
+- `app/routes/webhooks.subscription_billing_attempts.success.tsx` — Stripped payload (2 locations)
+- `app/routes/webhooks.subscription_billing_attempts.failure.tsx` — Stripped payload (2 locations)
+- `prisma/migrations/20260221_schema_cleanup_drop_legacy_models/migration.sql` — New migration
+
+**Net impact:** ~845 lines deleted, ~109 lines added. Schema reduced by ~50 lines.
+
+---
+
 ### 2026-02-21 - Fix: CRM Create Order Button Missing (commit 902c1ce)
 
 **Context:** The "Create Order" button was missing from the CRM customer detail page. Root cause: customer record had `shopifyCustomerId: "local:bbriggs_sd@yahoo.com"` (created from local order data in Phase 2 sync) instead of a real Shopify GID. The button is conditionally shown only for customers with real Shopify GIDs.

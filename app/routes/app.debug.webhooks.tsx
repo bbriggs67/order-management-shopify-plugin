@@ -306,7 +306,9 @@ export default function WebhookDebug() {
                 <Text as="p" tone="subdued">Shopify ID: {actionData.event.shopifyId}</Text>
                 <Box padding="300" background="bg-surface-secondary" borderRadius="200">
                   <pre style={{ whiteSpace: "pre-wrap", fontSize: "11px", maxHeight: "400px", overflow: "auto" }}>
-                    {JSON.stringify(actionData.event.payload, null, 2)}
+                    {actionData.event.payload && Object.keys(actionData.event.payload).length === 0
+                      ? "Payload stripped (new events no longer store full payloads)"
+                      : JSON.stringify(actionData.event.payload, null, 2)}
                   </pre>
                 </Box>
               </BlockStack>

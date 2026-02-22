@@ -30,11 +30,4 @@ export interface SellingPlanGroupDetail {
   isOwnedByCurrentApp?: boolean; // Whether SSMA owns this group
 }
 
-export interface SellingPlanConfig {
-  groupId: string;
-  groupName: string;
-  weeklyPlanId: string | null;
-  biweeklyPlanId: string | null;
-  weeklyDiscount: number;
-  biweeklyDiscount: number;
-}
+// (Legacy SellingPlanConfig type removed — superseded by SSMA v2 plan groups)

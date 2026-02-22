@@ -24,8 +24,6 @@ const ITEMS_PER_PAGE = 50;
 const SORT_FIELD_MAP: Record<string, string> = {
   name: "lastName",
   email: "email",
-  orders: "totalOrderCount",
-  spent: "totalSpent",
 };
 
 const VALID_SORT_FIELDS = Object.keys(SORT_FIELD_MAP);
@@ -136,14 +134,10 @@ export async function searchCustomers(
       firstName: c.firstName,
       lastName: c.lastName,
       phone: c.phone,
-      totalOrderCount: c.totalOrderCount,
-      totalSpent: c.totalSpent,
-      currency: c.currency,
       activeSubscriptionCount: c.email
         ? subCountMap.get(c.email) || 0
         : 0,
       lastOrderDate: c.email ? lastOrderMap.get(c.email) || null : null,
-      tags: c.tags,
     })),
     hasMore,
     nextCursor,
@@ -178,6 +172,9 @@ export async function getCustomerDetail(
   let defaultAddress: ShopifyAddress | null = null;
   let addresses: ShopifyAddress[] = [];
   let memberSince: string | null = null;
+  let totalOrderCount = 0;
+  let totalSpent: string | null = null;
+  let currency = "USD";
 
   try {
     const response = await admin.graphql(
@@ -187,6 +184,8 @@ export async function getCustomerDetail(
           note
           tags
           createdAt
+          numberOfOrders
+          amountSpent { amount currencyCode }
           defaultAddress {
             address1
             address2
@@ -216,6 +215,9 @@ export async function getCustomerDetail(
       shopifyNote = shopifyCustomer.note || null;
       shopifyTags = shopifyCustomer.tags || [];
       memberSince = shopifyCustomer.createdAt || null;
+      totalOrderCount = shopifyCustomer.numberOfOrders || 0;
+      totalSpent = shopifyCustomer.amountSpent?.amount || null;
+      currency = shopifyCustomer.amountSpent?.currencyCode || "USD";
       defaultAddress = shopifyCustomer.defaultAddress
         ? mapShopifyAddress(shopifyCustomer.defaultAddress)
         : null;
@@ -263,12 +265,11 @@ export async function getCustomerDetail(
     firstName: customer.firstName,
     lastName: customer.lastName,
     phone: customer.phone,
-    totalOrderCount: customer.totalOrderCount,
-    totalSpent: customer.totalSpent,
-    currency: customer.currency,
+    totalOrderCount,
+    totalSpent,
+    currency,
     activeSubscriptionCount,
     lastOrderDate,
-    tags: customer.tags,
     shopifyNote,
     shopifyTags,
     defaultAddress,
@@ -315,8 +316,6 @@ export interface UpsertCustomerInput {
   firstName?: string | null;
   lastName?: string | null;
   phone?: string | null;
-  totalOrderCount?: number;
-  totalSpent?: string | null;
 }
 
 export async function upsertCustomer(
@@ -338,12 +337,6 @@ export async function upsertCustomer(
           ...(data.firstName !== undefined ? { firstName: data.firstName } : {}),
           ...(data.lastName !== undefined ? { lastName: data.lastName } : {}),
           ...(data.phone !== undefined ? { phone: data.phone } : {}),
-          ...(data.totalOrderCount !== undefined
-            ? { totalOrderCount: data.totalOrderCount }
-            : {}),
-          ...(data.totalSpent !== undefined
-            ? { totalSpent: data.totalSpent }
-            : {}),
           lastSyncedAt: new Date(),
         },
       });
@@ -357,8 +350,6 @@ export async function upsertCustomer(
           firstName: data.firstName || null,
           lastName: data.lastName || null,
           phone: data.phone || null,
-          totalOrderCount: data.totalOrderCount || 0,
-          totalSpent: data.totalSpent || null,
           lastSyncedAt: new Date(),
         },
       });
@@ -382,7 +373,6 @@ export async function upsertCustomer(
             firstName: data.firstName || byEmail.firstName,
             lastName: data.lastName || byEmail.lastName,
             phone: data.phone || byEmail.phone,
-            totalOrderCount: data.totalOrderCount ?? byEmail.totalOrderCount,
             lastSyncedAt: new Date(),
           },
         });
@@ -426,8 +416,6 @@ export async function syncCustomersFromLocalData(
                 firstName
                 lastName
                 phone
-                numberOfOrders
-                amountSpent { amount currencyCode }
               }
               cursor
             }
@@ -463,8 +451,6 @@ export async function syncCustomersFromLocalData(
             firstName: node.firstName || null,
             lastName: node.lastName || null,
             phone: node.phone || null,
-            totalOrderCount: node.numberOfOrders || 0,
-            totalSpent: node.amountSpent?.amount || null,
           });
           synced++;
           if (node.email) {
@@ -565,8 +551,6 @@ export async function resolveLocalCustomer(
               firstName
               lastName
               phone
-              numberOfOrders
-              amountSpent { amount currencyCode }
             }
           }
         }
@@ -586,11 +570,6 @@ export async function resolveLocalCustomer(
     if (edges.length > 0) {
       const node = edges[0].node;
       console.log(`resolveLocalCustomer: resolving ${customer.email} → ${node.id}`);
-
-      // Ensure totalOrderCount is an integer (GraphQL may return varied types)
-      const orderCount = typeof node.numberOfOrders === "number"
-        ? node.numberOfOrders
-        : parseInt(String(node.numberOfOrders || "0"), 10) || customer.totalOrderCount;
 
       try {
         // Check if a record with this Shopify GID already exists (unique constraint)
@@ -625,8 +604,6 @@ export async function resolveLocalCustomer(
             firstName: node.firstName || customer.firstName,
             lastName: node.lastName || customer.lastName,
             phone: node.phone || customer.phone,
-            totalOrderCount: orderCount,
-            totalSpent: node.amountSpent?.amount || customer.totalSpent,
             lastSyncedAt: new Date(),
           },
         });
