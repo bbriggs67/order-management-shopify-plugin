@@ -2,6 +2,23 @@
 
 > Add new entries at the TOP of this list. Include date, brief description, and files changed.
 
+### 2026-02-21 - Replace CRM Email Compose with Shopify Native Customer Email
+
+**Context:** CRM "Send Email" button opened a SendGrid compose modal that required SENDGRID_API_KEY + SENDGRID_FROM_EMAIL env vars. Since Shopify admin already has a native "Contact customer" email dialog on the customer page, we replaced the custom modal with a link to the Shopify admin customer page. This removes a third-party dependency for manual emails and makes the app multi-tenant ready with zero email configuration.
+
+**Changes:**
+- "Send Email" button now navigates to `https://admin.shopify.com/store/.../customers/{id}` (same pattern as existing "View in Shopify" action)
+- Removed: SendGrid email compose modal, `composeEmail` action handler, email state variables, `handleSendEmail` callback, `sendEmail` import, `isSendGridConfigured` loader check
+- Kept: SMS compose modal (Twilio) — Shopify has no native SMS
+- Kept: SendGrid infrastructure in `notifications.server.ts` — still used for automated pickup reminder emails
+- "Send Email" button only shows for customers with a Shopify GID (not local-only customers)
+
+**Files changed:**
+- `app/routes/app.customers.$customerId.tsx` — replaced email modal with Shopify admin link (~150 lines removed)
+- `CLAUDE.md` — updated note 15 (CRM Communication)
+
+---
+
 ### 2026-02-21 - Audit Hardening Phase 2: Enums, Contract Sync, Race Guard, Phone Index
 
 **Context:** Deferred items from schema + API audit. Converts freeform String fields to Prisma enums, syncs Shopify contract on customer cancel, prevents billing race with pause, optimizes SMS phone lookup.

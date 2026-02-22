@@ -91,7 +91,7 @@ Cart widget auto-skips when SSMA attributes already set from product page.
 12. **Calendar print**: Daily view has a Print button that opens a new window with clean printable layout (prep summary, pickups by time slot, extra orders).
 13. **Customer CRM portal**: 5th admin page (`/app/customers`). Customer model synced from Shopify via webhook + manual sync. Detail page shows orders (collapsible), subscriptions, admin notes with categories, Shopify contact info. Notes can sync to Shopify customer note field.
 14. **CRM Draft Orders**: Create Shopify draft orders from customer profile via product picker. Invoice sending modal: Shopify email, SMS (Twilio), or copy link. Service in `draft-orders.server.ts`.
-15. **CRM Communication**: In-app email compose (SendGrid) and SMS compose (Twilio) modals on customer profile. Falls back to `mailto:`/`sms:` links when integrations not configured.
+15. **CRM Communication**: "Send Email" button navigates to Shopify admin customer page (native "Contact customer" dialog). SMS compose stays in-app via Twilio. No SendGrid dependency for manual emails — SendGrid only used for automated notifications (pickup reminders).
 16. **CRM Notes cross-page**: Pinned customer notes display on Order and Subscription detail pages (sidebar). "View Profile" links on both pages.
 17. **Two-way SMS**: iMessage-style conversation on customer detail page. Outbound via Twilio, inbound via webhook at `/api/twilio-webhook`. `SmsMessage` model tracks all messages. Polling every 10s when conversation expanded. Twilio number: `+18582484996`.
 18. **Twilio webhook**: `/api/twilio-webhook` validates Twilio signature (HMAC-SHA1), rate-limited 60/min per IP. Returns empty TwiML. Dedup by `twilioSid`.
