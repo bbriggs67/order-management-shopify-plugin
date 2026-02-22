@@ -44,7 +44,7 @@ import {
   sendDraftOrderInvoice,
   sendPaymentLinkViaSMS,
 } from "../services/draft-orders.server";
-import { sendSMS, sendEmail } from "../services/notifications.server";
+import { sendSMS } from "../services/notifications.server";
 import {
   getConversation,
   getNewMessages,
@@ -124,7 +124,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     customer,
     smsMessages,
     isTwilioConfigured: isIntegrationConfigured("twilio"),
-    isSendGridConfigured: isIntegrationConfigured("sendgrid"),
   });
 };
 
@@ -260,44 +259,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   // ---- Communication Actions ----
 
-  if (intent === "composeEmail") {
-    try {
-      const toEmail = formData.get("toEmail") as string;
-      const subject = formData.get("subject") as string;
-      const body = formData.get("body") as string;
-
-      if (!toEmail || !subject || !body) {
-        return json({ error: "Email, subject, and body are required" }, { status: 400 });
-      }
-
-      // Convert plain text body to HTML (preserve line breaks)
-      const htmlBody = `<div style="font-family: sans-serif; line-height: 1.5;">
-        ${body
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/\n/g, "<br>")}
-        <br><br>
-        <p style="color: #666; font-size: 12px;">— Susie's Sourdough</p>
-      </div>`;
-
-      const result = await sendEmail(toEmail, subject, htmlBody);
-      return json({
-        success: result.success,
-        composeResult: {
-          method: "email",
-          success: result.success,
-          error: result.error,
-        },
-      });
-    } catch (error) {
-      return json(
-        { error: error instanceof Error ? error.message : "Failed to send email" },
-        { status: 500 }
-      );
-    }
-  }
-
   if (intent === "composeSMS") {
     try {
       const toPhone = formData.get("toPhone") as string;
@@ -381,11 +342,10 @@ interface LineItem {
 }
 
 export default function CustomerDetailPage() {
-  const { customer, smsMessages, isTwilioConfigured, isSendGridConfigured } = useLoaderData<{
+  const { customer, smsMessages, isTwilioConfigured } = useLoaderData<{
     customer: CustomerDetail;
     smsMessages: SmsMessageData[];
     isTwilioConfigured: boolean;
-    isSendGridConfigured: boolean;
   }>();
   const actionData = useActionData<{
     success?: boolean;
@@ -413,10 +373,7 @@ export default function CustomerDetailPage() {
   const [invoiceBanner, setInvoiceBanner] = useState<{ status: "success" | "critical"; message: string } | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
 
-  // --- Email Compose state ---
-  const [emailModalOpen, setEmailModalOpen] = useState(false);
-  const [emailSubject, setEmailSubject] = useState("");
-  const [emailBody, setEmailBody] = useState("");
+  // --- Compose banner (shared for SMS) ---
   const [composeBanner, setComposeBanner] = useState<{ status: "success" | "critical"; message: string } | null>(null);
 
   // --- SMS Compose state ---
@@ -463,21 +420,13 @@ export default function CustomerDetailPage() {
       if (cr.success) {
         setComposeBanner({
           status: "success",
-          message: cr.method === "email"
-            ? "Email sent successfully!"
-            : "Text message sent successfully!",
+          message: "Text message sent successfully!",
         });
-        // Clear form on success
-        if (cr.method === "email") {
-          setEmailSubject("");
-          setEmailBody("");
-        } else {
-          setSmsMessage("");
-        }
+        setSmsMessage("");
       } else {
         setComposeBanner({
           status: "critical",
-          message: cr.error || `Failed to send ${cr.method === "email" ? "email" : "text"}`,
+          message: cr.error || "Failed to send text",
         });
       }
     }
@@ -602,17 +551,6 @@ export default function CustomerDetailPage() {
     }
   }, [currentDraftOrder]);
 
-  // --- Email Compose ---
-  const handleSendEmail = useCallback(() => {
-    if (!emailSubject.trim() || !emailBody.trim() || !customer.email) return;
-    const formData = new FormData();
-    formData.set("_action", "composeEmail");
-    formData.set("toEmail", customer.email);
-    formData.set("subject", emailSubject.trim());
-    formData.set("body", emailBody.trim());
-    submit(formData, { method: "post" });
-  }, [emailSubject, emailBody, customer.email, submit]);
-
   // --- SMS Compose ---
   const handleSendSMS = useCallback(() => {
     if (!smsMessage.trim() || !customer.phone) return;
@@ -674,12 +612,10 @@ export default function CustomerDetailPage() {
                     Create Order
                   </Button>
                 )}
-                {customer.email && (
+                {customer.email && shopifyCustomerUrl && (
                   <Button
-                    onClick={() => {
-                      setComposeBanner(null);
-                      setEmailModalOpen(true);
-                    }}
+                    url={shopifyCustomerUrl}
+                    external
                     size="slim"
                   >
                     Send Email
@@ -1099,87 +1035,6 @@ export default function CustomerDetailPage() {
                 </Text>
               )}
             </BlockStack>
-          </BlockStack>
-        </Modal.Section>
-      </Modal>
-
-      {/* ============================================ */}
-      {/* EMAIL COMPOSE MODAL                         */}
-      {/* ============================================ */}
-      <Modal
-        open={emailModalOpen}
-        onClose={() => {
-          setEmailModalOpen(false);
-          setComposeBanner(null);
-        }}
-        title={`Email ${fullName}`}
-        primaryAction={isSendGridConfigured ? {
-          content: "Send Email",
-          onAction: handleSendEmail,
-          disabled: !emailSubject.trim() || !emailBody.trim() || isSubmitting,
-          loading: isSubmitting,
-        } : undefined}
-        secondaryActions={[
-          {
-            content: isSendGridConfigured ? "Cancel" : "Close",
-            onAction: () => {
-              setEmailModalOpen(false);
-              setComposeBanner(null);
-            },
-          },
-        ]}
-      >
-        <Modal.Section>
-          <BlockStack gap="400">
-            {!isSendGridConfigured && (
-              <Banner tone="warning">
-                <p>SendGrid is not configured. To send emails from this app, add the following environment variables to your Railway deployment:</p>
-                <ul>
-                  <li><strong>SENDGRID_API_KEY</strong> — Your SendGrid API key</li>
-                  <li><strong>SENDGRID_FROM_EMAIL</strong> — Verified sender email address</li>
-                </ul>
-                <p style={{ marginTop: "8px" }}>
-                  Or email the customer directly:{" "}
-                  <a href={`mailto:${customer.email}`} target="_blank" rel="noopener noreferrer">
-                    {customer.email}
-                  </a>
-                </p>
-              </Banner>
-            )}
-
-            {composeBanner && (
-              <Banner tone={composeBanner.status}>
-                {composeBanner.message}
-              </Banner>
-            )}
-
-            {isSendGridConfigured && (
-              <>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  To: {customer.email}
-                </Text>
-
-                <TextField
-                  label="Subject"
-                  value={emailSubject}
-                  onChange={setEmailSubject}
-                  autoComplete="off"
-                  maxLength={200}
-                  placeholder="Order update, follow-up, etc."
-                />
-
-                <TextField
-                  label="Message"
-                  value={emailBody}
-                  onChange={setEmailBody}
-                  multiline={6}
-                  autoComplete="off"
-                  maxLength={5000}
-                  showCharacterCount
-                  placeholder="Hi! Just wanted to follow up about..."
-                />
-              </>
-            )}
           </BlockStack>
         </Modal.Section>
       </Modal>
