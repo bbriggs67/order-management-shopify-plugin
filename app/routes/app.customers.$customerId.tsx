@@ -612,10 +612,12 @@ export default function CustomerDetailPage() {
                     Create Order
                   </Button>
                 )}
-                {customer.email && shopifyCustomerUrl && (
+                {customer.email && !customer.shopifyCustomerId.startsWith("local:") && (
                   <Button
-                    url={shopifyCustomerUrl}
-                    external
+                    onClick={() => {
+                      const customerId = extractShopifyId(customer.shopifyCustomerId);
+                      open(`shopify://admin/customers/${customerId}`, "_top");
+                    }}
                     size="slim"
                   >
                     Send Email
